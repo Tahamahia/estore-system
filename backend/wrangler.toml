@@ -1,0 +1,39 @@
+name = "estore-api"
+main = "src/index.ts"
+compatibility_date = "2025-06-01"
+compatibility_flags = ["nodejs_compat"]
+
+# ─── D1 Database ───────────────────────────────────────────
+[[d1_databases]]
+binding = "DB"
+database_name = "estore-db"
+database_id = "PLACEHOLDER_D1_ID"
+
+# ─── R2 Storage (Media) ───────────────────────────────────
+[[r2_buckets]]
+binding = "MEDIA"
+bucket_name = "estore-media"
+
+# ─── KV Namespace (Idempotency / Caching) ─────────────────
+[[kv_namespaces]]
+binding = "CACHE"
+id = "PLACEHOLDER_KV_ID"
+
+# ─── Cron Triggers ─────────────────────────────────────────
+[triggers]
+crons = [
+  "0 3 * * *",   # Daily DB backup to R2 at 3:00 AM UTC
+  "0 */6 * * *"  # Zombie order cleanup every 6 hours
+]
+
+# ─── Environment Variables ─────────────────────────────────
+[vars]
+ENVIRONMENT = "production"
+JWT_ISSUER = "estore-api"
+
+# ─── Dev Overrides ─────────────────────────────────────────
+[env.dev]
+name = "estore-api-dev"
+
+[env.dev.vars]
+ENVIRONMENT = "development"

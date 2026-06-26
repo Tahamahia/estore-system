@@ -1,0 +1,23 @@
+{
+  "name": "estore-api",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "db:migrate": "wrangler d1 execute estore-db --file=./src/db/schema.sql",
+    "db:migrate:local": "wrangler d1 execute estore-db --local --file=./src/db/schema.sql",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "uuid": "^11.1.0"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^4.20250620.0",
+    "vitest": "^3.2.0",
+    "wrangler": "^4.105.0",
+    "typescript": "^5.8.0"
+  }
+}
