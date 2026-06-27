@@ -30,6 +30,12 @@ crons = [
 [vars]
 ENVIRONMENT = "production"
 JWT_ISSUER = "estore-api"
+FRONTEND_URL = "https://estore-web.pages.dev"
+
+# ─── Secrets (set via `wrangler secret put`) ───────────────
+# JWT_SECRET    — wrangler secret put JWT_SECRET
+# SENTRY_DSN    — wrangler secret put SENTRY_DSN (optional)
+# TELEGRAM_BOT_TOKEN — wrangler secret put TELEGRAM_BOT_TOKEN (optional)
 
 # ─── Dev Overrides ─────────────────────────────────────────
 [env.dev]
@@ -37,3 +43,4 @@ name = "estore-api-dev"
 
 [env.dev.vars]
 ENVIRONMENT = "development"
+FRONTEND_URL = "http://localhost:8080"

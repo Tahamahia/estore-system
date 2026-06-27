@@ -1,6 +1,6 @@
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import '../core/auth_service.dart';
 import '../features/auth/presentation/login_screen.dart';
 import '../features/dashboard/presentation/dashboard_shell.dart';
 import '../features/dashboard/presentation/overview_screen.dart';
@@ -10,8 +10,22 @@ import '../features/shipments/presentation/shipments_screen.dart';
 import '../features/customers/presentation/customers_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
+  // Watch auth state for redirects
+  final token = ref.watch(authTokenProvider);
+
   return GoRouter(
     initialLocation: '/login',
+    redirect: (context, state) {
+      final isLoggedIn = token != null;
+      final isLoginPage = state.matchedLocation == '/login';
+
+      // Not logged in → force to login (except if already there)
+      if (!isLoggedIn && !isLoginPage) return '/login';
+      // Logged in → redirect away from login to dashboard
+      if (isLoggedIn && isLoginPage) return '/';
+
+      return null; // No redirect needed
+    },
     routes: [
       GoRoute(
         path: '/login',

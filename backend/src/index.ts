@@ -16,7 +16,9 @@ import { imageRoutes } from './routes/images';
 import { purchaseRoutes } from './routes/purchasing';
 import { landedCostRoutes } from './routes/landed-cost';
 import { walletRoutes } from './routes/wallets';
+import { syncRoutes } from './routes/sync';
 import { cronHandler } from './cron';
+import { createSentryClient } from './lib/sentry';
 import type { AppEnv } from './types';
 
 export interface Env {
@@ -26,6 +28,7 @@ export interface Env {
   JWT_SECRET: string;
   JWT_ISSUER: string;
   ENVIRONMENT: string;
+  FRONTEND_URL?: string;
   TELEGRAM_BOT_TOKEN?: string;
   SENTRY_DSN?: string;
 }
@@ -34,17 +37,57 @@ const app = new Hono<AppEnv>();
 
 // ─── Global Middleware ─────────────────────────────────────
 app.use('*', logger());
-app.use('*', cors({
-  origin: '*',
-  allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Tenant-ID'],
-  maxAge: 86400,
-}));
+
+// ─── Strict CORS ───────────────────────────────────────────
+// Accepts the deployed Cloudflare Pages URL + localhost for dev
+app.use('*', async (c, next) => {
+  const frontendUrl = c.env.FRONTEND_URL || '';
+  const allowedOrigins = [
+    frontendUrl,
+    'http://localhost:3000',
+    'http://localhost:8080',
+    'http://127.0.0.1:8080',
+  ].filter(Boolean);
+
+  const corsMiddleware = cors({
+    origin: (origin) => {
+      // Allow requests with no origin (e.g. curl, Postman, mobile apps)
+      if (!origin) return '*';
+      // Check if origin matches any allowed origin (supports CF Pages preview URLs)
+      if (allowedOrigins.some(allowed => origin === allowed || origin.endsWith('.pages.dev'))) {
+        return origin;
+      }
+      return '';  // Block
+    },
+    allowMethods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowHeaders: ['Content-Type', 'Authorization', 'Idempotency-Key', 'X-Tenant-ID'],
+    exposeHeaders: ['X-Request-Id'],
+    maxAge: 86400,
+    credentials: true,
+  });
+
+  return corsMiddleware(c, next);
+});
+
+// ─── Sentry Error Tracking ────────────────────────────────
+// Attaches Sentry client to every request context.
+// Safe no-op if SENTRY_DSN is empty/null/missing.
+app.use('*', async (c, next) => {
+  const sentry = createSentryClient(c.req.raw, c.env);
+  sentry.setTag('tenant_id', 'unknown');  // Will be overridden after auth
+
+  try {
+    await next();
+  } catch (err) {
+    sentry.captureException(err);
+    throw err;  // Re-throw so the error handler below catches it
+  }
+});
 
 // ─── Health Check ──────────────────────────────────────────
 app.get('/health', (c) => c.json({
   status: 'ok',
-  version: '1.1.0',
+  version: '2.0.0',
   timestamp: new Date().toISOString()
 }));
 
@@ -68,6 +111,7 @@ protectedApp.route('/images', imageRoutes);
 protectedApp.route('/purchasing', purchaseRoutes);
 protectedApp.route('/landed-cost', landedCostRoutes);
 protectedApp.route('/wallets', walletRoutes);
+protectedApp.route('/sync', syncRoutes);
 
 app.route('/api/v1', protectedApp);
 

@@ -2,9 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app/router.dart';
 import 'app/theme.dart';
+import 'core/sentry.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize Sentry — safe no-op if DSN is missing
+  await AppSentry.init(
+    dsn: const String.fromEnvironment('SENTRY_DSN', defaultValue: ''),
+  );
+
   runApp(const ProviderScope(child: EstoreApp()));
 }
 
