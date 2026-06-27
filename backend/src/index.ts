@@ -12,6 +12,10 @@ import { customerRoutes } from './routes/customers';
 import { inventoryRoutes } from './routes/inventory';
 import { analyticsRoutes } from './routes/analytics';
 import { webhookRoutes } from './routes/webhooks';
+import { imageRoutes } from './routes/images';
+import { purchaseRoutes } from './routes/purchasing';
+import { landedCostRoutes } from './routes/landed-cost';
+import { walletRoutes } from './routes/wallets';
 import { cronHandler } from './cron';
 import type { AppEnv } from './types';
 
@@ -38,10 +42,10 @@ app.use('*', cors({
 }));
 
 // ─── Health Check ──────────────────────────────────────────
-app.get('/health', (c) => c.json({ 
-  status: 'ok', 
-  version: '1.0.0',
-  timestamp: new Date().toISOString() 
+app.get('/health', (c) => c.json({
+  status: 'ok',
+  version: '1.1.0',
+  timestamp: new Date().toISOString()
 }));
 
 // ─── Public Routes ─────────────────────────────────────────
@@ -60,6 +64,10 @@ protectedApp.route('/warehouse', warehouseRoutes);
 protectedApp.route('/customers', customerRoutes);
 protectedApp.route('/inventory', inventoryRoutes);
 protectedApp.route('/analytics', analyticsRoutes);
+protectedApp.route('/images', imageRoutes);
+protectedApp.route('/purchasing', purchaseRoutes);
+protectedApp.route('/landed-cost', landedCostRoutes);
+protectedApp.route('/wallets', walletRoutes);
 
 app.route('/api/v1', protectedApp);
 
@@ -69,9 +77,9 @@ app.notFound((c) => c.json({ error: 'Not Found', path: c.req.path }, 404));
 // ─── Error Handler ─────────────────────────────────────────
 app.onError((err, c) => {
   console.error(`[ERROR] ${err.message}`, err.stack);
-  return c.json({ 
-    error: 'Internal Server Error', 
-    message: c.env.ENVIRONMENT === 'development' ? err.message : undefined 
+  return c.json({
+    error: 'Internal Server Error',
+    message: c.env.ENVIRONMENT === 'development' ? err.message : undefined
   }, 500);
 });
 
