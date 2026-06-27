@@ -178,6 +178,7 @@ CREATE TABLE IF NOT EXISTS order_items (
   purchase_price REAL, -- Actual purchase price (entered by purchaser)
   color TEXT,
   size TEXT,
+  sku TEXT,                        -- Physical barcode SKU (Shein/Trendyol serial number)
   actual_weight REAL,
   volumetric_weight REAL,
   landed_cost REAL, -- Calculated pro-rata share of master shipment costs
@@ -209,6 +210,7 @@ CREATE INDEX IF NOT EXISTS idx_items_tenant ON order_items(tenant_id);
 CREATE INDEX IF NOT EXISTS idx_items_order ON order_items(order_id, tenant_id);
 CREATE INDEX IF NOT EXISTS idx_items_shipment ON order_items(shipment_id);
 CREATE INDEX IF NOT EXISTS idx_items_uid ON order_items(item_uid);
+CREATE INDEX IF NOT EXISTS idx_items_sku ON order_items(sku, tenant_id);
 CREATE INDEX IF NOT EXISTS idx_items_status ON order_items(status, tenant_id);
 
 -- ─── Master Shipments ──────────────────────────────────────

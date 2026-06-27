@@ -110,14 +110,14 @@ orderRoutes.post('/', async (c) => {
     stmts.push(
       c.env.DB.prepare(
         `INSERT INTO order_items (id, tenant_id, order_id, product_name, product_url, 
-         product_image_url, quantity, unit_price_foreign, unit_price_local, color, size, 
+         product_image_url, quantity, unit_price_foreign, unit_price_local, color, size, sku,
          notes, status, created_at, updated_at, version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
       ).bind(
         item.id, tenantId, id, item.product_name, item.product_url || null,
         item.product_image_url || null, item.quantity || 1,
         item.unit_price_foreign || 0, item.unit_price_local || 0,
-        item.color || null, item.size || null, item.notes || null
+        item.color || null, item.size || null, item.sku || null, item.notes || null
       )
     );
   }

@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=480, initial-scale=1.0">
+  <title>eStore Cart Extractor</title>
+  <style>
+    /* ─── Design Tokens (matching Flutter app dark theme) ─── */
+    :root {
+      --bg: #0f0f23;
+      --surface: #1a1a3e;
+      --card: #252547;
+      --border: #2a2a5e;
+      --primary: #6c5ce7;
+      --primary-light: #a29bfe;
+      --secondary: #00cec9;
+      --success: #00b894;
+      --warning: #fdcb6e;
+      --error: #e17055;
+      --text: #e0e0ff;
+      --text-muted: rgba(224, 224, 255, 0.55);
+      --radius: 12px;
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      width: 420px;
+      min-height: 500px;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      overflow-y: auto;
+    }
+
+    /* ─── Header ─── */
+    .header {
+      background: linear-gradient(135deg, var(--primary) 0%, #4a3fc7 100%);
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header-icon {
+      width: 36px;
+      height: 36px;
+      background: rgba(255,255,255,0.15);
+      border-radius: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 18px;
+    }
+
+    .header h1 {
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+    }
+
+    .header .version {
+      font-size: 11px;
+      color: rgba(255,255,255,0.6);
+      margin-top: 2px;
+    }
+
+    /* ─── Sections ─── */
+    .section {
+      padding: 16px 20px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .section-title {
+      font-size: 11px;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      color: var(--text-muted);
+      margin-bottom: 12px;
+    }
+
+    /* ─── Inputs ─── */
+    .field {
+      margin-bottom: 10px;
+    }
+
+    .field label {
+      display: block;
+      font-size: 12px;
+      color: var(--text-muted);
+      margin-bottom: 4px;
+    }
+
+    .field input, .field select {
+      width: 100%;
+      padding: 10px 12px;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-size: 13px;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+
+    .field input:focus, .field select:focus {
+      border-color: var(--primary);
+    }
+
+    .field input::placeholder {
+      color: rgba(224, 224, 255, 0.3);
+    }
+
+    /* ─── Status Badge ─── */
+    .status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 14px;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: 500;
+    }
+
+    .status.connected {
+      background: rgba(0, 184, 148, 0.12);
+      color: var(--success);
+    }
+
+    .status.disconnected {
+      background: rgba(225, 112, 85, 0.12);
+      color: var(--error);
+    }
+
+    .status.extracting {
+      background: rgba(253, 203, 110, 0.12);
+      color: var(--warning);
+    }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    /* ─── Buttons ─── */
+    .btn {
+      width: 100%;
+      padding: 12px;
+      border: none;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.2s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--primary) 0%, #5a4bd4 100%);
+      color: white;
+    }
+
+    .btn-primary:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 4px 20px rgba(108, 92, 231, 0.4);
+    }
+
+    .btn-primary:disabled {
+      opacity: 0.5;
+      transform: none;
+      box-shadow: none;
+      cursor: not-allowed;
+    }
+
+    .btn-secondary {
+      background: var(--card);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+
+    .btn-secondary:hover {
+      border-color: var(--primary);
+    }
+
+    .btn-save {
+      background: var(--success);
+      color: white;
+      padding: 8px 16px;
+      font-size: 12px;
+      width: auto;
+      border-radius: 8px;
+    }
+
+    /* ─── Results ─── */
+    .results {
+      display: none;
+      margin-top: 12px;
+    }
+
+    .results.visible {
+      display: block;
+    }
+
+    .result-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      margin-bottom: 8px;
+      display: flex;
+      gap: 10px;
+    }
+
+    .result-card img {
+      width: 56px;
+      height: 56px;
+      border-radius: 8px;
+      object-fit: cover;
+      background: var(--surface);
+    }
+
+    .result-info {
+      flex: 1;
+      min-width: 0;
+    }
+
+    .result-name {
+      font-size: 13px;
+      font-weight: 500;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .result-meta {
+      font-size: 11px;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }
+
+    .result-sku {
+      display: inline-block;
+      background: rgba(108, 92, 231, 0.15);
+      color: var(--primary-light);
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 6px;
+      margin-top: 4px;
+      font-family: 'Consolas', monospace;
+    }
+
+    .result-count {
+      text-align: center;
+      font-size: 13px;
+      color: var(--text-muted);
+      padding: 8px;
+      background: var(--surface);
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+
+    .result-count strong {
+      color: var(--secondary);
+      font-size: 18px;
+    }
+
+    /* ─── Settings Toggle ─── */
+    .settings-toggle {
+      text-align: center;
+      padding: 8px;
+      cursor: pointer;
+      color: var(--text-muted);
+      font-size: 12px;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .settings-toggle:hover {
+      color: var(--primary-light);
+    }
+
+    .settings-panel {
+      display: none;
+    }
+
+    .settings-panel.visible {
+      display: block;
+    }
+
+    /* ─── Spinner ─── */
+    .spinner {
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top: 2px solid white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+
+    /* ─── Platform Badge ─── */
+    .platform-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .platform-badge.shein {
+      background: rgba(0, 0, 0, 0.3);
+      color: #ff6f61;
+    }
+
+    .platform-badge.trendyol {
+      background: rgba(255, 100, 0, 0.15);
+      color: #ff6400;
+    }
+
+    .error-box {
+      background: rgba(225, 112, 85, 0.12);
+      border: 1px solid rgba(225, 112, 85, 0.3);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--error);
+      font-size: 12px;
+      margin-top: 10px;
+      display: none;
+    }
+
+    .error-box.visible {
+      display: block;
+    }
+
+    .success-box {
+      background: rgba(0, 184, 148, 0.12);
+      border: 1px solid rgba(0, 184, 148, 0.3);
+      border-radius: 8px;
+      padding: 10px 14px;
+      color: var(--success);
+      font-size: 12px;
+      margin-top: 10px;
+      display: none;
+    }
+
+    .success-box.visible {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <div class="header">
+    <div class="header-icon">🛒</div>
+    <div>
+      <h1>eStore Cart Extractor</h1>
+      <div class="version">v1.0.0 — Shein · Trendyol</div>
+    </div>
+  </div>
+
+  <!-- Connection Status -->
+  <div class="section">
+    <div id="connectionStatus" class="status disconnected">
+      <span class="status-dot"></span>
+      <span id="statusText">Not configured</span>
+    </div>
+  </div>
+
+  <!-- Settings Toggle -->
+  <div class="settings-toggle" id="settingsToggle">⚙️ API Settings</div>
+
+  <!-- Settings Panel -->
+  <div class="settings-panel" id="settingsPanel">
+    <div class="section">
+      <div class="section-title">API Configuration</div>
+      <div class="field">
+        <label>API Base URL</label>
+        <input type="url" id="apiUrl" placeholder="https://estore-api.xxx.workers.dev/api/v1">
+      </div>
+      <div class="field">
+        <label>JWT Token</label>
+        <input type="password" id="jwtToken" placeholder="Paste your login token here">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:8px">
+        <button class="btn btn-save" id="saveSettings">💾 Save</button>
+        <button class="btn btn-save" id="testConnection" style="background:var(--secondary)">🔌 Test</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Order Details -->
+  <div class="section">
+    <div class="section-title">Customer Info</div>
+    <div class="field">
+      <label>Customer Name</label>
+      <input type="text" id="customerName" placeholder="e.g., Ahmed Ali">
+    </div>
+    <div class="field">
+      <label>Customer Phone</label>
+      <input type="tel" id="customerPhone" placeholder="e.g., +218912345678">
+    </div>
+    <div class="field">
+      <label>Platform</label>
+      <select id="platform">
+        <option value="shein">Shein</option>
+        <option value="trendyol">Trendyol</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- Action -->
+  <div class="section">
+    <button class="btn btn-primary" id="extractBtn">
+      🔍 Extract Cart & Send to System
+    </button>
+    <div id="errorBox" class="error-box"></div>
+    <div id="successBox" class="success-box"></div>
+  </div>
+
+  <!-- Results Preview -->
+  <div class="section results" id="resultsSection">
+    <div class="section-title">Extracted Items</div>
+    <div class="result-count">
+      <strong id="itemCount">0</strong> items found
+      <span id="platformBadge" class="platform-badge shein"></span>
+    </div>
+    <div id="itemList"></div>
+    <button class="btn btn-primary" id="sendBtn" style="margin-top:12px">
+      📤 Confirm & Push to eStore API
+    </button>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>

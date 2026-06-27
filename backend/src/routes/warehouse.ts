@@ -9,12 +9,23 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
   const { barcode } = await c.req.json<{ barcode: string }>();
   if (!barcode) return c.json({ error: 'barcode required' }, 400);
 
+  // Lookup chain: item_uid → sku → tracking_number
   let items = await c.env.DB.prepare(
     `SELECT oi.*, o.customer_id, c.full_name as customer_name FROM order_items oi
      JOIN orders o ON oi.order_id = o.id LEFT JOIN customers c ON o.customer_id = c.id
      WHERE oi.item_uid = ? AND oi.tenant_id = ? AND oi.is_deleted = 0`
   ).bind(barcode, tenantId).all();
 
+  // Fallback 2: Search by SKU (Shein/Trendyol physical barcode)
+  if (!items.results?.length) {
+    items = await c.env.DB.prepare(
+      `SELECT oi.*, o.customer_id, c.full_name as customer_name FROM order_items oi
+       JOIN orders o ON oi.order_id = o.id LEFT JOIN customers c ON o.customer_id = c.id
+       WHERE oi.sku = ? AND oi.tenant_id = ? AND oi.is_deleted = 0`
+    ).bind(barcode, tenantId).all();
+  }
+
+  // Fallback 3: Search by tracking number
   if (!items.results?.length) {
     items = await c.env.DB.prepare(
       `SELECT oi.*, o.customer_id, c.full_name as customer_name FROM order_items oi

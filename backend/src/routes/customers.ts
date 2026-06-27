@@ -8,9 +8,20 @@ customerRoutes.get('/', async (c) => {
   const page = parseInt(c.req.query('page') || '1');
   const limit = Math.min(parseInt(c.req.query('limit') || '50'), 100);
   const offset = (page - 1) * limit;
-  const results = await c.env.DB.prepare(
-    `SELECT * FROM customers WHERE tenant_id = ? AND is_deleted = 0 ORDER BY full_name ASC LIMIT ? OFFSET ?`
-  ).bind(tenantId, limit, offset).all();
+  const search = c.req.query('search');
+
+  let query = `SELECT * FROM customers WHERE tenant_id = ? AND is_deleted = 0`;
+  const bindings: any[] = [tenantId];
+
+  if (search) {
+    query += ` AND (full_name LIKE ? OR phone LIKE ?)`;
+    bindings.push(`%${search}%`, `%${search}%`);
+  }
+
+  query += ` ORDER BY full_name ASC LIMIT ? OFFSET ?`;
+  bindings.push(limit, offset);
+
+  const results = await c.env.DB.prepare(query).bind(...bindings).all();
   return c.json({ data: results.results, page, limit });
 });
 
