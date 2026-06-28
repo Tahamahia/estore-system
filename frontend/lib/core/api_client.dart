@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'auth_service.dart';
 
 /// Base API configuration
-const String kBaseUrl = 'http://127.0.0.1:8787/api/v1';
+const String kBaseUrl = String.fromEnvironment('API_BASE_URL', defaultValue: 'http://127.0.0.1:8787/api/v1');
 
 /// Dio instance provider with auth interceptor
 final dioProvider = Provider<Dio>((ref) {

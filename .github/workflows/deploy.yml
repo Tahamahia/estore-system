@@ -74,9 +74,7 @@ jobs:
         run: flutter analyze --no-fatal-infos
 
       - name: Build Flutter Web (Release)
-        run: flutter build web --release
-        env:
-          API_BASE_URL: https://estore-api.tahamax028.workers.dev/api/v1
+        run: flutter build web --release --dart-define=API_BASE_URL=https://estore-api.tahamax028.workers.dev/api/v1
 
       - name: Deploy to Cloudflare Pages
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
