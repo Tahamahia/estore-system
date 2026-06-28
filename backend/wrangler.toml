@@ -7,7 +7,7 @@ compatibility_flags = ["nodejs_compat"]
 [[d1_databases]]
 binding = "DB"
 database_name = "estore-db"
-database_id = "PLACEHOLDER_D1_ID"
+database_id = "9a1be35f-c3a7-4485-9a91-89eff2a88d70"
 
 # ─── R2 Storage (Media) ───────────────────────────────────
 [[r2_buckets]]
@@ -17,7 +17,7 @@ bucket_name = "estore-media"
 # ─── KV Namespace (Idempotency / Caching) ─────────────────
 [[kv_namespaces]]
 binding = "CACHE"
-id = "PLACEHOLDER_KV_ID"
+id = "b4bcf54093924fa1869fc4ff21812629"
 
 # ─── Cron Triggers ─────────────────────────────────────────
 [triggers]
