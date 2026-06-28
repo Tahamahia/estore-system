@@ -7,8 +7,8 @@ on:
     branches: [main]
 
 env:
-  FLUTTER_VERSION: '3.27.4'
-  NODE_VERSION: '20'
+  FLUTTER_VERSION: '3.44.4'
+  NODE_VERSION: '22'
 
 jobs:
   # ─── Backend: Type Check + Test + Deploy to CF Workers ────
@@ -76,7 +76,7 @@ jobs:
       - name: Build Flutter Web (Release)
         run: flutter build web --release
         env:
-          API_BASE_URL: https://estore-api.${{ secrets.CLOUDFLARE_ACCOUNT_ID }}.workers.dev/api/v1
+          API_BASE_URL: https://estore-api.tahamax028.workers.dev/api/v1
 
       - name: Deploy to Cloudflare Pages
         if: github.ref == 'refs/heads/main' && github.event_name == 'push'
@@ -84,4 +84,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy ./frontend/build/web --project-name=estore-web --commit-dirty=true
+          command: pages deploy ./build/web --project-name=estore-web --commit-dirty=true
+          workingDirectory: frontend
