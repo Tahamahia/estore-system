@@ -38,6 +38,30 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
     await _dio.patch('/orders/$id', data: updates);
     await fetchOrders();
   }
+
+  /// Bulk update item status/shipment for night purchasing workflow
+  Future<Map<String, dynamic>> bulkUpdateItems(List<String> itemIds, {String? status, String? shipmentId}) async {
+    final response = await _dio.patch('/orders/items/bulk', data: {
+      'item_ids': itemIds,
+      if (status != null) 'status': status,
+      if (shipmentId != null) 'shipment_id': shipmentId,
+    });
+    return response.data as Map<String, dynamic>;
+  }
+
+  /// Fetch unsorted items for Visual Match feature
+  Future<List<Map<String, dynamic>>> fetchUnsortedItems() async {
+    final response = await _dio.get('/orders/items/unsorted');
+    final data = response.data as Map<String, dynamic>;
+    return List<Map<String, dynamic>>.from(data['data'] ?? []);
+  }
+
+  /// Fetch dispatch readiness by customer (traffic lights)
+  Future<List<Map<String, dynamic>>> fetchDispatchStatus() async {
+    final response = await _dio.get('/orders/items/dispatch-status');
+    final data = response.data as Map<String, dynamic>;
+    return List<Map<String, dynamic>>.from(data['data'] ?? []);
+  }
 }
 
 // ─── Customers Provider ────────────────────────────────────

@@ -193,3 +193,99 @@ orderRoutes.delete('/:id', requireRole('super_admin', 'store_manager'), async (c
 
   return c.json({ message: 'Order soft-deleted', id: orderId });
 });
+
+/**
+ * PATCH /orders/items/bulk — Bulk update item status + tracking number
+ * Used by purchasers after receiving a master tracking number for 50+ items.
+ * Uses db.batch() for atomicity.
+ */
+orderRoutes.patch('/items/bulk', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const body = await c.req.json();
+  const { item_ids, status, shipment_id, tracking_number } = body;
+
+  if (!item_ids?.length) {
+    return c.json({ error: 'Bad Request', message: 'item_ids array is required' }, 400);
+  }
+
+  if (!status && !shipment_id) {
+    return c.json({ error: 'Bad Request', message: 'Provide at least status or shipment_id' }, 400);
+  }
+
+  const stmts: D1PreparedStatement[] = [];
+  const setClauses: string[] = [];
+
+  if (status) setClauses.push(`status = '${status}'`);
+  if (shipment_id) setClauses.push(`shipment_id = '${shipment_id}'`);
+  setClauses.push(`updated_at = datetime('now')`);
+  setClauses.push(`version = version + 1`);
+
+  const setStr = setClauses.join(', ');
+
+  for (const itemId of item_ids) {
+    stmts.push(
+      c.env.DB.prepare(
+        `UPDATE order_items SET ${setStr} WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+      ).bind(itemId, tenantId)
+    );
+  }
+
+  await c.env.DB.batch(stmts);
+
+  return c.json({
+    message: `${item_ids.length} items updated`,
+    updated: item_ids.length,
+    status: status || undefined,
+  });
+});
+
+/**
+ * GET /orders/items/unsorted — Items expected but not yet sorted
+ * Used by the Visual Match feature when physical barcodes are torn/missing.
+ * Returns items with thumbnails for manual identification.
+ */
+orderRoutes.get('/items/unsorted', async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+
+  const items = await c.env.DB.prepare(
+    `SELECT oi.id, oi.product_name, oi.product_image_url, oi.product_thumb_url,
+            oi.color, oi.size, oi.sku, oi.status, oi.order_id,
+            c.full_name as customer_name, c.id as customer_id
+     FROM order_items oi
+     JOIN orders o ON oi.order_id = o.id
+     LEFT JOIN customers c ON o.customer_id = c.id
+     WHERE oi.tenant_id = ? AND oi.is_deleted = 0
+       AND oi.status IN ('purchased', 'shipped', 'arrived_warehouse')
+     ORDER BY c.full_name ASC, oi.product_name ASC`
+  ).bind(tenantId).all();
+
+  return c.json({ data: items.results, total: items.results?.length || 0 });
+});
+
+/**
+ * GET /orders/items/dispatch-status — Customer dispatch readiness grouped view
+ * Returns customers with their item counts and traffic-light status.
+ */
+orderRoutes.get('/items/dispatch-status', async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+
+  const results = await c.env.DB.prepare(
+    `SELECT 
+       c.id as customer_id,
+       c.full_name as customer_name,
+       c.phone,
+       COUNT(oi.id) as total_items,
+       SUM(CASE WHEN oi.status = 'sorted' OR oi.status = 'ready_dispatch' THEN 1 ELSE 0 END) as ready_items,
+       SUM(CASE WHEN oi.status IN ('purchased','shipped','arrived_warehouse') THEN 1 ELSE 0 END) as pending_items,
+       SUM(CASE WHEN oi.status = 'pending' THEN 1 ELSE 0 END) as not_ordered_items
+     FROM order_items oi
+     JOIN orders o ON oi.order_id = o.id
+     LEFT JOIN customers c ON o.customer_id = c.id
+     WHERE oi.tenant_id = ? AND oi.is_deleted = 0
+       AND oi.status NOT IN ('delivered', 'cancelled', 'refunded', 'dispatched')
+     GROUP BY c.id
+     ORDER BY ready_items DESC, c.full_name ASC`
+  ).bind(tenantId).all();
+
+  return c.json({ data: results.results });
+});

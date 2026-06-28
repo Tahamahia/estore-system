@@ -14,6 +14,8 @@ class OrdersScreen extends ConsumerStatefulWidget {
 class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   String _activeFilter = 'all';
   final _searchController = TextEditingController();
+  bool _bulkMode = false;
+  final Set<String> _selectedIds = {};
 
   @override
   void initState() {
@@ -52,6 +54,23 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           Row(children: [
             const Text('All Orders', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white)),
             const Spacer(),
+            // Bulk mode toggle
+            TextButton.icon(
+              onPressed: () => setState(() { _bulkMode = !_bulkMode; _selectedIds.clear(); }),
+              icon: Icon(_bulkMode ? Icons.close : Icons.checklist_rounded, size: 18),
+              label: Text(_bulkMode ? 'Cancel' : 'Bulk Select'),
+              style: TextButton.styleFrom(foregroundColor: _bulkMode ? AppTheme.error : Colors.white70),
+            ),
+            if (_bulkMode && _selectedIds.isNotEmpty) ...[
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () => _showBulkUpdateDialog(),
+                icon: const Icon(Icons.update, size: 18),
+                label: Text('Update ${_selectedIds.length} Items'),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.secondary),
+              ),
+            ],
+            const SizedBox(width: 12),
             ElevatedButton.icon(
               onPressed: _showNewOrderDialog,
               icon: const Icon(Icons.add, size: 20),
@@ -117,7 +136,21 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                         padding: const EdgeInsets.all(16),
                         itemCount: orders.length,
                         separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.darkBorder),
-                        itemBuilder: (context, index) => _OrderTile(order: orders[index]),
+                        itemBuilder: (context, index) {
+                          final order = orders[index];
+                          final id = order['id'] as String? ?? '';
+                          return _OrderTile(
+                            order: order,
+                            bulkMode: _bulkMode,
+                            selected: _selectedIds.contains(id),
+                            onToggle: _bulkMode ? () {
+                              setState(() {
+                                if (_selectedIds.contains(id)) { _selectedIds.remove(id); }
+                                else { _selectedIds.add(id); }
+                              });
+                            } : null,
+                          );
+                        },
                       ),
               ),
             ),
@@ -125,6 +158,27 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
         ],
       ),
     );
+  }
+
+  void _showBulkUpdateDialog() {
+    showDialog(context: context, builder: (_) => _BulkUpdateDialog(
+      selectedCount: _selectedIds.length,
+      onConfirm: (status) async {
+        try {
+          await ref.read(ordersProvider.notifier).bulkUpdateItems(_selectedIds.toList(), status: status);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('✅ ${_selectedIds.length} items updated to "$status"'),
+              backgroundColor: AppTheme.success,
+            ));
+            setState(() { _bulkMode = false; _selectedIds.clear(); });
+            ref.read(ordersProvider.notifier).fetchOrders();
+          }
+        } catch (e) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'), backgroundColor: AppTheme.error));
+        }
+      },
+    ));
   }
 }
 
@@ -159,16 +213,28 @@ class _FilterChip extends StatelessWidget {
 
 class _OrderTile extends StatelessWidget {
   final Map<String, dynamic> order;
-  const _OrderTile({required this.order});
+  final bool bulkMode;
+  final bool selected;
+  final VoidCallback? onToggle;
+  const _OrderTile({required this.order, this.bulkMode = false, this.selected = false, this.onToggle});
 
   @override
   Widget build(BuildContext context) {
     final status = (order['status'] ?? 'pending') as String;
     final color = _statusColor(status);
 
-    return Padding(
+    return InkWell(
+      onTap: bulkMode ? onToggle : null,
+      child: Padding(
       padding: const EdgeInsets.symmetric(vertical: 12),
       child: Row(children: [
+        if (bulkMode) ...[
+          Checkbox(
+            value: selected,
+            onChanged: (_) => onToggle?.call(),
+            activeColor: AppTheme.primary,
+          ),
+        ],
         Container(
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
@@ -201,6 +267,7 @@ class _OrderTile extends StatelessWidget {
           ),
         ]),
       ]),
+      ),
     );
   }
 
@@ -332,6 +399,75 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
               child: _isLoading
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Text('Create Order'),
+            )),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Bulk Update Dialog ────────────────────────────────────
+class _BulkUpdateDialog extends StatefulWidget {
+  final int selectedCount;
+  final Future<void> Function(String status) onConfirm;
+  const _BulkUpdateDialog({required this.selectedCount, required this.onConfirm});
+  @override
+  State<_BulkUpdateDialog> createState() => _BulkUpdateDialogState();
+}
+
+class _BulkUpdateDialogState extends State<_BulkUpdateDialog> {
+  String _status = 'purchased';
+  bool _loading = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: AppTheme.secondary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.checklist_rounded, color: AppTheme.secondary, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Bulk Update', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+                Text('${widget.selectedCount} items selected', style: const TextStyle(color: Colors.white54, fontSize: 13)),
+              ]),
+            ]),
+            const SizedBox(height: 24),
+            const Text('Set status for all selected:', style: TextStyle(color: Colors.white70, fontSize: 13)),
+            const SizedBox(height: 10),
+            Wrap(spacing: 8, runSpacing: 8, children: [
+              for (final s in ['purchased', 'shipped', 'arrived_warehouse', 'sorted', 'ready_dispatch', 'dispatched', 'delivered'])
+                ChoiceChip(
+                  label: Text(s.replaceAll('_', ' ')),
+                  selected: _status == s,
+                  onSelected: (_) => setState(() => _status = s),
+                  selectedColor: AppTheme.primary,
+                  backgroundColor: AppTheme.darkCard,
+                  labelStyle: TextStyle(color: _status == s ? Colors.white : Colors.white70, fontSize: 12),
+                ),
+            ]),
+            const SizedBox(height: 24),
+            SizedBox(height: 48, child: ElevatedButton.icon(
+              onPressed: _loading ? null : () async {
+                setState(() => _loading = true);
+                await widget.onConfirm(_status);
+                if (mounted) Navigator.of(context).pop();
+              },
+              icon: _loading
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.check, size: 20),
+              label: Text(_loading ? 'Updating...' : 'Apply to ${widget.selectedCount} Items'),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
             )),
           ]),
         ),
