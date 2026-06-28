@@ -68,6 +68,9 @@ CREATE TABLE IF NOT EXISTS customers (
 );
 
 CREATE INDEX IF NOT EXISTS idx_customers_tenant ON customers(tenant_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_phone_tenant 
+  ON customers(phone, tenant_id) 
+  WHERE phone IS NOT NULL AND is_deleted = 0;
 
 -- ─── Customer Wallets ──────────────────────────────────────
 CREATE TABLE IF NOT EXISTS customer_wallets (

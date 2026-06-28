@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:estore_app/app/theme.dart';
@@ -283,66 +284,107 @@ class _OrderTile extends StatelessWidget {
   }
 }
 
-// ─── New Order Dialog ──────────────────────────────────────
+// ─── New Order Dialog (Phone-First Identity) ──────────────
 class _NewOrderDialog extends ConsumerStatefulWidget {
   final VoidCallback onCreated;
   const _NewOrderDialog({required this.onCreated});
-
   @override
   ConsumerState<_NewOrderDialog> createState() => _NewOrderDialogState();
 }
 
 class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
-  final _customerIdController = TextEditingController();
-  final _platformController = TextEditingController(text: 'manual');
-  final _rateController = TextEditingController();
-  final _productNameController = TextEditingController();
-  final _priceController = TextEditingController();
+  final _phoneCtrl = TextEditingController();
+  final _nameCtrl = TextEditingController();
+  final _platformCtrl = TextEditingController(text: 'manual');
+  final _productCtrl = TextEditingController();
+  final _priceCtrl = TextEditingController();
   bool _isLoading = false;
   String? _error;
 
+  // Phone-first state
+  String? _existingCustomerId;
+  bool _isLookingUp = false;
+  bool _isExisting = false;
+  Timer? _debounce;
+
+  @override
+  void initState() {
+    super.initState();
+    _phoneCtrl.addListener(_onPhoneChanged);
+  }
+
   @override
   void dispose() {
-    _customerIdController.dispose();
-    _platformController.dispose();
-    _rateController.dispose();
-    _productNameController.dispose();
-    _priceController.dispose();
+    _debounce?.cancel();
+    _phoneCtrl.dispose();
+    _nameCtrl.dispose();
+    _platformCtrl.dispose();
+    _productCtrl.dispose();
+    _priceCtrl.dispose();
     super.dispose();
   }
 
-  Future<void> _createOrder() async {
-    if (_customerIdController.text.isEmpty || _productNameController.text.isEmpty) {
-      setState(() => _error = 'Customer ID and product name are required');
+  void _onPhoneChanged() {
+    _debounce?.cancel();
+    final phone = _phoneCtrl.text.trim();
+    if (phone.length < 5) {
+      setState(() { _isExisting = false; _existingCustomerId = null; });
       return;
     }
+    setState(() => _isLookingUp = true);
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      final result = await ref.read(customersProvider.notifier).lookupByPhone(phone);
+      if (!mounted) return;
+      setState(() {
+        _isLookingUp = false;
+        if (result != null) {
+          _isExisting = true;
+          _existingCustomerId = result['id'] as String?;
+          _nameCtrl.text = result['full_name'] as String? ?? '';
+        } else {
+          _isExisting = false;
+          _existingCustomerId = null;
+        }
+      });
+    });
+  }
 
+  Future<void> _createOrder() async {
+    if (_phoneCtrl.text.trim().isEmpty) { setState(() => _error = 'Phone number is required'); return; }
+    if (_nameCtrl.text.trim().isEmpty) { setState(() => _error = 'Customer name is required'); return; }
+    if (_productCtrl.text.trim().isEmpty) { setState(() => _error = 'Product name is required'); return; }
     setState(() { _isLoading = true; _error = null; });
-
     try {
-      final orderId = const Uuid().v4();
-      final itemId = const Uuid().v4();
+      // Resolve customer via silent upsert
+      String customerId;
+      if (_isExisting && _existingCustomerId != null) {
+        customerId = _existingCustomerId!;
+      } else {
+        final custResult = await ref.read(customersProvider.notifier).createCustomer({
+          'id': const Uuid().v4(),
+          'full_name': _nameCtrl.text.trim(),
+          'phone': _phoneCtrl.text.trim(),
+        });
+        // Silent upsert: backend returns existing ID if phone matches
+        customerId = custResult['id'] as String;
+      }
 
+      final orderId = const Uuid().v4();
       await ref.read(ordersProvider.notifier).createOrder({
         'id': orderId,
-        'customer_id': _customerIdController.text,
-        'platform': _platformController.text,
-        'pegged_exchange_rate': double.tryParse(_rateController.text),
+        'customer_id': customerId,
+        'platform': _platformCtrl.text,
         'items': [{
-          'id': itemId,
-          'product_name': _productNameController.text,
-          'unit_price_foreign': double.tryParse(_priceController.text) ?? 0,
+          'id': const Uuid().v4(),
+          'product_name': _productCtrl.text.trim(),
+          'unit_price_foreign': double.tryParse(_priceCtrl.text) ?? 0,
           'quantity': 1,
         }],
       });
-
       widget.onCreated();
       if (mounted) Navigator.of(context).pop();
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      if (mounted) setState(() => _isLoading = false);
-    }
+    } catch (e) { setState(() => _error = e.toString()); }
+    finally { if (mounted) setState(() => _isLoading = false); }
   }
 
   @override
@@ -357,48 +399,68 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const Text('Create New Order', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
             const SizedBox(height: 24),
-            if (_error != null)
-              Container(
-                padding: const EdgeInsets.all(10),
-                margin: const EdgeInsets.only(bottom: 16),
-                decoration: BoxDecoration(
-                  color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8),
-                ),
-                child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+            if (_error != null) Container(
+              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+              child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+            ),
+            // PHONE FIRST
+            TextField(
+              controller: _phoneCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'Phone Number *',
+                prefixIcon: const Icon(Icons.phone),
+                suffixIcon: _isLookingUp
+                  ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+                  : _isExisting
+                    ? const Icon(Icons.check_circle, color: AppTheme.success)
+                    : _phoneCtrl.text.length >= 5
+                      ? const Icon(Icons.person_add, color: AppTheme.accent)
+                      : null,
               ),
-            TextField(
-              controller: _customerIdController,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'Customer ID', prefixIcon: Icon(Icons.person)),
+            ),
+            if (_isExisting) Container(
+              margin: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: AppTheme.success.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+              child: const Row(children: [
+                Icon(Icons.check_circle_outline, color: AppTheme.success, size: 16), SizedBox(width: 6),
+                Text('✅ Existing Customer', style: TextStyle(color: AppTheme.success, fontSize: 12, fontWeight: FontWeight.w600)),
+              ]),
+            ),
+            if (!_isExisting && _phoneCtrl.text.length >= 5 && !_isLookingUp) Container(
+              margin: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: AppTheme.accent.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+              child: const Row(children: [
+                Icon(Icons.person_add_alt_1, color: AppTheme.accent, size: 16), SizedBox(width: 6),
+                Text('🆕 New Customer', style: TextStyle(color: AppTheme.accent, fontSize: 12, fontWeight: FontWeight.w600)),
+              ]),
             ),
             const SizedBox(height: 12),
             TextField(
-              controller: _productNameController,
+              controller: _nameCtrl,
               style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'Product Name', prefixIcon: Icon(Icons.shopping_bag)),
+              readOnly: _isExisting,
+              decoration: InputDecoration(
+                labelText: 'Customer Name *',
+                prefixIcon: const Icon(Icons.person),
+                filled: _isExisting, fillColor: _isExisting ? AppTheme.darkCard.withValues(alpha: 0.5) : null,
+              ),
             ),
             const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextField(
-                controller: _priceController,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'Price (Foreign)'),
-              )),
-              const SizedBox(width: 12),
-              Expanded(child: TextField(
-                controller: _rateController,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'Exchange Rate'),
-              )),
-            ]),
+            TextField(controller: _productCtrl, style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'Product Name *', prefixIcon: Icon(Icons.shopping_bag))),
+            const SizedBox(height: 12),
+            TextField(controller: _priceCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'Price (Foreign)', prefixIcon: Icon(Icons.attach_money))),
             const SizedBox(height: 24),
             SizedBox(height: 48, child: ElevatedButton(
               onPressed: _isLoading ? null : _createOrder,
               child: _isLoading
-                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('Create Order'),
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Text('Create Order'),
             )),
           ]),
         ),

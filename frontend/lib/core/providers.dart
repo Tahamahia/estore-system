@@ -105,6 +105,20 @@ class CustomersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
     } catch (_) {}
     return null;
   }
+
+  /// Phone-first identity lookup. Returns customer data if found, null if new.
+  Future<Map<String, dynamic>?> lookupByPhone(String phone) async {
+    try {
+      final cleaned = phone.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
+      if (cleaned.length < 5) return null;
+      final response = await _dio.get('/customers', queryParameters: {'phone': cleaned, 'limit': 1});
+      final data = response.data as Map<String, dynamic>;
+      final customers = List<Map<String, dynamic>>.from(data['data'] ?? []);
+      return customers.isNotEmpty ? customers.first : null;
+    } catch (_) {
+      return null;
+    }
+  }
 }
 
 // ─── Shipments Provider ────────────────────────────────────
