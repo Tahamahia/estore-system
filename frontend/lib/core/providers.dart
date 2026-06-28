@@ -67,6 +67,20 @@ class CustomersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
     await fetchCustomers();
     return response.data as Map<String, dynamic>;
   }
+
+  /// Search for an existing customer by name. Returns the first matching ID or null.
+  Future<String?> searchCustomers(String name) async {
+    try {
+      final response = await _dio.get('/customers', queryParameters: {'search': name, 'limit': 5});
+      final data = response.data as Map<String, dynamic>;
+      final customers = List<Map<String, dynamic>>.from(data['data'] ?? []);
+      final match = customers.where(
+        (c) => (c['full_name'] as String?)?.toLowerCase() == name.toLowerCase(),
+      );
+      if (match.isNotEmpty) return match.first['id'] as String;
+    } catch (_) {}
+    return null;
+  }
 }
 
 // ─── Shipments Provider ────────────────────────────────────

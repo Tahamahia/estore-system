@@ -19,6 +19,7 @@ class _DashboardShellState extends State<DashboardShell> {
     if (location.startsWith('/warehouse')) return 2;
     if (location.startsWith('/shipments')) return 3;
     if (location.startsWith('/customers')) return 4;
+    if (location.startsWith('/browser')) return 5;
     return 0;
   }
 
@@ -28,6 +29,7 @@ class _DashboardShellState extends State<DashboardShell> {
     _NavItem(icon: Icons.qr_code_scanner_rounded, label: 'Warehouse', path: '/warehouse'),
     _NavItem(icon: Icons.local_shipping_rounded, label: 'Shipments', path: '/shipments'),
     _NavItem(icon: Icons.people_rounded, label: 'Customers', path: '/customers'),
+    _NavItem(icon: Icons.language_rounded, label: 'Store Browser', path: '/browser'),
   ];
 
   @override

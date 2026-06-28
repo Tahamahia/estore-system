@@ -39,6 +39,9 @@ dependencies:
   
   # QR/Barcode
   qr_flutter: ^4.1.0
+  
+  # In-App Browser (native platforms only — no-op on web)
+  webview_flutter: ^4.12.0
 
 dev_dependencies:
   flutter_test:
