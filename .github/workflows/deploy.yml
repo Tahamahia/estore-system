@@ -46,10 +46,8 @@ jobs:
           workingDirectory: backend
           secrets: |
             JWT_SECRET
-            SENTRY_DSN
         env:
           JWT_SECRET: ${{ secrets.JWT_SECRET }}
-          SENTRY_DSN: ${{ secrets.SENTRY_DSN }}
 
   # ─── Frontend: Analyze + Build + Deploy to CF Pages ───────
   deploy-frontend:
