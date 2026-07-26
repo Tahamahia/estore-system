@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'app/router.dart';
 import 'app/theme.dart';
 import 'core/sentry.dart';
+import 'core/auth_service.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -12,7 +13,11 @@ void main() async {
     dsn: const String.fromEnvironment('SENTRY_DSN', defaultValue: ''),
   );
 
-  runApp(const ProviderScope(child: EstoreApp()));
+  // Create ProviderContainer to load saved auth token before building UI
+  final container = ProviderContainer();
+  await AuthService.loadSavedToken(container);
+
+  runApp(UncontrolledProviderScope(container: container, child: const EstoreApp()));
 }
 
 class EstoreApp extends ConsumerWidget {

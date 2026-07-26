@@ -51,10 +51,10 @@ app.use('*', async (c, next) => {
 
   const corsMiddleware = cors({
     origin: (origin) => {
-      // Allow requests with no origin (e.g. curl, Postman, mobile apps)
-      if (!origin) return '*';
-      // Check if origin matches any allowed origin (supports CF Pages preview URLs)
-      if (allowedOrigins.some(allowed => origin === allowed || origin.endsWith('.pages.dev'))) {
+      // FIX 7: Don't return wildcard for missing origin when credentials: true
+      if (!origin) return '';
+      // Check if origin matches any allowed origin (supports CF Pages preview URLs for estore-web only)
+      if (allowedOrigins.some(allowed => origin === allowed) || origin.endsWith('.estore-web.pages.dev')) {
         return origin;
       }
       return '';  // Block

@@ -5,6 +5,7 @@ import '../features/auth/presentation/login_screen.dart';
 import '../features/dashboard/presentation/dashboard_shell.dart';
 import '../features/dashboard/presentation/overview_screen.dart';
 import '../features/orders/presentation/orders_screen.dart';
+import '../features/orders/presentation/order_detail_screen.dart';
 import '../features/warehouse/presentation/scanning_screen.dart';
 import '../features/shipments/presentation/shipments_screen.dart';
 import '../features/customers/presentation/customers_screen.dart';
@@ -45,6 +46,13 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/orders',
             name: 'orders',
             builder: (context, state) => const OrdersScreen(),
+          ),
+          GoRoute(
+            path: '/orders/:id',
+            name: 'orderDetail',
+            builder: (context, state) => OrderDetailScreen(
+              orderId: state.pathParameters['id']!,
+            ),
           ),
           GoRoute(
             path: '/warehouse',

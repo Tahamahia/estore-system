@@ -44,6 +44,24 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
   }
 
   const item = items.results[0] as any;
+
+  // FIX 12: Validate item status before allowing sort
+  const allowedForSort = ['purchased', 'shipped', 'arrived_warehouse'];
+  if (!allowedForSort.includes(item.status)) {
+    const reason = item.status === 'sorted'
+      ? 'Item is already sorted'
+      : item.status === 'pending'
+        ? 'Item has not been purchased yet'
+        : `Item is in '${item.status}' status and cannot be sorted`;
+    return c.json({
+      found: true,
+      ambiguous: false,
+      error: 'Invalid Status',
+      message: reason,
+      item: { id: item.id, product_name: item.product_name, customer_name: item.customer_name, status: item.status },
+    }, 400);
+  }
+
   await c.env.DB.prepare(
     `UPDATE order_items SET status = 'sorted', sorted_at = datetime('now'), updated_at = datetime('now')
      WHERE id = ? AND tenant_id = ? AND is_deleted = 0`

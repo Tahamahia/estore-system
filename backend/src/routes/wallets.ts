@@ -145,22 +145,27 @@ walletRoutes.post('/debit', requireRole('super_admin', 'store_manager'), async (
   const amountDecimal = body.amount_cents / 100;
   const txId = crypto.randomUUID();
 
-  const stmts = [
-    c.env.DB.prepare(
-      `UPDATE customer_wallets SET
-         balance = balance - ?,
-         updated_at = datetime('now'),
-         version = version + 1
-       WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
-    ).bind(amountDecimal, wallet.id, tenantId, wallet.version),
+  // FIX 10: First update wallet with OCC check, verify it succeeded, THEN insert transaction
+  const walletUpdate = await c.env.DB.prepare(
+    `UPDATE customer_wallets SET
+       balance = balance - ?,
+       updated_at = datetime('now'),
+       version = version + 1
+     WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
+  ).bind(amountDecimal, wallet.id, tenantId, wallet.version).run();
 
-    c.env.DB.prepare(
-      `INSERT INTO wallet_transactions (id, tenant_id, wallet_id, amount, type, reason, reference_id, created_at, updated_at, version)
-       VALUES (?, ?, ?, ?, 'debit', ?, ?, datetime('now'), datetime('now'), 1)`
-    ).bind(txId, tenantId, wallet.id, amountDecimal, body.reason || 'Applied to order', body.reference_id || null),
-  ];
+  if (walletUpdate.meta.changes === 0) {
+    return c.json({
+      error: 'Conflict',
+      message: 'Wallet was modified by another request (version mismatch). Please retry.',
+    }, 409);
+  }
 
-  await c.env.DB.batch(stmts);
+  // OCC check passed — safe to insert the transaction record
+  await c.env.DB.prepare(
+    `INSERT INTO wallet_transactions (id, tenant_id, wallet_id, amount, type, reason, reference_id, created_at, updated_at, version)
+     VALUES (?, ?, ?, ?, 'debit', ?, ?, datetime('now'), datetime('now'), 1)`
+  ).bind(txId, tenantId, wallet.id, amountDecimal, body.reason || 'Applied to order', body.reference_id || null).run();
 
   return c.json({
     message: 'Wallet debited',

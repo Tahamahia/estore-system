@@ -152,9 +152,11 @@ class _StatCard extends StatelessWidget {
   }
 }
 
-class _OrdersChart extends StatelessWidget {
+class _OrdersChart extends ConsumerWidget {
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final dashState = ref.watch(dashboardProvider);
+
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
@@ -164,50 +166,68 @@ class _OrdersChart extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('Order Trends', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
+          const Text('Order Status Overview', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
           const SizedBox(height: 24),
           SizedBox(
             height: 240,
-            child: LineChart(LineChartData(
-              gridData: FlGridData(
-                show: true, drawVerticalLine: false, horizontalInterval: 20,
-                getDrawingHorizontalLine: (value) => FlLine(
-                  color: AppTheme.darkBorder.withValues(alpha: 0.5), strokeWidth: 1,
-                ),
-              ),
-              titlesData: FlTitlesData(
-                rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                bottomTitles: AxisTitles(sideTitles: SideTitles(
-                  showTitles: true,
-                  getTitlesWidget: (value, meta) {
-                    const days = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-                    if (value.toInt() >= 0 && value.toInt() < days.length) {
-                      return Padding(padding: const EdgeInsets.only(top: 8),
-                        child: Text(days[value.toInt()], style: const TextStyle(color: Colors.white38, fontSize: 12)));
-                    }
-                    return const SizedBox();
-                  },
-                )),
-              ),
-              borderData: FlBorderData(show: false),
-              lineBarsData: [
-                LineChartBarData(
-                  spots: const [FlSpot(0, 35), FlSpot(1, 48), FlSpot(2, 42), FlSpot(3, 65),
-                    FlSpot(4, 55), FlSpot(5, 72), FlSpot(6, 58)],
-                  isCurved: true,
-                  gradient: const LinearGradient(colors: [AppTheme.primary, AppTheme.secondary]),
-                  barWidth: 3,
-                  dotData: const FlDotData(show: false),
-                  belowBarData: BarAreaData(show: true,
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter, end: Alignment.bottomCenter,
-                      colors: [AppTheme.primary.withValues(alpha: 0.3), Colors.transparent],
+            child: dashState.when(
+              loading: () => const Center(child: CircularProgressIndicator(strokeWidth: 2)),
+              error: (_, __) => const Center(child: Text('No data', style: TextStyle(color: Colors.white38))),
+              data: (data) {
+                final statusCounts = Map<String, dynamic>.from(data['status_counts'] as Map? ?? {});
+                if (statusCounts.isEmpty) {
+                  return const Center(child: Text('No order data', style: TextStyle(color: Colors.white38)));
+                }
+
+                final entries = statusCounts.entries.toList();
+                final barGroups = <BarChartGroupData>[];
+                final statusColors = <Color>[
+                  AppTheme.warning, AppTheme.primary, AppTheme.secondary,
+                  AppTheme.success, AppTheme.error, AppTheme.accent,
+                  Colors.purpleAccent, Colors.tealAccent,
+                ];
+
+                for (var i = 0; i < entries.length; i++) {
+                  final value = (entries[i].value as num?)?.toDouble() ?? 0;
+                  barGroups.add(BarChartGroupData(
+                    x: i,
+                    barRods: [BarChartRodData(
+                      toY: value,
+                      color: statusColors[i % statusColors.length],
+                      width: 18,
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
+                    )],
+                  ));
+                }
+
+                return BarChart(BarChartData(
+                  gridData: FlGridData(
+                    show: true, drawVerticalLine: false, horizontalInterval: 10,
+                    getDrawingHorizontalLine: (value) => FlLine(
+                      color: AppTheme.darkBorder.withValues(alpha: 0.5), strokeWidth: 1,
                     ),
                   ),
-                ),
-              ],
-            )),
+                  titlesData: FlTitlesData(
+                    rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+                    bottomTitles: AxisTitles(sideTitles: SideTitles(
+                      showTitles: true, reservedSize: 40,
+                      getTitlesWidget: (value, meta) {
+                        final idx = value.toInt();
+                        if (idx >= 0 && idx < entries.length) {
+                          final label = entries[idx].key.replaceAll('_', '\n');
+                          return Padding(padding: const EdgeInsets.only(top: 6),
+                            child: Text(label, style: const TextStyle(color: Colors.white38, fontSize: 9), textAlign: TextAlign.center));
+                        }
+                        return const SizedBox();
+                      },
+                    )),
+                  ),
+                  borderData: FlBorderData(show: false),
+                  barGroups: barGroups,
+                ));
+              },
+            ),
           ),
         ],
       ),
@@ -215,42 +235,77 @@ class _OrdersChart extends StatelessWidget {
   }
 }
 
-class _StatusBreakdown extends StatelessWidget {
+class _StatusBreakdown extends ConsumerWidget {
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    final dashState = ref.watch(dashboardProvider);
+
     return Container(
       padding: const EdgeInsets.all(24),
       decoration: BoxDecoration(
         color: AppTheme.darkSurface, borderRadius: BorderRadius.circular(16),
         border: Border.all(color: AppTheme.darkBorder),
       ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text('Status Breakdown', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
-          const SizedBox(height: 24),
-          SizedBox(
-            height: 200,
-            child: PieChart(PieChartData(
-              sectionsSpace: 3, centerSpaceRadius: 40,
-              sections: [
-                PieChartSectionData(value: 35, title: '35%', color: AppTheme.primary, radius: 50,
-                  titleStyle: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-                PieChartSectionData(value: 25, title: '25%', color: AppTheme.success, radius: 50,
-                  titleStyle: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-                PieChartSectionData(value: 20, title: '20%', color: AppTheme.warning, radius: 50,
-                  titleStyle: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-                PieChartSectionData(value: 20, title: '20%', color: AppTheme.secondary, radius: 50,
-                  titleStyle: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600)),
-              ],
-            )),
-          ),
-          const SizedBox(height: 16),
-          const _LegendItem(color: AppTheme.primary, label: 'Pending', value: '35%'),
-          const _LegendItem(color: AppTheme.success, label: 'Delivered', value: '25%'),
-          const _LegendItem(color: AppTheme.warning, label: 'In Transit', value: '20%'),
-          const _LegendItem(color: AppTheme.secondary, label: 'Sorting', value: '20%'),
-        ],
+      child: dashState.when(
+        loading: () => const SizedBox(height: 280, child: Center(child: CircularProgressIndicator(strokeWidth: 2))),
+        error: (_, __) => const SizedBox(height: 280, child: Center(child: Text('No data', style: TextStyle(color: Colors.white38)))),
+        data: (data) {
+          final statusCounts = Map<String, dynamic>.from(data['status_counts'] as Map? ?? {});
+          if (statusCounts.isEmpty) {
+            return const SizedBox(height: 280, child: Center(child: Text('No status data', style: TextStyle(color: Colors.white38))));
+          }
+
+          final total = statusCounts.values.fold<num>(0, (sum, v) => sum + ((v as num?) ?? 0));
+          final statusColors = {
+            'pending_payment': AppTheme.warning,
+            'paid': AppTheme.primary,
+            'purchased': AppTheme.primary,
+            'shipped': AppTheme.secondary,
+            'arrived_warehouse': AppTheme.accent,
+            'sorted': AppTheme.secondary,
+            'ready_dispatch': Colors.tealAccent,
+            'dispatched': AppTheme.success,
+            'delivered': AppTheme.success,
+            'cancelled': AppTheme.error,
+            'auto_cancelled': AppTheme.error,
+          };
+
+          final sections = <PieChartSectionData>[];
+          final legends = <Widget>[];
+
+          for (final entry in statusCounts.entries) {
+            final value = (entry.value as num?)?.toDouble() ?? 0;
+            if (value <= 0) continue;
+            final pct = total > 0 ? (value / total * 100).round() : 0;
+            final color = statusColors[entry.key] ?? AppTheme.accent;
+            sections.add(PieChartSectionData(
+              value: value, title: '$pct%', color: color, radius: 50,
+              titleStyle: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w600),
+            ));
+            legends.add(_LegendItem(
+              color: color,
+              label: entry.key.replaceAll('_', ' '),
+              value: '${value.toInt()} ($pct%)',
+            ));
+          }
+
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Status Breakdown', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
+              const SizedBox(height: 24),
+              SizedBox(
+                height: 200,
+                child: PieChart(PieChartData(
+                  sectionsSpace: 3, centerSpaceRadius: 40,
+                  sections: sections,
+                )),
+              ),
+              const SizedBox(height: 16),
+              ...legends,
+            ],
+          );
+        },
       ),
     );
   }
@@ -275,3 +330,4 @@ class _LegendItem extends StatelessWidget {
     );
   }
 }
+

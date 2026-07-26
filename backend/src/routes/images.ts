@@ -4,6 +4,51 @@ import { requireRole } from '../middleware/tenant';
 
 export const imageRoutes = new Hono<AppEnv>();
 
+// FIX 6: SSRF Protection — validate URLs before fetching
+function validateImageUrl(url: string): { valid: boolean; error?: string } {
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return { valid: false, error: 'Invalid URL format' };
+  }
+
+  // Only allow http and https protocols
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { valid: false, error: 'Only http:// and https:// protocols are allowed' };
+  }
+
+  // Block non-standard ports (only 80 and 443)
+  if (parsed.port && parsed.port !== '80' && parsed.port !== '443') {
+    return { valid: false, error: 'Non-standard ports are not allowed' };
+  }
+
+  const hostname = parsed.hostname.toLowerCase();
+
+  // Block localhost and loopback
+  if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname === '::1' || hostname === '[::1]') {
+    return { valid: false, error: 'Localhost URLs are not allowed' };
+  }
+
+  // Block private/internal IP ranges
+  const ipMatch = hostname.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (ipMatch) {
+    const [, a, b] = ipMatch.map(Number);
+    if (
+      a === 10 ||                              // 10.0.0.0/8
+      (a === 172 && b >= 16 && b <= 31) ||     // 172.16.0.0/12
+      (a === 192 && b === 168) ||              // 192.168.0.0/16
+      a === 127 ||                              // 127.0.0.0/8
+      (a === 169 && b === 254) ||              // 169.254.0.0/16 (link-local)
+      a === 0                                   // 0.0.0.0/8
+    ) {
+      return { valid: false, error: 'Private/internal IP addresses are not allowed' };
+    }
+  }
+
+  return { valid: true };
+}
+
 /**
  * POST /images/upload — Fetch external image URL → store in R2
  * 
@@ -22,6 +67,12 @@ imageRoutes.post('/upload', requireRole('super_admin', 'store_manager', 'purchas
     return c.json({ error: 'Bad Request', message: 'image_url and item_id are required' }, 400);
   }
 
+  // FIX 6: Validate URL before fetching
+  const urlCheck = validateImageUrl(body.image_url);
+  if (!urlCheck.valid) {
+    return c.json({ error: 'Bad Request', message: `Invalid image URL: ${urlCheck.error}` }, 400);
+  }
+
   try {
     // Fetch the external image
     const response = await fetch(body.image_url, {
@@ -33,6 +84,12 @@ imageRoutes.post('/upload', requireRole('super_admin', 'store_manager', 'purchas
     }
 
     const contentType = response.headers.get('content-type') || 'image/jpeg';
+
+    // FIX 6: Validate content-type is actually an image
+    if (!contentType.startsWith('image/')) {
+      return c.json({ error: 'Bad Request', message: 'URL does not point to an image (invalid content-type)' }, 400);
+    }
+
     const imageBuffer = await response.arrayBuffer();
 
     // Size guard: reject images > 10MB
@@ -106,6 +163,13 @@ imageRoutes.post('/batch', requireRole('super_admin', 'store_manager', 'purchase
 
   for (const item of body.items) {
     try {
+      // FIX 6: Validate URL before fetching in batch
+      const batchUrlCheck = validateImageUrl(item.image_url);
+      if (!batchUrlCheck.valid) {
+        results.push({ item_id: item.item_id, status: 'failed', error: batchUrlCheck.error });
+        continue;
+      }
+
       const response = await fetch(item.image_url, {
         headers: { 'User-Agent': 'eStore-ImageFetcher/1.0' },
       });
@@ -116,6 +180,13 @@ imageRoutes.post('/batch', requireRole('super_admin', 'store_manager', 'purchase
       }
 
       const contentType = response.headers.get('content-type') || 'image/jpeg';
+
+      // FIX 6: Validate content-type is actually an image
+      if (!contentType.startsWith('image/')) {
+        results.push({ item_id: item.item_id, status: 'failed', error: 'Not an image content-type' });
+        continue;
+      }
+
       const imageBuffer = await response.arrayBuffer();
 
       if (imageBuffer.byteLength > 10 * 1024 * 1024) {

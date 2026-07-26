@@ -17,7 +17,13 @@ export const cronHandler = async (event: ScheduledEvent, env: Env, ctx: Executio
 async function backupDatabase(env: Env): Promise<void> {
   try {
     const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-    const tables = ['tenants', 'users', 'customers', 'orders', 'order_items', 'shipments', 'master_shipments'];
+    const tables = [
+      'tenants', 'users', 'customers', 'orders', 'order_items',
+      'shipments', 'master_shipments',
+      // FIX 13: Include all missing tables in backup
+      'customer_wallets', 'wallet_transactions', 'unassigned_items',
+      'local_inventory', 'exchange_rates',
+    ];
     let backup = '';
 
     for (const table of tables) {

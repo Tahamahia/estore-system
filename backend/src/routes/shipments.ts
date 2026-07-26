@@ -99,29 +99,180 @@ shipmentRoutes.patch('/master/:id/arrive', requireRole('super_admin', 'store_man
     return c.json({ error: 'Bad Request', message: 'version required for OCC' }, 400);
   }
 
-  // Update master shipment
-  const masterResult = await c.env.DB.prepare(
-    `UPDATE master_shipments SET status = 'arrived', version = version + 1, updated_at = datetime('now')
-     WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
-  ).bind(masterId, tenantId, version).run();
+  // FIX 11: Run all cascade updates in a single atomic batch
+  const stmts: D1PreparedStatement[] = [];
 
-  if (masterResult.meta.changes === 0) {
+  // Update master shipment
+  stmts.push(
+    c.env.DB.prepare(
+      `UPDATE master_shipments SET status = 'arrived', version = version + 1, updated_at = datetime('now')
+       WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
+    ).bind(masterId, tenantId, version)
+  );
+
+  // Cascade: update all nested shipments
+  stmts.push(
+    c.env.DB.prepare(
+      `UPDATE shipments SET status = 'arrived', updated_at = datetime('now')
+       WHERE master_shipment_id = ? AND tenant_id = ? AND is_deleted = 0`
+    ).bind(masterId, tenantId)
+  );
+
+  // Cascade: update all items in those shipments
+  stmts.push(
+    c.env.DB.prepare(
+      `UPDATE order_items SET status = 'arrived_warehouse', updated_at = datetime('now')
+       WHERE shipment_id IN (
+         SELECT id FROM shipments WHERE master_shipment_id = ? AND tenant_id = ?
+       ) AND tenant_id = ? AND is_deleted = 0`
+    ).bind(masterId, tenantId, tenantId)
+  );
+
+  const results = await c.env.DB.batch(stmts);
+
+  // Check OCC on the master shipment update (first statement)
+  if (results[0].meta.changes === 0) {
     return c.json({ error: 'Conflict', message: 'Version mismatch or not found' }, 409);
   }
 
-  // Cascade: update all nested shipments
-  await c.env.DB.prepare(
-    `UPDATE shipments SET status = 'arrived', updated_at = datetime('now')
-     WHERE master_shipment_id = ? AND tenant_id = ? AND is_deleted = 0`
-  ).bind(masterId, tenantId).run();
-
-  // Cascade: update all items in those shipments
-  await c.env.DB.prepare(
-    `UPDATE order_items SET status = 'arrived_warehouse', updated_at = datetime('now')
-     WHERE shipment_id IN (
-       SELECT id FROM shipments WHERE master_shipment_id = ? AND tenant_id = ?
-     ) AND tenant_id = ? AND is_deleted = 0`
-  ).bind(masterId, tenantId, tenantId).run();
-
   return c.json({ message: 'Master shipment arrived — all nested items updated', id: masterId });
+});
+
+// ─── Single shipment routes (MUST be AFTER /master routes) ──────
+
+/**
+ * GET /shipments/:id — Get single shipment with linked items
+ */
+shipmentRoutes.get('/:id', async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const shipmentId = c.req.param('id');
+
+  const shipment = await c.env.DB.prepare(
+    `SELECT * FROM shipments WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(shipmentId, tenantId).first();
+
+  if (!shipment) {
+    return c.json({ error: 'Not Found', message: 'Shipment not found' }, 404);
+  }
+
+  const items = await c.env.DB.prepare(
+    `SELECT oi.id, oi.product_name, oi.product_image_url, oi.quantity, oi.status,
+            oi.order_id, o.customer_id, c.full_name as customer_name
+     FROM order_items oi
+     JOIN orders o ON oi.order_id = o.id
+     LEFT JOIN customers c ON o.customer_id = c.id
+     WHERE oi.shipment_id = ? AND oi.tenant_id = ? AND oi.is_deleted = 0`
+  ).bind(shipmentId, tenantId).all();
+
+  return c.json({ ...shipment, items: items.results });
+});
+
+/**
+ * PATCH /shipments/:id — Update shipment fields (OCC with version column)
+ */
+shipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const shipmentId = c.req.param('id');
+  const body = await c.req.json();
+  const { version, ...updates } = body;
+
+  if (!version) {
+    return c.json({ error: 'Bad Request', message: 'version field required for OCC' }, 400);
+  }
+
+  // Build dynamic SET clause from allowed fields
+  const setClauses: string[] = [];
+  const values: any[] = [];
+  const allowedFields = ['tracking_number', 'status'];
+
+  for (const field of allowedFields) {
+    if (updates[field] !== undefined) {
+      setClauses.push(`${field} = ?`);
+      values.push(updates[field]);
+    }
+  }
+
+  if (setClauses.length === 0) {
+    return c.json({ error: 'Bad Request', message: 'No valid fields to update' }, 400);
+  }
+
+  setClauses.push(`version = version + 1`);
+  setClauses.push(`updated_at = datetime('now')`);
+
+  const result = await c.env.DB.prepare(
+    `UPDATE shipments SET ${setClauses.join(', ')}
+     WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
+  ).bind(...values, shipmentId, tenantId, version).run();
+
+  if (result.meta.changes === 0) {
+    return c.json({
+      error: 'Conflict',
+      message: 'Shipment was modified by another request (version mismatch) or not found'
+    }, 409);
+  }
+
+  return c.json({ message: 'Shipment updated', id: shipmentId });
+});
+
+/**
+ * PATCH /shipments/:id/arrive — Arrive a single shipment (not master)
+ * Updates shipment status to 'arrived' and cascades to linked items.
+ */
+shipmentRoutes.patch('/:id/arrive', requireRole('super_admin', 'store_manager', 'sorter'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const shipmentId = c.req.param('id');
+  const body = await c.req.json();
+  const { version } = body;
+
+  if (!version) {
+    return c.json({ error: 'Bad Request', message: 'version required for OCC' }, 400);
+  }
+
+  const stmts: D1PreparedStatement[] = [];
+
+  // Update the shipment status
+  stmts.push(
+    c.env.DB.prepare(
+      `UPDATE shipments SET status = 'arrived', version = version + 1, updated_at = datetime('now')
+       WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
+    ).bind(shipmentId, tenantId, version)
+  );
+
+  // Cascade: update all linked items to 'arrived_warehouse'
+  stmts.push(
+    c.env.DB.prepare(
+      `UPDATE order_items SET status = 'arrived_warehouse', updated_at = datetime('now'), version = version + 1
+       WHERE shipment_id = ? AND tenant_id = ? AND is_deleted = 0`
+    ).bind(shipmentId, tenantId)
+  );
+
+  const results = await c.env.DB.batch(stmts);
+
+  // Check OCC on the shipment update (first statement)
+  if (results[0].meta.changes === 0) {
+    return c.json({ error: 'Conflict', message: 'Version mismatch or shipment not found' }, 409);
+  }
+
+  return c.json({ message: 'Shipment arrived — linked items updated to arrived_warehouse', id: shipmentId });
+});
+
+/**
+ * DELETE /shipments/:id — Soft delete a shipment
+ * Restricted to super_admin and store_manager roles.
+ */
+shipmentRoutes.delete('/:id', requireRole('super_admin', 'store_manager'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const userId = c.get('user_id') as string;
+  const shipmentId = c.req.param('id');
+
+  const result = await c.env.DB.prepare(
+    `UPDATE shipments SET is_deleted = 1, deleted_by = ?, deleted_at = datetime('now'), updated_at = datetime('now')
+     WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(userId, shipmentId, tenantId).run();
+
+  if (result.meta.changes === 0) {
+    return c.json({ error: 'Not Found', message: 'Shipment not found' }, 404);
+  }
+
+  return c.json({ message: 'Shipment soft-deleted', id: shipmentId });
 });

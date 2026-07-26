@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
+import { requireRole } from '../middleware/tenant';
 
 export const customerRoutes = new Hono<AppEnv>();
 
@@ -96,4 +97,77 @@ customerRoutes.post('/', async (c) => {
   ).bind(body.id, tenantId, body.full_name, normalizedPhone, body.address || null, body.city || null, body.notes || null).run();
 
   return c.json({ message: 'Customer created', id: body.id, is_existing: false }, 201);
+});
+
+/**
+ * PATCH /customers/:id — Update customer fields (OCC with version column)
+ */
+customerRoutes.patch('/:id', async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const customerId = c.req.param('id');
+  const body = await c.req.json();
+  const { version, ...updates } = body;
+
+  if (!version) {
+    return c.json({ error: 'Bad Request', message: 'version field required for OCC' }, 400);
+  }
+
+  // Build dynamic SET clause from allowed fields
+  const setClauses: string[] = [];
+  const values: any[] = [];
+  const allowedFields = ['full_name', 'phone', 'phone2', 'address', 'city', 'notes'];
+
+  for (const field of allowedFields) {
+    if (updates[field] !== undefined) {
+      if (field === 'phone' || field === 'phone2') {
+        setClauses.push(`${field} = ?`);
+        values.push(normalizePhone(updates[field]));
+      } else {
+        setClauses.push(`${field} = ?`);
+        values.push(updates[field]);
+      }
+    }
+  }
+
+  if (setClauses.length === 0) {
+    return c.json({ error: 'Bad Request', message: 'No valid fields to update' }, 400);
+  }
+
+  setClauses.push(`version = version + 1`);
+  setClauses.push(`updated_at = datetime('now')`);
+
+  const result = await c.env.DB.prepare(
+    `UPDATE customers SET ${setClauses.join(', ')}
+     WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
+  ).bind(...values, customerId, tenantId, version).run();
+
+  if (result.meta.changes === 0) {
+    return c.json({
+      error: 'Conflict',
+      message: 'Customer was modified by another request (version mismatch) or not found'
+    }, 409);
+  }
+
+  return c.json({ message: 'Customer updated', id: customerId });
+});
+
+/**
+ * DELETE /customers/:id — Soft delete a customer
+ * Restricted to super_admin and store_manager roles.
+ */
+customerRoutes.delete('/:id', requireRole('super_admin', 'store_manager'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const userId = c.get('user_id') as string;
+  const customerId = c.req.param('id');
+
+  const result = await c.env.DB.prepare(
+    `UPDATE customers SET is_deleted = 1, deleted_by = ?, deleted_at = datetime('now'), updated_at = datetime('now')
+     WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(userId, customerId, tenantId).run();
+
+  if (result.meta.changes === 0) {
+    return c.json({ error: 'Not Found', message: 'Customer not found' }, 404);
+  }
+
+  return c.json({ message: 'Customer soft-deleted', id: customerId });
 });

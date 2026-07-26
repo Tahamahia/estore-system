@@ -85,9 +85,12 @@ class SyncNotifier extends StateNotifier<SyncState> {
 
       _lastSync = newState.serverTime;
 
-      // Only update state if there are actual changes
-      // This prevents unnecessary widget rebuilds
-      if (newState.dirty || state.orders != newState.orders) {
+      // Always update state from the sync response.
+      // Previously used identity comparison (!=) on maps which only checks
+      // references, not deep equality. Riverpod handles selective widget
+      // rebuilds efficiently, so the perf impact is minimal.
+      if (newState.dirty ||
+          state.serverTime != newState.serverTime) {
         state = newState;
       }
     } on DioException {

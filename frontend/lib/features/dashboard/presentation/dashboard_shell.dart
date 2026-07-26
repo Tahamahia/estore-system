@@ -1,16 +1,19 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:estore_app/app/theme.dart';
+import 'package:estore_app/core/auth_service.dart';
+import 'package:estore_app/core/providers.dart';
 
-class DashboardShell extends StatefulWidget {
+class DashboardShell extends ConsumerStatefulWidget {
   final Widget child;
   const DashboardShell({super.key, required this.child});
 
   @override
-  State<DashboardShell> createState() => _DashboardShellState();
+  ConsumerState<DashboardShell> createState() => _DashboardShellState();
 }
 
-class _DashboardShellState extends State<DashboardShell> {
+class _DashboardShellState extends ConsumerState<DashboardShell> {
   bool _isExpanded = true;
 
   int _selectedIndex(BuildContext context) {
@@ -32,10 +35,61 @@ class _DashboardShellState extends State<DashboardShell> {
     _NavItem(icon: Icons.language_rounded, label: 'Store Browser', path: '/browser'),
   ];
 
+  Future<void> _handleLogout() async {
+    final authService = ref.read(authServiceProvider);
+    await authService.logout();
+    if (mounted) context.go('/login');
+  }
+
+  void _showNotifications(BuildContext context) {
+    final dashData = ref.read(dashboardProvider);
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.darkSurface,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+      builder: (_) => Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
+          const SizedBox(height: 20),
+          const Text('📋 Notifications', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 20),
+          dashData.when(
+            loading: () => const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator())),
+            error: (_, __) => const _NotifRow(icon: Icons.error_outline, color: AppTheme.error, label: 'Could not load data', value: '—'),
+            data: (data) {
+              final needsSorting = (data['items_needing_sorting'] as num?)?.toInt() ?? (data['unsorted_items'] as num?)?.toInt() ?? 0;
+              final readyDispatch = (data['items_ready_dispatch'] as num?)?.toInt() ?? (data['ready_items'] as num?)?.toInt() ?? 0;
+              final totalOrders = (data['total_orders'] as num?)?.toInt() ?? (data['orders_count'] as num?)?.toInt() ?? 0;
+              final pendingOrders = (data['pending_orders'] as num?)?.toInt() ?? 0;
+              return Column(children: [
+                _NotifRow(icon: Icons.sort_rounded, color: AppTheme.warning, label: 'Items needing sorting', value: '$needsSorting'),
+                const SizedBox(height: 12),
+                _NotifRow(icon: Icons.check_circle_outline, color: AppTheme.success, label: 'Ready for dispatch', value: '$readyDispatch'),
+                const SizedBox(height: 12),
+                _NotifRow(icon: Icons.receipt_long, color: AppTheme.primary, label: 'Total orders', value: '$totalOrders'),
+                const SizedBox(height: 12),
+                _NotifRow(icon: Icons.pending_actions, color: AppTheme.accent, label: 'Pending orders', value: '$pendingOrders'),
+              ]);
+            },
+          ),
+          const SizedBox(height: 24),
+        ]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final selected = _selectedIndex(context);
     final isWide = MediaQuery.of(context).size.width > 800;
+
+    // Read user info from provider
+    final user = ref.watch(currentUserProvider);
+    final userName = (user?['full_name'] as String?) ??
+        (user?['email'] as String?) ??
+        'User';
+    final userInitial = userName.isNotEmpty ? userName[0].toUpperCase() : 'U';
 
     return Scaffold(
       body: Row(
@@ -170,25 +224,59 @@ class _DashboardShellState extends State<DashboardShell> {
                       const Spacer(),
                       IconButton(
                         icon: const Icon(Icons.notifications_outlined, color: Colors.white54),
-                        onPressed: () {},
+                        onPressed: () => _showNotifications(context),
                       ),
                       const SizedBox(width: 8),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(
-                          color: AppTheme.darkCard,
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: const Row(
-                          children: [
-                            CircleAvatar(
-                              radius: 14,
-                              backgroundColor: AppTheme.primary,
-                              child: Text('A', style: TextStyle(fontSize: 12, color: Colors.white)),
+                      PopupMenuButton<String>(
+                        offset: const Offset(0, 50),
+                        color: AppTheme.darkCard,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                        onSelected: (value) {
+                          if (value == 'logout') _handleLogout();
+                        },
+                        itemBuilder: (context) => [
+                          PopupMenuItem(
+                            enabled: false,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(userName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+                                if (user?['email'] != null)
+                                  Text(user!['email'] as String, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                              ],
                             ),
-                            SizedBox(width: 8),
-                            Text('Admin', style: TextStyle(color: Colors.white70, fontSize: 13)),
-                          ],
+                          ),
+                          const PopupMenuDivider(),
+                          const PopupMenuItem(
+                            value: 'logout',
+                            child: Row(
+                              children: [
+                                Icon(Icons.logout_rounded, color: AppTheme.error, size: 20),
+                                SizedBox(width: 10),
+                                Text('Logout', style: TextStyle(color: AppTheme.error)),
+                              ],
+                            ),
+                          ),
+                        ],
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                          decoration: BoxDecoration(
+                            color: AppTheme.darkCard,
+                            borderRadius: BorderRadius.circular(20),
+                          ),
+                          child: Row(
+                            children: [
+                              CircleAvatar(
+                                radius: 14,
+                                backgroundColor: AppTheme.primary,
+                                child: Text(userInitial, style: const TextStyle(fontSize: 12, color: Colors.white)),
+                              ),
+                              const SizedBox(width: 8),
+                              Text(userName, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                              const SizedBox(width: 4),
+                              const Icon(Icons.arrow_drop_down, color: Colors.white54, size: 20),
+                            ],
+                          ),
                         ),
                       ),
                     ],
@@ -213,4 +301,34 @@ class _NavItem {
   final String label;
   final String path;
   const _NavItem({required this.icon, required this.label, required this.path});
+}
+
+class _NotifRow extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+  final String value;
+  const _NotifRow({required this.icon, required this.color, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10)),
+          child: Icon(icon, color: color, size: 22),
+        ),
+        const SizedBox(width: 14),
+        Expanded(child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500))),
+        Text(value, style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w700)),
+      ]),
+    );
+  }
 }

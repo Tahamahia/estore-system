@@ -12,6 +12,7 @@ frontend/.packages
 .env
 .env.local
 .dev.vars
+.credentials
 
 # IDE
 .idea/

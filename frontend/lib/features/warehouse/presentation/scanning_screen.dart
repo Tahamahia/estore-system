@@ -6,8 +6,8 @@ import 'package:estore_app/core/providers.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:async';
 
-/// Warehouse Scanning Screen — Phase 8 UX Polish
-/// Features: Audio cues, massive sort UI, visual match for torn barcodes
+/// Warehouse Scanning Screen — Phase 8 UX Polish + Loud Audio + Ambiguous Fix
+/// Features: Haptic cues, massive sort UI, visual match, tappable ambiguous candidates
 class ScanningScreen extends ConsumerStatefulWidget {
   const ScanningScreen({super.key});
   @override
@@ -34,7 +34,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
   @override
   void initState() {
     super.initState();
-    _flashAnimCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 2500));
+    _flashAnimCtrl = AnimationController(vsync: this, duration: const Duration(milliseconds: 3000));
     _flashAnim = CurvedAnimation(parent: _flashAnimCtrl, curve: Curves.easeOut);
     _flashAnimCtrl.addStatusListener((s) {
       if (s == AnimationStatus.completed && mounted) setState(() => _showFlash = false);
@@ -57,10 +57,13 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
   }
 
   void _playAudioCue(bool success) {
-    // Use system sounds — works on all platforms without extra packages
     if (success) {
-      SystemSound.play(SystemSoundType.click);
+      // Triple medium haptic for noisy warehouse — more noticeable than SystemSound.click
+      HapticFeedback.mediumImpact();
+      Future.delayed(const Duration(milliseconds: 100), () => HapticFeedback.mediumImpact());
+      Future.delayed(const Duration(milliseconds: 200), () => HapticFeedback.mediumImpact());
     } else {
+      // Single heavy impact for error
       HapticFeedback.heavyImpact();
     }
   }
@@ -160,6 +163,54 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
     ));
   }
 
+  /// Handle selecting an ambiguous candidate
+  void _selectAmbiguousCandidate(Map<String, dynamic> candidate) {
+    final customerName = candidate['customer_name'] as String? ?? 'Unknown';
+    final productName = candidate['product_name'] as String? ?? 'Unknown';
+    final itemId = candidate['id'] as String? ?? '';
+
+    showDialog(context: context, builder: (_) => AlertDialog(
+      backgroundColor: AppTheme.darkCard,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text('هل هذا هو العنصر الصحيح؟', style: TextStyle(color: Colors.white, fontSize: 18)),
+      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(productName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16)),
+        const SizedBox(height: 8),
+        Text('العميل: $customerName', style: const TextStyle(color: Colors.white70, fontSize: 14)),
+        if (candidate['size'] != null || candidate['color'] != null) ...[
+          const SizedBox(height: 4),
+          Text('${candidate['size'] ?? ''} ${candidate['color'] ?? ''}'.trim(), style: const TextStyle(color: Colors.white54, fontSize: 13)),
+        ],
+      ]),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('إلغاء', style: TextStyle(fontSize: 15)),
+        ),
+        ElevatedButton.icon(
+          onPressed: () async {
+            Navigator.pop(context);
+            try {
+              await ref.read(scanResultProvider.notifier).scanBarcode(itemId);
+              if (mounted) {
+                _playAudioCue(true);
+                _showMassiveFlash(success: true, customer: customerName);
+                ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                  content: Text('✅ تم الفرز إلى $customerName'), backgroundColor: AppTheme.success,
+                ));
+              }
+            } catch (e) {
+              if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
+            }
+          },
+          icon: const Icon(Icons.check, size: 20),
+          label: const Text('نعم، فرز', style: TextStyle(fontSize: 15)),
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+        ),
+      ],
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     return KeyboardListener(
@@ -191,7 +242,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
               ),
             ]),
           ),
-          // Massive flash overlay
+          // Massive flash overlay — BIGGER and LONGER
           if (_showFlash)
             AnimatedBuilder(
               animation: _flashAnim,
@@ -202,34 +253,38 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
                     child: Opacity(
                       opacity: opacity,
                       child: Container(
-                        color: _flashColor.withValues(alpha: 0.85),
+                        color: _flashColor.withValues(alpha: 0.92),
                         child: Center(
                           child: Column(mainAxisSize: MainAxisSize.min, children: [
                             Icon(
                               _flashColor == AppTheme.success ? Icons.check_circle_rounded : Icons.cancel_rounded,
-                              size: 80, color: Colors.white,
+                              size: 100, color: Colors.white,
                             ),
-                            const SizedBox(height: 16),
+                            const SizedBox(height: 20),
                             if (_flashCustomer.isNotEmpty) ...[
-                              Text(_flashCustomer, style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w700)),
-                              const SizedBox(height: 12),
+                              Text(_flashCustomer, style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w700)),
+                              const SizedBox(height: 16),
                             ],
                             if (_flashBin.isNotEmpty && _flashColor == AppTheme.success) ...[
                               Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 40, vertical: 20),
+                                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 28),
                                 decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.2),
-                                  borderRadius: BorderRadius.circular(20),
+                                  color: Colors.white.withValues(alpha: 0.25),
+                                  borderRadius: BorderRadius.circular(24),
                                 ),
                                 child: Column(children: [
-                                  const Text('BIN', style: TextStyle(color: Colors.white70, fontSize: 18, fontWeight: FontWeight.w500)),
-                                  Text(_flashBin, style: const TextStyle(color: Colors.white, fontSize: 72, fontWeight: FontWeight.w900, letterSpacing: 4)),
+                                  const Text('BIN', style: TextStyle(color: Colors.white70, fontSize: 22, fontWeight: FontWeight.w500)),
+                                  Text(_flashBin, style: const TextStyle(color: Colors.white, fontSize: 80, fontWeight: FontWeight.w900, letterSpacing: 6)),
                                 ]),
                               ),
                             ],
+                            if (_flashColor == AppTheme.error) ...[
+                              const SizedBox(height: 16),
+                              const Text('❌ NOT FOUND', style: TextStyle(color: Colors.white, fontSize: 40, fontWeight: FontWeight.w900)),
+                            ],
                             if (_flashProduct.isNotEmpty) ...[
-                              const SizedBox(height: 12),
-                              Text(_flashProduct, style: const TextStyle(color: Colors.white70, fontSize: 18), textAlign: TextAlign.center),
+                              const SizedBox(height: 14),
+                              Text(_flashProduct, style: const TextStyle(color: Colors.white70, fontSize: 20), textAlign: TextAlign.center),
                             ],
                           ]),
                         ),
@@ -305,7 +360,11 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
             : ListView.separated(
                 padding: const EdgeInsets.all(12), itemCount: _scanHistory.length,
                 separatorBuilder: (_, __) => const SizedBox(height: 8),
-                itemBuilder: (context, index) => _ScanTile(scan: _scanHistory[index], onLogOrphan: () => _logOrphan(_scanHistory[index].barcode)),
+                itemBuilder: (context, index) => _ScanTile(
+                  scan: _scanHistory[index],
+                  onLogOrphan: () => _logOrphan(_scanHistory[index].barcode),
+                  onSelectCandidate: _selectAmbiguousCandidate,
+                ),
               ),
         ),
       ]),
@@ -499,7 +558,8 @@ class _ScanResult {
 class _ScanTile extends StatelessWidget {
   final _ScanResult scan;
   final VoidCallback onLogOrphan;
-  const _ScanTile({required this.scan, required this.onLogOrphan});
+  final void Function(Map<String, dynamic> candidate) onSelectCandidate;
+  const _ScanTile({required this.scan, required this.onLogOrphan, required this.onSelectCandidate});
 
   @override
   Widget build(BuildContext context) {
@@ -533,10 +593,32 @@ class _ScanTile extends StatelessWidget {
         ],
         if (scan.status == _ScanStatus.ambiguous && scan.candidates != null) ...[
           const SizedBox(height: 8),
-          ...scan.candidates!.map((c) => Padding(padding: const EdgeInsets.only(top: 4), child: Row(children: [
-            const Icon(Icons.person_outline, size: 16, color: Colors.white54), const SizedBox(width: 6),
-            Text('${c['customer_name']} — ${c['product_name']}', style: const TextStyle(color: Colors.white70, fontSize: 12)),
-          ]))),
+          const Text('اختر العنصر الصحيح:', style: TextStyle(color: Colors.white54, fontSize: 11, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 6),
+          ...scan.candidates!.map((c) => Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: InkWell(
+              onTap: () => onSelectCandidate(c),
+              borderRadius: BorderRadius.circular(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.accent.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: AppTheme.accent.withValues(alpha: 0.3)),
+                ),
+                child: Row(children: [
+                  const Icon(Icons.person_outline, size: 18, color: AppTheme.accent),
+                  const SizedBox(width: 8),
+                  Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Text(c['product_name'] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+                    Text(c['customer_name'] ?? '', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  ])),
+                  const Icon(Icons.touch_app, color: AppTheme.accent, size: 20),
+                ]),
+              ),
+            ),
+          )),
         ],
       ]),
     );

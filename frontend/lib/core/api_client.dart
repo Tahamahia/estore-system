@@ -1,5 +1,6 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 import 'auth_service.dart';
 
 /// Base API configuration
@@ -24,8 +25,7 @@ final dioProvider = Provider<Dio>((ref) {
 
       // Auto-generate idempotency key for mutations
       if (['POST', 'PUT', 'PATCH'].contains(options.method)) {
-        options.headers['Idempotency-Key'] ??=
-            '${DateTime.now().millisecondsSinceEpoch}-${options.path.hashCode}';
+        options.headers['Idempotency-Key'] ??= const Uuid().v4();
       }
       handler.next(options);
     },

@@ -119,6 +119,12 @@ class CustomersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
       return null;
     }
   }
+
+  Future<Map<String, dynamic>> updateCustomer(String id, Map<String, dynamic> data) async {
+    final response = await _dio.patch('/customers/$id', data: data);
+    await fetchCustomers();
+    return response.data as Map<String, dynamic>;
+  }
 }
 
 // ─── Shipments Provider ────────────────────────────────────
@@ -141,6 +147,18 @@ class ShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }
+  }
+
+  Future<Map<String, dynamic>> createShipment(Map<String, dynamic> shipmentData) async {
+    final response = await _dio.post('/shipments', data: shipmentData);
+    await fetchShipments();
+    return response.data as Map<String, dynamic>;
+  }
+
+  Future<Map<String, dynamic>> createMasterShipment(Map<String, dynamic> masterData) async {
+    final response = await _dio.post('/shipments/master', data: masterData);
+    await fetchShipments();
+    return response.data as Map<String, dynamic>;
   }
 }
 

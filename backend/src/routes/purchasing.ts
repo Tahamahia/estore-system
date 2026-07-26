@@ -69,13 +69,13 @@ purchaseRoutes.post('/record', requireRole('super_admin', 'store_manager', 'purc
       c.env.DB.prepare(
         `UPDATE order_items SET
            purchase_price = ?,
-           unit_price_local = ?,
+           purchase_price_local = ?,
            supplier_id = ?,
            status = 'purchased',
            updated_at = datetime('now')
          WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
       ).bind(
-        item.purchase_price_cents / 100,  // Store as decimal dollars
+        item.purchase_price_cents / 100,  // Store as decimal dollars (foreign)
         localCostCents / 100,              // Store as decimal local
         item.supplier_id || null,
         item.item_id,

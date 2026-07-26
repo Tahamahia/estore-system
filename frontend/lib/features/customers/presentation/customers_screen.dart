@@ -13,6 +13,7 @@ class CustomersScreen extends ConsumerStatefulWidget {
 
 class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTickerProviderStateMixin {
   final _searchController = TextEditingController();
+  String _searchText = '';
   late TabController _tabCtrl;
 
   @override
@@ -20,6 +21,9 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
     super.initState();
     _tabCtrl = TabController(length: 2, vsync: this);
     Future.microtask(() => ref.read(customersProvider.notifier).fetchCustomers());
+    _searchController.addListener(() {
+      setState(() => _searchText = _searchController.text.trim().toLowerCase());
+    });
   }
 
   @override
@@ -35,13 +39,36 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
     ));
   }
 
+  void _showEditDialog(Map<String, dynamic> customer) {
+    showDialog(context: context, builder: (_) => _EditCustomerDialog(
+      customer: customer,
+      onUpdated: () => ref.read(customersProvider.notifier).fetchCustomers(),
+    ));
+  }
+
+  String _translateStatus(String status) {
+    switch (status) {
+      case 'pending_payment': return 'في انتظار الدفع';
+      case 'paid': return 'تم الدفع';
+      case 'purchasing': return 'جاري الشراء';
+      case 'purchased': return 'تم الشراء';
+      case 'shipped': return 'تم الشحن';
+      case 'sorted': return 'تم الفرز';
+      case 'ready_dispatch': return 'جاهز للتوصيل';
+      case 'dispatched': return 'في الطريق';
+      case 'delivered': return 'تم التوصيل';
+      default: return status.replaceAll('_', ' ');
+    }
+  }
+
   void _openWhatsApp(String? phone, String name, {int itemCount = 0, String status = 'in progress'}) async {
     if (phone == null || phone.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No phone number'), backgroundColor: AppTheme.warning));
       return;
     }
     final cleanPhone = phone.replaceAll(RegExp(r'[^0-9+]'), '');
-    final msg = Uri.encodeComponent('Hello $name, your order of $itemCount items is currently $status.');
+    final translatedStatus = _translateStatus(status);
+    final msg = Uri.encodeComponent('مرحبا $name، طلبك المكون من $itemCount عناصر حالته: $translatedStatus.');
     final url = Uri.parse('https://wa.me/$cleanPhone?text=$msg');
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
@@ -110,41 +137,55 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
               const Text('Failed to load', style: TextStyle(color: Colors.white70)), const SizedBox(height: 8),
               ElevatedButton(onPressed: () => ref.read(customersProvider.notifier).fetchCustomers(), child: const Text('Retry')),
             ])),
-            data: (customers) => customers.isEmpty
-              ? const Center(child: Text('No customers yet', style: TextStyle(color: Colors.white38)))
-              : ListView.separated(
-                  padding: const EdgeInsets.all(16), itemCount: customers.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.darkBorder),
-                  itemBuilder: (context, index) {
-                    final c = customers[index];
-                    final name = c['full_name'] ?? 'Unknown';
-                    final phone = c['phone'] as String?;
-                    return ListTile(
-                      contentPadding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
-                      leading: CircleAvatar(
-                        backgroundColor: AppTheme.primary.withValues(alpha: 0.2),
-                        child: Text(name[0], style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w600)),
-                      ),
-                      title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
-                      subtitle: Text(phone ?? '', style: const TextStyle(color: Colors.white54, fontSize: 13)),
-                      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                        if (phone != null && phone.isNotEmpty)
-                          IconButton(
-                            icon: const Icon(Icons.chat_rounded, color: Color(0xFF25D366), size: 22),
-                            tooltip: 'WhatsApp',
-                            onPressed: () => _openWhatsApp(phone, name),
-                          ),
-                        if (c['city'] != null) Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                          decoration: BoxDecoration(color: AppTheme.secondary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
-                          child: Text(c['city'], style: const TextStyle(color: AppTheme.secondary, fontSize: 12)),
+            data: (customers) {
+              // Apply local search filter
+              final filtered = _searchText.isEmpty ? customers : customers.where((c) {
+                final name = (c['full_name'] as String? ?? '').toLowerCase();
+                final phone = (c['phone'] as String? ?? '').toLowerCase();
+                final city = (c['city'] as String? ?? '').toLowerCase();
+                return name.contains(_searchText) ||
+                    phone.contains(_searchText) ||
+                    city.contains(_searchText);
+              }).toList();
+
+              if (filtered.isEmpty) {
+                return const Center(child: Text('No customers found', style: TextStyle(color: Colors.white38)));
+              }
+              return ListView.separated(
+                padding: const EdgeInsets.all(16), itemCount: filtered.length,
+                separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.darkBorder),
+                itemBuilder: (context, index) {
+                  final c = filtered[index];
+                  final name = c['full_name'] ?? 'Unknown';
+                  final phone = c['phone'] as String?;
+                  return ListTile(
+                    contentPadding: const EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+                    onTap: () => _showEditDialog(c),
+                    leading: CircleAvatar(
+                      backgroundColor: AppTheme.primary.withValues(alpha: 0.2),
+                      child: Text(name[0], style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w600)),
+                    ),
+                    title: Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w500)),
+                    subtitle: Text(phone ?? '', style: const TextStyle(color: Colors.white54, fontSize: 13)),
+                    trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                      if (phone != null && phone.isNotEmpty)
+                        IconButton(
+                          icon: const Icon(Icons.chat_rounded, color: Color(0xFF25D366), size: 22),
+                          tooltip: 'WhatsApp',
+                          onPressed: () => _openWhatsApp(phone, name),
                         ),
-                        const SizedBox(width: 8),
-                        const Icon(Icons.chevron_right, color: Colors.white38),
-                      ]),
-                    );
-                  },
-                ),
+                      if (c['city'] != null) Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                        decoration: BoxDecoration(color: AppTheme.secondary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+                        child: Text(c['city'], style: const TextStyle(color: AppTheme.secondary, fontSize: 12)),
+                      ),
+                      const SizedBox(width: 8),
+                      const Icon(Icons.chevron_right, color: Colors.white38),
+                    ]),
+                  );
+                },
+              );
+            },
           ),
         ),
       ),
@@ -271,7 +312,7 @@ class _DispatchStatusTabState extends ConsumerState<_DispatchStatusTab> {
   }
 }
 
-// ─── Add Customer Dialog (unchanged) ─────────────────────────
+// ─── Add Customer Dialog ─────────────────────────────────────
 class _AddCustomerDialog extends ConsumerStatefulWidget {
   final VoidCallback onCreated;
   const _AddCustomerDialog({required this.onCreated});
@@ -331,6 +372,104 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
             SizedBox(height: 48, child: ElevatedButton(
               onPressed: _loading ? null : _create,
               child: _loading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Add Customer'),
+            )),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Edit Customer Dialog ─────────────────────────────────────
+class _EditCustomerDialog extends ConsumerStatefulWidget {
+  final Map<String, dynamic> customer;
+  final VoidCallback onUpdated;
+  const _EditCustomerDialog({required this.customer, required this.onUpdated});
+  @override
+  ConsumerState<_EditCustomerDialog> createState() => _EditCustomerDialogState();
+}
+
+class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _phoneCtrl;
+  late final TextEditingController _cityCtrl;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl = TextEditingController(text: widget.customer['full_name'] as String? ?? '');
+    _phoneCtrl = TextEditingController(text: widget.customer['phone'] as String? ?? '');
+    _cityCtrl = TextEditingController(text: widget.customer['city'] as String? ?? '');
+  }
+
+  @override
+  void dispose() { _nameCtrl.dispose(); _phoneCtrl.dispose(); _cityCtrl.dispose(); super.dispose(); }
+
+  Future<void> _save() async {
+    if (_nameCtrl.text.isEmpty) { setState(() => _error = 'Name is required'); return; }
+    setState(() { _loading = true; _error = null; });
+    try {
+      final id = widget.customer['id'] as String;
+      final updates = <String, dynamic>{
+        'full_name': _nameCtrl.text.trim(),
+        'phone': _phoneCtrl.text.trim(),
+        'city': _cityCtrl.text.trim(),
+      };
+      // Include version for optimistic concurrency if available
+      if (widget.customer['version'] != null) {
+        updates['version'] = widget.customer['version'];
+      }
+      await ref.read(customersProvider.notifier).updateCustomer(id, updates);
+      widget.onUpdated();
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Customer updated'), backgroundColor: AppTheme.success));
+      }
+    } catch (e) { setState(() => _error = e.toString()); }
+    finally { if (mounted) setState(() => _loading = false); }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.edit, color: AppTheme.primary, size: 22),
+              ),
+              const SizedBox(width: 12),
+              const Text('Edit Customer', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
+            ]),
+            const SizedBox(height: 24),
+            if (_error != null) Container(
+              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+              child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+            ),
+            TextField(controller: _nameCtrl, style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'Full Name *', prefixIcon: Icon(Icons.person))),
+            const SizedBox(height: 12),
+            TextField(controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'Phone', prefixIcon: Icon(Icons.phone))),
+            const SizedBox(height: 12),
+            TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'City', prefixIcon: Icon(Icons.location_city))),
+            const SizedBox(height: 24),
+            SizedBox(height: 52, child: ElevatedButton.icon(
+              onPressed: _loading ? null : _save,
+              icon: _loading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save, size: 20),
+              label: Text(_loading ? 'Saving...' : 'Save Changes', style: const TextStyle(fontSize: 15)),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
             )),
           ]),
         ),

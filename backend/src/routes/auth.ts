@@ -1,8 +1,15 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
-import { generateJWT } from '../middleware/auth';
+import { generateJWT, authMiddleware } from '../middleware/auth';
+import { tenantMiddleware, requireRole } from '../middleware/tenant';
 
 export const authRoutes = new Hono<AppEnv>();
+
+// Allowed roles for user registration
+const ALLOWED_ROLES = ['super_admin', 'store_manager', 'purchaser', 'sorter', 'driver'];
+
+// Basic email format validation
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
  * POST /api/v1/auth/login
@@ -14,6 +21,14 @@ authRoutes.post('/login', async (c) => {
 
   if (!email || !password) {
     return c.json({ error: 'Bad Request', message: 'Email and password are required' }, 400);
+  }
+
+  if (!EMAIL_REGEX.test(email)) {
+    return c.json({ error: 'Bad Request', message: 'Invalid email format' }, 400);
+  }
+
+  if (password.length < 8) {
+    return c.json({ error: 'Bad Request', message: 'Password must be at least 8 characters' }, 400);
   }
 
   // Query user by email (parameterized — no SQL injection)
@@ -56,10 +71,11 @@ authRoutes.post('/login', async (c) => {
 });
 
 /**
- * POST /api/v1/auth/register (Super Admin only in production)
+ * POST /api/v1/auth/register (Super Admin only)
  * Creates a new user account.
+ * FIX 3: Protected with auth + tenant middleware + super_admin role check.
  */
-authRoutes.post('/register', async (c) => {
+authRoutes.post('/register', authMiddleware, tenantMiddleware, requireRole('super_admin'), async (c) => {
   const body = await c.req.json<{
     id: string; // Client-generated UUID v4
     email: string;
@@ -71,6 +87,22 @@ authRoutes.post('/register', async (c) => {
 
   if (!body.id || !body.email || !body.password || !body.full_name || !body.tenant_id || !body.role) {
     return c.json({ error: 'Bad Request', message: 'All fields are required' }, 400);
+  }
+
+  if (!EMAIL_REGEX.test(body.email)) {
+    return c.json({ error: 'Bad Request', message: 'Invalid email format' }, 400);
+  }
+
+  if (body.password.length < 8) {
+    return c.json({ error: 'Bad Request', message: 'Password must be at least 8 characters' }, 400);
+  }
+
+  if (!body.full_name.trim()) {
+    return c.json({ error: 'Bad Request', message: 'full_name must not be empty' }, 400);
+  }
+
+  if (!ALLOWED_ROLES.includes(body.role)) {
+    return c.json({ error: 'Bad Request', message: `Invalid role. Allowed: ${ALLOWED_ROLES.join(', ')}` }, 400);
   }
 
   const passwordHash = await hashPassword(body.password);

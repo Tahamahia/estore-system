@@ -41,8 +41,14 @@ export const authMiddleware = async (c: Context<AppEnv>, next: Next) => {
       new TextDecoder().decode(base64UrlDecode(parts[1]))
     );
 
-    if (payload.exp && Date.now() / 1000 > payload.exp) {
+    // FIX 4: Reject tokens without exp claim — tokens MUST expire
+    if (!payload.exp || Date.now() / 1000 > payload.exp) {
       return c.json({ error: 'Unauthorized', message: 'Token expired' }, 401);
+    }
+
+    // FIX 4: Validate required claims exist
+    if (!payload.sub || !payload.tenant_id) {
+      return c.json({ error: 'Unauthorized', message: 'Token missing required claims' }, 401);
     }
 
     c.set('user', payload);
