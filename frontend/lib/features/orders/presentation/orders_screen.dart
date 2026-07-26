@@ -88,6 +88,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 label: Text('Update ${_selectedIds.length} Items'),
                 style: ElevatedButton.styleFrom(backgroundColor: AppTheme.secondary),
               ),
+              const SizedBox(width: 8),
+              ElevatedButton.icon(
+                onPressed: () => _showCreateSettlementDialog(),
+                icon: const Icon(Icons.account_balance_wallet_outlined, size: 18),
+                label: Text('تسوية (${_selectedIds.length})'),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+              ),
             ],
             const SizedBox(width: 12),
             ElevatedButton.icon(
@@ -226,6 +233,32 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       },
     ));
   }
+
+  void _showCreateSettlementDialog() {
+    final orderIds = _selectedIds.toList();
+    showDialog(context: context, builder: (_) => _CreateSettlementDialog(
+      selectedCount: orderIds.length,
+      onConfirm: (name, rate) async {
+        try {
+          await ref.read(settlementsProvider.notifier).createSettlement(
+            name: name,
+            exchangeRate: rate,
+            orderIds: orderIds,
+          );
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+              content: Text('✅ تم إنشاء التسوية "$name" لـ ${orderIds.length} طلب'),
+              backgroundColor: AppTheme.success,
+            ));
+            setState(() { _bulkMode = false; _selectedIds.clear(); });
+            ref.read(ordersProvider.notifier).fetchOrders();
+          }
+        } catch (e) {
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل إنشاء التسوية: $e'), backgroundColor: AppTheme.error));
+        }
+      },
+    ));
+  }
 }
 
 class _FilterChip extends StatelessWidget {
@@ -318,6 +351,17 @@ class _OrderTile extends StatelessWidget {
           ],
         )),
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          if (order['settlement_id'] != null)
+            Container(
+              margin: const EdgeInsets.only(bottom: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.success.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(6),
+                border: Border.all(color: AppTheme.success.withValues(alpha: 0.4)),
+              ),
+              child: const Text('تمت التسوية', style: TextStyle(color: AppTheme.success, fontSize: 10, fontWeight: FontWeight.w600)),
+            ),
           if (order['total_local'] != null)
             Text('\$${(order['total_local'] as num).toStringAsFixed(2)}',
               style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
@@ -699,6 +743,105 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
                       Text('جاري البحث عن العميل...'),
                     ])
                   : Text('إنشاء الطلب (${_items.length} منتج${_items.length > 1 ? '' : ''})'),
+            )),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Create Settlement Dialog ──────────────────────────────
+class _CreateSettlementDialog extends StatefulWidget {
+  final int selectedCount;
+  final Future<void> Function(String name, double rate) onConfirm;
+  const _CreateSettlementDialog({required this.selectedCount, required this.onConfirm});
+  @override
+  State<_CreateSettlementDialog> createState() => _CreateSettlementDialogState();
+}
+
+class _CreateSettlementDialogState extends State<_CreateSettlementDialog> {
+  final _nameCtrl = TextEditingController();
+  final _rateCtrl = TextEditingController();
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _rateCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(color: AppTheme.success.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(12)),
+                child: const Icon(Icons.account_balance_wallet_outlined, color: AppTheme.success, size: 22),
+              ),
+              const SizedBox(width: 12),
+              Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('إنشاء تسوية مالية', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+                Text('${widget.selectedCount} طلب محدد', style: const TextStyle(color: Colors.white54, fontSize: 13)),
+              ]),
+            ]),
+            const SizedBox(height: 24),
+            if (_error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+                child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+              ),
+            ],
+            TextField(
+              controller: _nameCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'اسم الدفعة *',
+                hintText: 'مثال: دفعة يوليو 2025',
+                hintStyle: TextStyle(color: Colors.white24),
+                prefixIcon: Icon(Icons.label_outline),
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _rateCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'سعر الصرف الفعلي (د.ل / \$) *',
+                hintText: 'مثال: 5.85',
+                hintStyle: TextStyle(color: Colors.white24),
+                prefixIcon: Icon(Icons.currency_exchange_outlined),
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(height: 48, child: ElevatedButton.icon(
+              onPressed: _loading ? null : () async {
+                final name = _nameCtrl.text.trim();
+                final rate = double.tryParse(_rateCtrl.text.trim());
+                if (name.isEmpty) { setState(() => _error = 'اسم الدفعة مطلوب'); return; }
+                if (rate == null || rate <= 0) { setState(() => _error = 'سعر الصرف يجب أن يكون رقماً موجباً'); return; }
+                setState(() { _loading = true; _error = null; });
+                await widget.onConfirm(name, rate);
+                if (mounted) Navigator.of(context).pop();
+              },
+              icon: _loading
+                ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.check, size: 20),
+              label: Text(_loading ? 'جاري الإنشاء...' : 'إنشاء التسوية'),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
             )),
           ]),
         ),

@@ -17,6 +17,7 @@ import { purchaseRoutes } from './routes/purchasing';
 import { landedCostRoutes } from './routes/landed-cost';
 import { walletRoutes } from './routes/wallets';
 import { syncRoutes } from './routes/sync';
+import { settlementRoutes } from './routes/settlements';
 import { cronHandler } from './cron';
 import { createSentryClient } from './lib/sentry';
 import type { AppEnv } from './types';
@@ -112,6 +113,7 @@ protectedApp.route('/purchasing', purchaseRoutes);
 protectedApp.route('/landed-cost', landedCostRoutes);
 protectedApp.route('/wallets', walletRoutes);
 protectedApp.route('/sync', syncRoutes);
+protectedApp.route('/settlements', settlementRoutes);
 
 app.route('/api/v1', protectedApp);
 

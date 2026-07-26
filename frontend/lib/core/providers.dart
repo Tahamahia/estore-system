@@ -266,3 +266,39 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   final response = await dio.get('/analytics/dashboard');
   return response.data as Map<String, dynamic>;
 });
+
+// ─── Settlements Provider ──────────────────────────────────
+final settlementsProvider = StateNotifierProvider<SettlementsNotifier, AsyncValue<List<Map<String, dynamic>>>>((ref) {
+  return SettlementsNotifier(ref);
+});
+
+class SettlementsNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>>> {
+  final Ref _ref;
+  SettlementsNotifier(this._ref) : super(const AsyncValue.loading());
+
+  Dio get _dio => _ref.read(dioProvider);
+
+  Future<void> fetchSettlements() async {
+    state = const AsyncValue.loading();
+    try {
+      final response = await _dio.get('/settlements');
+      final data = response.data as Map<String, dynamic>;
+      state = AsyncValue.data(List<Map<String, dynamic>>.from(data['data'] ?? []));
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  Future<void> createSettlement({
+    required String name,
+    required double exchangeRate,
+    required List<String> orderIds,
+  }) async {
+    await _dio.post('/settlements', data: {
+      'name': name,
+      'exchange_rate': exchangeRate,
+      'order_ids': orderIds,
+    });
+    await fetchSettlements();
+  }
+}
