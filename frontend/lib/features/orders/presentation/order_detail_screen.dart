@@ -149,16 +149,16 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
           child: Padding(
             padding: const EdgeInsets.all(28),
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              const Text('طباعة الفاتورة', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
+              const Text('تحميل الفاتورة', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
               const SizedBox(height: 8),
               const Text('اختر نوع الفاتورة', style: TextStyle(color: Colors.white54, fontSize: 14)),
               const SizedBox(height: 24),
               SizedBox(height: 52, child: ElevatedButton.icon(
                 onPressed: () {
                   Navigator.of(ctx).pop();
-                  _showPdfPreview(order, items, InvoiceMode.customer);
+                  _downloadInvoice(order, items, InvoiceMode.customer);
                 },
-                icon: const Icon(Icons.person_outline, size: 20),
+                icon: const Icon(Icons.download_outlined, size: 20),
                 label: const Text('نسخة الزبون', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
               )),
@@ -166,9 +166,9 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
               SizedBox(height: 52, child: ElevatedButton.icon(
                 onPressed: () {
                   Navigator.of(ctx).pop();
-                  _showPdfPreview(order, items, InvoiceMode.merchant);
+                  _downloadInvoice(order, items, InvoiceMode.merchant);
                 },
-                icon: const Icon(Icons.store_outlined, size: 20),
+                icon: const Icon(Icons.download_outlined, size: 20),
                 label: const Text('نسخة التاجر', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 style: ElevatedButton.styleFrom(backgroundColor: AppTheme.secondary),
               )),
@@ -179,44 +179,25 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     );
   }
 
-  /// Shows a full-height dialog containing a PdfPreview widget.
-  /// Using a Dialog (not Printing.layoutPdf) avoids hijacking the browser
-  /// URL/history stack on Flutter Web.
-  void _showPdfPreview(Map<String, dynamic> order, List<dynamic> items, InvoiceMode mode) {
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        insetPadding: const EdgeInsets.all(10),
-        backgroundColor: Colors.grey[300],
-        child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Container(
-              color: AppTheme.darkSurface,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
-              child: Row(children: [
-                Text(
-                  mode == InvoiceMode.customer ? 'نسخة الزبون' : 'نسخة التاجر',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
-                ),
-                const Spacer(),
-                IconButton(
-                  icon: const Icon(Icons.close, color: Colors.white70),
-                  onPressed: () => Navigator.of(ctx).pop(),
-                ),
-              ]),
-            ),
-            SizedBox(
-              width: 800,
-              height: 600,
-              child: PdfPreview(
-                build: (format) async => await InvoiceGenerator.generate(order: order, items: items, mode: mode),
-                allowPrinting: true,
-                allowSharing: true,
-                canChangePageFormat: false,
-              ),
-            ),
-          ]),
-        ),
-    );
+  /// Generates a PDF and triggers a browser download (or system share sheet on
+  /// mobile). Uses Printing.sharePdf which does NOT manipulate the browser
+  /// URL/history stack, keeping the user on the Order Detail screen.
+  Future<void> _downloadInvoice(Map<String, dynamic> order, List<dynamic> items, InvoiceMode mode) async {
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      final bytes = await InvoiceGenerator.generate(order: order, items: items, mode: mode);
+      final rawId = (order['id'] as String?) ?? 'order';
+      final shortId = rawId.length >= 8 ? rawId.substring(0, 8).toUpperCase() : rawId.toUpperCase();
+      final label = mode == InvoiceMode.customer ? 'Customer' : 'Merchant';
+      await Printing.sharePdf(bytes: bytes, filename: 'Invoice_${label}_$shortId.pdf');
+    } catch (e) {
+      if (mounted) {
+        messenger.showSnackBar(SnackBar(
+          content: Text('فشل تحميل الفاتورة: $e'),
+          backgroundColor: AppTheme.error,
+        ));
+      }
+    }
   }
 
   void _callPhone(String phone) async {
