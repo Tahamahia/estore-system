@@ -351,176 +351,186 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       return s == 'sorted' || s == 'ready_dispatch';
     });
 
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Back button + title + edit + print buttons
-          Row(children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 28),
-              onPressed: () {
-                if (context.canPop()) { context.pop(); } else { context.go('/orders'); }
-              },
-            ),
-            const SizedBox(width: 8),
-            Expanded(child: Text('تفاصيل الطلب', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white))),
-            IconButton(
-              icon: const Icon(Icons.print_outlined, color: Colors.white70, size: 22),
-              tooltip: 'طباعة الفاتورة',
-              onPressed: _order != null ? _showInvoiceTypeDialog : null,
-            ),
-            IconButton(
-              icon: const Icon(Icons.edit_outlined, color: Colors.white70, size: 22),
-              tooltip: 'تعديل الطلب',
-              onPressed: _order != null ? _showEditOrderDialog : null,
-            ),
-          ]),
-          const SizedBox(height: 20),
+    return Column(
+      children: [
+        // Scrollable body — header card + financial summary + items list all scroll together
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Back button + title + edit + print buttons
+                Row(children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 28),
+                    onPressed: () {
+                      if (context.canPop()) { context.pop(); } else { context.go('/orders'); }
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text('تفاصيل الطلب', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white))),
+                  IconButton(
+                    icon: const Icon(Icons.print_outlined, color: Colors.white70, size: 22),
+                    tooltip: 'طباعة الفاتورة',
+                    onPressed: _order != null ? _showInvoiceTypeDialog : null,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined, color: Colors.white70, size: 22),
+                    tooltip: 'تعديل الطلب',
+                    onPressed: _order != null ? _showEditOrderDialog : null,
+                  ),
+                ]),
+                const SizedBox(height: 20),
 
-          // Order header card
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: AppTheme.darkSurface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
-            ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                CircleAvatar(
-                  radius: 24,
-                  backgroundColor: AppTheme.primary.withValues(alpha: 0.2),
-                  child: Text(customerName.isNotEmpty ? customerName[0] : '?',
-                    style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 20)),
-                ),
-                const SizedBox(width: 14),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                  Text(customerName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18)),
-                  const SizedBox(height: 4),
-                  if (phone != null && phone.isNotEmpty)
-                    GestureDetector(
-                      onTap: () => _callPhone(phone),
-                      child: Row(mainAxisSize: MainAxisSize.min, children: [
-                        const Icon(Icons.phone, color: AppTheme.secondary, size: 16),
-                        const SizedBox(width: 6),
-                        Text(phone, style: const TextStyle(color: AppTheme.secondary, fontSize: 14, fontWeight: FontWeight.w500, decoration: TextDecoration.underline)),
-                      ]),
-                    ),
-                ])),
+                // Order header card
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.all(20),
                   decoration: BoxDecoration(
-                    color: _statusColor(status).withValues(alpha: 0.15),
-                    borderRadius: BorderRadius.circular(12),
+                    color: AppTheme.darkSurface,
+                    borderRadius: BorderRadius.circular(16),
                     border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
                   ),
-                  child: Text(_translateStatus(status),
-                    style: TextStyle(color: _statusColor(status), fontSize: 14, fontWeight: FontWeight.w700)),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      CircleAvatar(
+                        radius: 24,
+                        backgroundColor: AppTheme.primary.withValues(alpha: 0.2),
+                        child: Text(customerName.isNotEmpty ? customerName[0] : '?',
+                          style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 20)),
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Text(customerName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18)),
+                        const SizedBox(height: 4),
+                        if (phone != null && phone.isNotEmpty)
+                          GestureDetector(
+                            onTap: () => _callPhone(phone),
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              const Icon(Icons.phone, color: AppTheme.secondary, size: 16),
+                              const SizedBox(width: 6),
+                              Text(phone, style: const TextStyle(color: AppTheme.secondary, fontSize: 14, fontWeight: FontWeight.w500, decoration: TextDecoration.underline)),
+                            ]),
+                          ),
+                      ])),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: _statusColor(status).withValues(alpha: 0.15),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
+                        ),
+                        child: Text(_translateStatus(status),
+                          style: TextStyle(color: _statusColor(status), fontSize: 14, fontWeight: FontWeight.w700)),
+                      ),
+                    ]),
+                    const SizedBox(height: 12),
+                    Row(children: [
+                      _InfoChip(icon: Icons.storefront, label: platform),
+                      const SizedBox(width: 12),
+                      if (createdAt.isNotEmpty) _InfoChip(icon: Icons.calendar_today, label: createdAt.length > 10 ? createdAt.substring(0, 10) : createdAt),
+                      const SizedBox(width: 12),
+                      _InfoChip(icon: Icons.shopping_bag, label: '${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))} عنصر'),
+                    ]),
+                  ]),
                 ),
-              ]),
-              const SizedBox(height: 12),
-              Row(children: [
-                _InfoChip(icon: Icons.storefront, label: platform),
-                const SizedBox(width: 12),
-                if (createdAt.isNotEmpty) _InfoChip(icon: Icons.calendar_today, label: createdAt.length > 10 ? createdAt.substring(0, 10) : createdAt),
-                const SizedBox(width: 12),
-                _InfoChip(icon: Icons.shopping_bag, label: '${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))} عنصر'),
-              ]),
-            ]),
-          ),
-          const SizedBox(height: 16),
+                const SizedBox(height: 16),
 
-          // Financial summary
-          _FinancialSummaryCard(order: order, items: items),
-          const SizedBox(height: 16),
+                // Financial summary
+                _FinancialSummaryCard(order: order, items: items),
+                const SizedBox(height: 16),
 
-          // Items list header with "Add Item" button
-          Row(children: [
-            Text('العناصر (${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
-            const Spacer(),
-            TextButton.icon(
-              onPressed: _showAddItemDialog,
-              icon: const Icon(Icons.add_circle, color: AppTheme.secondary, size: 20),
-              label: const Text('إضافة منتج', style: TextStyle(color: AppTheme.secondary, fontWeight: FontWeight.w600)),
-            ),
-          ]),
-          const SizedBox(height: 12),
-
-          // Items list
-          Expanded(
-            child: items.isEmpty
-              ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.shopping_bag_outlined, color: Colors.white24, size: 56),
-                  const SizedBox(height: 12),
-                  const Text('لا توجد عناصر في هذا الطلب', style: TextStyle(color: Colors.white38, fontSize: 16)),
-                  const SizedBox(height: 16),
-                  ElevatedButton.icon(
+                // Items list header with "Add Item" button
+                Row(children: [
+                  Text('العناصر (${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+                  const Spacer(),
+                  TextButton.icon(
                     onPressed: _showAddItemDialog,
-                    icon: const Icon(Icons.add_shopping_cart),
-                    label: const Text('إضافة أول منتج'),
-                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14)),
+                    icon: const Icon(Icons.add_circle, color: AppTheme.secondary, size: 20),
+                    label: const Text('إضافة منتج', style: TextStyle(color: AppTheme.secondary, fontWeight: FontWeight.w600)),
                   ),
-                ]))
-              : ListView.separated(
-                  itemCount: items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (context, index) {
-                    final item = items[index] as Map<String, dynamic>;
-                    return _OrderItemCard(item: item, statusColor: _statusColor, translateStatus: _translateStatus, onEdit: () => _showEditItemDialog(item));
-                  },
-                ),
-          ),
+                ]),
+                const SizedBox(height: 12),
 
-          // Action buttons at bottom
-          const SizedBox(height: 16),
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppTheme.darkSurface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppTheme.darkBorder),
+                // Items — shrinkWrap so the list expands to full height inside the ScrollView
+                if (items.isEmpty)
+                  Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 32),
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                      const Icon(Icons.shopping_bag_outlined, color: Colors.white24, size: 56),
+                      const SizedBox(height: 12),
+                      const Text('لا توجد عناصر في هذا الطلب', style: TextStyle(color: Colors.white38, fontSize: 16)),
+                      const SizedBox(height: 16),
+                      ElevatedButton.icon(
+                        onPressed: _showAddItemDialog,
+                        icon: const Icon(Icons.add_shopping_cart),
+                        label: const Text('إضافة أول منتج'),
+                        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14)),
+                      ),
+                    ]),
+                  )
+                else
+                  ListView.separated(
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    itemCount: items.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      final item = items[index] as Map<String, dynamic>;
+                      return _OrderItemCard(item: item, statusColor: _statusColor, translateStatus: _translateStatus, onEdit: () => _showEditItemDialog(item));
+                    },
+                  ),
+                const SizedBox(height: 16),
+              ],
             ),
-            child: Row(children: [
-              Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                onPressed: _showUpdateStatusDialog,
-                icon: const Icon(Icons.update, size: 22),
-                label: const Text('تحديث الحالة', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-              ))),
+          ),
+        ),
+
+        // Action buttons — pinned at the bottom, outside the scroll view
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          decoration: BoxDecoration(
+            color: AppTheme.darkSurface,
+            border: Border(top: BorderSide(color: AppTheme.darkBorder)),
+          ),
+          child: Row(children: [
+            Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
+              onPressed: _showUpdateStatusDialog,
+              icon: const Icon(Icons.update, size: 22),
+              label: const Text('تحديث الحالة', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+            ))),
+            const SizedBox(width: 12),
+            Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
+              onPressed: () => _openWhatsApp(phone, customerName),
+              icon: const Icon(Icons.chat_rounded, size: 22),
+              label: const Text('واتساب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
+            ))),
+            if (hasReadyItems) ...[
               const SizedBox(width: 12),
               Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                onPressed: () => _openWhatsApp(phone, customerName),
-                icon: const Icon(Icons.chat_rounded, size: 22),
-                label: const Text('واتساب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
+                onPressed: () async {
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
+                      'status': 'dispatched',
+                      'version': _order?['version'],
+                    });
+                    await _loadOrder();
+                    if (mounted) messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
+                  } catch (e) {
+                    if (mounted) messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
+                  }
+                },
+                icon: const Icon(Icons.local_shipping, size: 22),
+                label: const Text('إرسال للتوصيل', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
               ))),
-              if (hasReadyItems) ...[
-                const SizedBox(width: 12),
-                Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                  onPressed: () async {
-                    final messenger = ScaffoldMessenger.of(context);
-                    try {
-                      await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
-                        'status': 'dispatched',
-                        'version': _order?['version'],
-                      });
-                      await _loadOrder();
-                      if (mounted) messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
-                    } catch (e) {
-                      if (mounted) messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
-                    }
-                  },
-                  icon: const Icon(Icons.local_shipping, size: 22),
-                  label: const Text('إرسال للتوصيل', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
-                ))),
-              ],
-            ]),
-          ),
-        ],
-      ),
+            ],
+          ]),
+        ),
+      ],
     );
   }
 }
