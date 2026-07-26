@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
@@ -350,8 +351,8 @@ class _InAppBrowserScreenState extends ConsumerState<InAppBrowserScreen> {
       builder: (_) => _ConfirmOrderDialog(
         items: items,
         platform: platform,
-        onConfirm: (customerName, customerPhone) async {
-          await _createOrder(items, platform, customerName, customerPhone);
+        onConfirm: (customerName, customerPhone, existingCustomerId) async {
+          await _createOrder(items, platform, customerName, customerPhone, existingCustomerId: existingCustomerId);
         },
       ),
     );
@@ -361,11 +362,12 @@ class _InAppBrowserScreenState extends ConsumerState<InAppBrowserScreen> {
     List<Map<String, dynamic>> items,
     String platform,
     String customerName,
-    String customerPhone,
-  ) async {
+    String customerPhone, {
+    String? existingCustomerId,
+  }) async {
     // No try/catch: errors propagate to _ConfirmOrderDialog._submit() which
     // sets _error state and keeps the dialog open so the user can retry.
-    final customerId = await _findOrCreateCustomer(customerName, customerPhone);
+    final customerId = existingCustomerId ?? await _findOrCreateCustomer(customerName, customerPhone);
 
     final orderId = const Uuid().v4();
     final orderItems = items.map((item) => {
@@ -420,10 +422,10 @@ class _InAppBrowserScreenState extends ConsumerState<InAppBrowserScreen> {
 
 // ─── Confirmation Dialog ─────────────────────────────────
 
-class _ConfirmOrderDialog extends StatefulWidget {
+class _ConfirmOrderDialog extends ConsumerStatefulWidget {
   final List<Map<String, dynamic>> items;
   final String platform;
-  final Future<void> Function(String name, String phone) onConfirm;
+  final Future<void> Function(String name, String phone, String? existingCustomerId) onConfirm;
 
   const _ConfirmOrderDialog({
     required this.items,
@@ -432,21 +434,80 @@ class _ConfirmOrderDialog extends StatefulWidget {
   });
 
   @override
-  State<_ConfirmOrderDialog> createState() => _ConfirmOrderDialogState();
+  ConsumerState<_ConfirmOrderDialog> createState() => _ConfirmOrderDialogState();
 }
 
-class _ConfirmOrderDialogState extends State<_ConfirmOrderDialog> {
+class _ConfirmOrderDialogState extends ConsumerState<_ConfirmOrderDialog> {
   final _nameCtrl = TextEditingController();
   final _phoneCtrl = TextEditingController();
   bool _sending = false;
   String? _error;
 
+  // Phone dedup
+  String? _existingCustomerId;
+  bool _isLookingUp = false;
+  bool? _isExisting; // null = not yet checked, true = existing, false = new
+  String? _lookupError;
+  Timer? _debounce;
+
   @override
   void dispose() {
+    _debounce?.cancel();
     _nameCtrl.dispose();
     _phoneCtrl.dispose();
     super.dispose();
   }
+
+  void _onPhoneChanged(String value) {
+    _debounce?.cancel();
+    final cleaned = value.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
+    if (cleaned.length < 5) {
+      setState(() {
+        _existingCustomerId = null;
+        _isExisting = null;
+        _lookupError = null;
+        _isLookingUp = false;
+      });
+      return;
+    }
+    setState(() { _isLookingUp = true; _lookupError = null; });
+    _debounce = Timer(const Duration(milliseconds: 500), () async {
+      try {
+        final customer = await ref.read(customersProvider.notifier).lookupByPhone(value);
+        if (!mounted) return;
+        if (customer != null) {
+          _nameCtrl.text = customer['full_name'] as String? ?? '';
+          setState(() {
+            _existingCustomerId = customer['id'] as String;
+            _isExisting = true;
+            _isLookingUp = false;
+            _lookupError = null;
+          });
+        } else {
+          setState(() {
+            _existingCustomerId = null;
+            _isExisting = false;
+            _isLookingUp = false;
+            _lookupError = null;
+          });
+        }
+      } on PhoneLookupException catch (e) {
+        if (!mounted) return;
+        setState(() {
+          _lookupError = e.toString();
+          _isLookingUp = false;
+          _isExisting = null;
+          _existingCustomerId = null;
+        });
+      }
+    });
+  }
+
+  bool get _canSubmit =>
+      !_sending &&
+      !_isLookingUp &&
+      _lookupError == null &&
+      _nameCtrl.text.trim().isNotEmpty;
 
   @override
   Widget build(BuildContext context) {
@@ -454,7 +515,7 @@ class _ConfirmOrderDialogState extends State<_ConfirmOrderDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 640),
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 680),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
@@ -492,7 +553,7 @@ class _ConfirmOrderDialogState extends State<_ConfirmOrderDialog> {
               ),
               const SizedBox(height: 16),
 
-              // Error
+              // Submit error
               if (_error != null)
                 Container(
                   padding: const EdgeInsets.all(10),
@@ -573,24 +634,58 @@ class _ConfirmOrderDialogState extends State<_ConfirmOrderDialog> {
               ),
               const SizedBox(height: 16),
 
-              // Customer fields
+              // Phone field (first — phone-first identity)
               TextField(
-                controller: _nameCtrl,
+                controller: _phoneCtrl,
                 style: const TextStyle(color: Colors.white),
+                keyboardType: TextInputType.phone,
+                onChanged: _onPhoneChanged,
                 decoration: InputDecoration(
-                  labelText: 'Customer Name *',
-                  prefixIcon: const Icon(Icons.person_outline),
+                  labelText: 'Phone (optional)',
+                  prefixIcon: const Icon(Icons.phone_outlined),
+                  suffixIcon: _isLookingUp
+                      ? const Padding(
+                          padding: EdgeInsets.all(12),
+                          child: SizedBox(width: 16, height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.primary)))
+                      : null,
                   filled: true, fillColor: AppTheme.darkCard,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
                 ),
               ),
+
+              // Phone dedup status banner
+              if (_isExisting == true)
+                _DedupBanner(
+                  icon: Icons.check_circle_rounded,
+                  color: AppTheme.success,
+                  message: 'عميل موجود — ${_nameCtrl.text}',
+                )
+              else if (_isExisting == false)
+                const _DedupBanner(
+                  icon: Icons.person_add_rounded,
+                  color: AppTheme.secondary,
+                  message: 'عميل جديد — سيتم إنشاؤه',
+                )
+              else if (_lookupError != null)
+                _DedupBanner(
+                  icon: Icons.cloud_off_rounded,
+                  color: AppTheme.error,
+                  message: _lookupError!,
+                  onRetry: () => _onPhoneChanged(_phoneCtrl.text),
+                ),
+
               const SizedBox(height: 10),
+
+              // Name field — auto-filled and read-only for existing customers
               TextField(
-                controller: _phoneCtrl,
-                style: const TextStyle(color: Colors.white),
+                controller: _nameCtrl,
+                readOnly: _isExisting == true,
+                onChanged: (_) => setState(() {}),
+                style: TextStyle(color: _isExisting == true ? Colors.white54 : Colors.white),
                 decoration: InputDecoration(
-                  labelText: 'Phone (optional)',
-                  prefixIcon: const Icon(Icons.phone_outlined),
+                  labelText: 'Customer Name *',
+                  prefixIcon: const Icon(Icons.person_outline),
                   filled: true, fillColor: AppTheme.darkCard,
                   border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide.none),
                 ),
@@ -601,7 +696,7 @@ class _ConfirmOrderDialogState extends State<_ConfirmOrderDialog> {
               SizedBox(
                 height: 48,
                 child: ElevatedButton.icon(
-                  onPressed: _sending ? null : _submit,
+                  onPressed: _canSubmit ? _submit : null,
                   icon: _sending
                     ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                     : const Icon(Icons.send_rounded, size: 20),
@@ -626,13 +721,48 @@ class _ConfirmOrderDialogState extends State<_ConfirmOrderDialog> {
     }
     setState(() { _sending = true; _error = null; });
     try {
-      await widget.onConfirm(_nameCtrl.text.trim(), _phoneCtrl.text.trim());
+      await widget.onConfirm(_nameCtrl.text.trim(), _phoneCtrl.text.trim(), _existingCustomerId);
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _sending = false);
     }
+  }
+}
+
+// ─── Dedup Banner ─────────────────────────────────────────
+
+class _DedupBanner extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String message;
+  final VoidCallback? onRetry;
+  const _DedupBanner({required this.icon, required this.color, required this.message, this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.3)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 8),
+          Expanded(child: Text(message, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w500))),
+          if (onRetry != null)
+            GestureDetector(
+              onTap: onRetry,
+              child: Text('إعادة المحاولة', style: TextStyle(color: color, fontSize: 12, decoration: TextDecoration.underline)),
+            ),
+        ],
+      ),
+    );
   }
 }
 

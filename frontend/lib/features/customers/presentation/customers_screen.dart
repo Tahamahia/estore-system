@@ -204,6 +204,7 @@ class _DispatchStatusTab extends ConsumerStatefulWidget {
 class _DispatchStatusTabState extends ConsumerState<_DispatchStatusTab> {
   List<Map<String, dynamic>>? _data;
   bool _loading = true;
+  String? _error;
 
   @override
   void initState() {
@@ -212,17 +213,37 @@ class _DispatchStatusTabState extends ConsumerState<_DispatchStatusTab> {
   }
 
   Future<void> _load() async {
+    if (mounted) setState(() { _loading = true; _error = null; });
     try {
       final data = await ref.read(ordersProvider.notifier).fetchDispatchStatus();
       if (mounted) setState(() { _data = data; _loading = false; });
     } catch (e) {
-      if (mounted) setState(() => _loading = false);
+      if (mounted) setState(() { _loading = false; _error = e.toString(); });
     }
   }
 
   @override
   Widget build(BuildContext context) {
     if (_loading) return const Center(child: CircularProgressIndicator());
+
+    // Show explicit error state with retry — never silently show "no data" on failure
+    if (_error != null) {
+      return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+        const Icon(Icons.cloud_off_rounded, color: AppTheme.error, size: 56),
+        const SizedBox(height: 16),
+        const Text('فشل تحميل البيانات', style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w600)),
+        const SizedBox(height: 6),
+        Text(_error!, style: const TextStyle(color: Colors.white38, fontSize: 12), textAlign: TextAlign.center),
+        const SizedBox(height: 20),
+        ElevatedButton.icon(
+          onPressed: _load,
+          icon: const Icon(Icons.refresh, size: 20),
+          label: const Text('إعادة المحاولة'),
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12)),
+        ),
+      ]));
+    }
+
     if (_data == null || _data!.isEmpty) {
       return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.check_circle_outline, size: 56, color: Colors.white.withValues(alpha: 0.2)),

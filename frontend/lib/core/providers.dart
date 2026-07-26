@@ -53,9 +53,12 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
     return response.data as Map<String, dynamic>;
   }
 
+  /// Patches an order. Does NOT refresh the list automatically — callers
+  /// (e.g. OrderDetailScreen._loadOrder) are responsible for re-fetching
+  /// their own view so the orders list doesn't reload while the detail screen
+  /// is still open (race condition / stale-render).
   Future<void> updateOrder(String id, Map<String, dynamic> updates) async {
     await _dio.patch('/orders/$id', data: updates);
-    await fetchOrders();
   }
 
   Future<Map<String, dynamic>> fetchOrderById(String id) async {
@@ -129,6 +132,8 @@ class CustomersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
   }
 
   /// Search for an existing customer by name. Returns the first matching ID or null.
+  /// Logs errors via debugPrint so callers can still get null on failure without crashing,
+  /// but the failure is visible in debug output rather than silently swallowed.
   Future<String?> searchCustomers(String name) async {
     try {
       final response = await _dio.get('/customers', queryParameters: {'search': name, 'limit': 5});
@@ -138,7 +143,13 @@ class CustomersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
         (c) => (c['full_name'] as String?)?.toLowerCase() == name.toLowerCase(),
       );
       if (match.isNotEmpty) return match.first['id'] as String;
-    } catch (_) {}
+    } on DioException catch (e) {
+      // ignore: avoid_print
+      print('[searchCustomers] Network error for "$name": ${e.message}');
+    } catch (e) {
+      // ignore: avoid_print
+      print('[searchCustomers] Unexpected error for "$name": $e');
+    }
     return null;
   }
 
