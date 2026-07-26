@@ -2,6 +2,12 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { requireRole } from '../middleware/tenant';
 
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) chunks.push(arr.slice(i, i + size));
+  return chunks;
+}
+
 export const orderRoutes = new Hono<AppEnv>();
 
 /**
@@ -126,24 +132,26 @@ orderRoutes.patch('/items/bulk', requireRole('super_admin', 'store_manager', 'pu
   const body = await c.req.json();
   const { item_ids, order_ids, status, shipment_id, tracking_number } = body;
 
+  // D1 hard limit: 100 statements per batch() call. Use 99 to stay safely under.
+  const D1_BATCH_LIMIT = 99;
+
   // Resolve the final list of item IDs to update
   let resolvedItemIds: string[] = item_ids || [];
 
-  // If order_ids provided, look up all items for those orders
+  // If order_ids provided, look up all items for those orders.
+  // Chunk into batches of D1_BATCH_LIMIT to avoid the 100-statement D1 limit.
   if (order_ids?.length) {
-    const stmts: D1PreparedStatement[] = [];
-    for (const orderId of order_ids) {
-      stmts.push(
+    const orderIdChunks = chunkArray(order_ids as string[], D1_BATCH_LIMIT);
+    for (const chunk of orderIdChunks) {
+      const stmts = chunk.map((orderId: string) =>
         c.env.DB.prepare(
           `SELECT id FROM order_items WHERE order_id = ? AND tenant_id = ? AND is_deleted = 0`
         ).bind(orderId, tenantId)
       );
-    }
-    const results = await c.env.DB.batch(stmts);
-    for (const result of results) {
-      const rows = result.results as any[];
-      for (const row of rows) {
-        resolvedItemIds.push(row.id);
+      const results = await c.env.DB.batch(stmts);
+      for (const result of results) {
+        const rows = result.results as any[];
+        for (const row of rows) resolvedItemIds.push(row.id);
       }
     }
   }
@@ -156,7 +164,7 @@ orderRoutes.patch('/items/bulk', requireRole('super_admin', 'store_manager', 'pu
     return c.json({ error: 'Bad Request', message: 'Provide at least status or shipment_id' }, 400);
   }
 
-  // FIX 1: Build parameterized SET clauses instead of string-interpolated values
+  // Build parameterized SET clauses
   const setClauses: string[] = [];
   const paramValues: any[] = [];
 
@@ -173,16 +181,16 @@ orderRoutes.patch('/items/bulk', requireRole('super_admin', 'store_manager', 'pu
 
   const setStr = setClauses.join(', ');
 
-  const updateStmts: D1PreparedStatement[] = [];
-  for (const itemId of resolvedItemIds) {
-    updateStmts.push(
+  // Chunk updates to stay under the D1 batch limit
+  const updateChunks = chunkArray(resolvedItemIds, D1_BATCH_LIMIT);
+  for (const chunk of updateChunks) {
+    const updateStmts = chunk.map((itemId: string) =>
       c.env.DB.prepare(
         `UPDATE order_items SET ${setStr} WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
       ).bind(...paramValues, itemId, tenantId)
     );
+    await c.env.DB.batch(updateStmts);
   }
-
-  await c.env.DB.batch(updateStmts);
 
   return c.json({
     message: `${resolvedItemIds.length} items updated`,

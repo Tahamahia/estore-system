@@ -363,47 +363,39 @@ class _InAppBrowserScreenState extends ConsumerState<InAppBrowserScreen> {
     String customerName,
     String customerPhone,
   ) async {
-    try {
-      // Find or create customer
-      final customerId = await _findOrCreateCustomer(customerName, customerPhone);
+    // No try/catch: errors propagate to _ConfirmOrderDialog._submit() which
+    // sets _error state and keeps the dialog open so the user can retry.
+    final customerId = await _findOrCreateCustomer(customerName, customerPhone);
 
-      // Create order with items
-      final orderId = const Uuid().v4();
-      final orderItems = items.map((item) => {
-        'id': const Uuid().v4(),
-        'product_name': item['product_name'] ?? 'Unknown',
-        'product_image_url': item['image_url'] ?? '',
-        'quantity': item['quantity'] ?? 1,
-        'unit_price_foreign': (item['price'] as num?)?.toDouble() ?? 0,
-        'unit_price_local': 0,
-        'color': item['color'] ?? '',
-        'size': item['size'] ?? '',
-        'sku': item['sku'] ?? '',
-        'notes': 'Extracted from $platform via In-App Browser',
-      }).toList();
+    final orderId = const Uuid().v4();
+    final orderItems = items.map((item) => {
+      'id': const Uuid().v4(),
+      'product_name': item['product_name'] ?? 'Unknown',
+      'product_image_url': item['image_url'] ?? '',
+      'quantity': item['quantity'] ?? 1,
+      'unit_price_foreign': (item['price'] as num?)?.toDouble() ?? 0,
+      'unit_price_local': 0,
+      'color': item['color'] ?? '',
+      'size': item['size'] ?? '',
+      'sku': item['sku'] ?? '',
+      'notes': 'Extracted from $platform via In-App Browser',
+    }).toList();
 
-      await ref.read(ordersProvider.notifier).createOrder({
-        'id': orderId,
-        'customer_id': customerId,
-        'platform': platform,
-        'currency': 'USD',
-        'items': orderItems,
-      });
+    await ref.read(ordersProvider.notifier).createOrder({
+      'id': orderId,
+      'customer_id': customerId,
+      'platform': platform,
+      'currency': 'USD',
+      'items': orderItems,
+    });
 
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ Order created! ${items.length} items pushed.'),
-            backgroundColor: AppTheme.success,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed: $e'), backgroundColor: AppTheme.error),
-        );
-      }
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('✅ Order created! ${items.length} items pushed.'),
+          backgroundColor: AppTheme.success,
+        ),
+      );
     }
   }
 

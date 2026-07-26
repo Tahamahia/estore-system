@@ -57,13 +57,16 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
   }
 
   void _playAudioCue(bool success) {
+    // SystemSound.click is the only built-in cross-platform sound Flutter exposes.
+    // It works on iOS; on Android/desktop it fires the platform UI click sound.
+    // Browsers may gate it behind an AudioContext resume, but the scan KeyEvent
+    // itself is a user-gesture so browsers should allow it after the first tap.
+    SystemSound.play(SystemSoundType.click);
     if (success) {
-      // Triple medium haptic for noisy warehouse — more noticeable than SystemSound.click
       HapticFeedback.mediumImpact();
       Future.delayed(const Duration(milliseconds: 100), () => HapticFeedback.mediumImpact());
       Future.delayed(const Duration(milliseconds: 200), () => HapticFeedback.mediumImpact());
     } else {
-      // Single heavy impact for error
       HapticFeedback.heavyImpact();
     }
   }
@@ -266,16 +269,25 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
                               const SizedBox(height: 16),
                             ],
                             if (_flashBin.isNotEmpty && _flashColor == AppTheme.success) ...[
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 50, vertical: 28),
-                                decoration: BoxDecoration(
-                                  color: Colors.white.withValues(alpha: 0.25),
-                                  borderRadius: BorderRadius.circular(24),
+                              // ConstrainedBox prevents overflow on tablets < ~500px wide.
+                              // FittedBox inside scales the BIN digit down gracefully.
+                              ConstrainedBox(
+                                constraints: const BoxConstraints(maxWidth: 300),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withValues(alpha: 0.25),
+                                    borderRadius: BorderRadius.circular(24),
+                                  ),
+                                  child: Column(children: [
+                                    const Text('BIN', style: TextStyle(color: Colors.white70, fontSize: 20, fontWeight: FontWeight.w500)),
+                                    const SizedBox(height: 4),
+                                    FittedBox(
+                                      fit: BoxFit.scaleDown,
+                                      child: Text(_flashBin, style: const TextStyle(color: Colors.white, fontSize: 80, fontWeight: FontWeight.w900, letterSpacing: 6)),
+                                    ),
+                                  ]),
                                 ),
-                                child: Column(children: [
-                                  const Text('BIN', style: TextStyle(color: Colors.white70, fontSize: 22, fontWeight: FontWeight.w500)),
-                                  Text(_flashBin, style: const TextStyle(color: Colors.white, fontSize: 80, fontWeight: FontWeight.w900, letterSpacing: 6)),
-                                ]),
                               ),
                             ],
                             if (_flashColor == AppTheme.error) ...[
