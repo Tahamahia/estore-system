@@ -39,6 +39,15 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
     await fetchOrders();
   }
 
+  Future<Map<String, dynamic>> fetchOrderById(String id) async {
+    final response = await _dio.get('/orders/$id');
+    return response.data as Map<String, dynamic>;
+  }
+
+  Future<void> addItemToOrder(String orderId, Map<String, dynamic> itemData) async {
+    await _dio.post('/orders/$orderId/items', data: itemData);
+  }
+
   /// Bulk update item status/shipment for night purchasing workflow
   Future<Map<String, dynamic>> bulkUpdateItems(List<String> itemIds, {String? status, String? shipmentId}) async {
     final response = await _dio.patch('/orders/items/bulk', data: {

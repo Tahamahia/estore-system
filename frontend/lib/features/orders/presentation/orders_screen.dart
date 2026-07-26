@@ -345,6 +345,7 @@ class _NewOrderDialog extends ConsumerStatefulWidget {
 
 class _ItemEntry {
   final TextEditingController productCtrl;
+  final TextEditingController urlCtrl;
   final TextEditingController priceCtrl;
   final TextEditingController sizeCtrl;
   final TextEditingController colorCtrl;
@@ -352,6 +353,7 @@ class _ItemEntry {
 
   _ItemEntry()
     : productCtrl = TextEditingController(),
+      urlCtrl = TextEditingController(),
       priceCtrl = TextEditingController(),
       sizeCtrl = TextEditingController(),
       colorCtrl = TextEditingController(),
@@ -359,6 +361,7 @@ class _ItemEntry {
 
   void dispose() {
     productCtrl.dispose();
+    urlCtrl.dispose();
     priceCtrl.dispose();
     sizeCtrl.dispose();
     colorCtrl.dispose();
@@ -384,6 +387,8 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
   void initState() {
     super.initState();
     _phoneCtrl.addListener(_onPhoneChanged);
+    // Rebuild on name change so _canSubmit is re-evaluated
+    _nameCtrl.addListener(() => setState(() {}));
   }
 
   @override
@@ -421,6 +426,14 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
     });
   }
 
+  // Submit is only allowed when: phone has been typed, lookup finished, name resolved, at least one item named.
+  bool get _canSubmit {
+    if (_isLoading || _isLookingUp) return false;
+    if (_phoneCtrl.text.trim().length < 5) return false;
+    if (_nameCtrl.text.trim().isEmpty) return false;
+    return _items.any((item) => item.productCtrl.text.trim().isNotEmpty);
+  }
+
   void _addItem() {
     setState(() => _items.add(_ItemEntry()));
   }
@@ -434,14 +447,12 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
   }
 
   Future<void> _createOrder() async {
-    if (_phoneCtrl.text.trim().isEmpty) { setState(() => _error = 'Phone number is required'); return; }
-    if (_nameCtrl.text.trim().isEmpty) { setState(() => _error = 'Customer name is required'); return; }
-    // Validate at least one item has a product name
+    if (_phoneCtrl.text.trim().isEmpty) { setState(() => _error = 'رقم الهاتف مطلوب'); return; }
+    if (_nameCtrl.text.trim().isEmpty) { setState(() => _error = 'اسم العميل مطلوب'); return; }
     final hasValidItem = _items.any((item) => item.productCtrl.text.trim().isNotEmpty);
-    if (!hasValidItem) { setState(() => _error = 'At least one product name is required'); return; }
+    if (!hasValidItem) { setState(() => _error = 'يجب إدخال اسم منتج واحد على الأقل'); return; }
     setState(() { _isLoading = true; _error = null; });
     try {
-      // Resolve customer via silent upsert
       String customerId;
       if (_isExisting && _existingCustomerId != null) {
         customerId = _existingCustomerId!;
@@ -451,7 +462,6 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
           'full_name': _nameCtrl.text.trim(),
           'phone': _phoneCtrl.text.trim(),
         });
-        // Silent upsert: backend returns existing ID if phone matches
         customerId = custResult['id'] as String;
       }
 
@@ -461,6 +471,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
         .map((item) => {
           'id': const Uuid().v4(),
           'product_name': item.productCtrl.text.trim(),
+          if (item.urlCtrl.text.trim().isNotEmpty) 'product_url': item.urlCtrl.text.trim(),
           'unit_price_foreign': double.tryParse(item.priceCtrl.text) ?? 0,
           'quantity': int.tryParse(item.qtyCtrl.text) ?? 1,
           if (item.sizeCtrl.text.trim().isNotEmpty) 'size': item.sizeCtrl.text.trim(),
@@ -584,7 +595,12 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
                       ]),
                       const SizedBox(height: 8),
                       TextField(controller: item.productCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
-                        decoration: const InputDecoration(labelText: 'Product Name *', prefixIcon: Icon(Icons.shopping_bag, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(labelText: 'اسم المنتج *', prefixIcon: Icon(Icons.shopping_bag, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
+                      const SizedBox(height: 8),
+                      TextField(controller: item.urlCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
+                        keyboardType: TextInputType.url,
+                        decoration: const InputDecoration(labelText: 'رابط المنتج', prefixIcon: Icon(Icons.link, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
                       const SizedBox(height: 8),
                       Row(children: [
                         Expanded(child: TextField(controller: item.priceCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white, fontSize: 13),
@@ -607,11 +623,27 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
               ),
             ),
             const SizedBox(height: 20),
+            if (!_canSubmit && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp && _nameCtrl.text.trim().isEmpty)
+              Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(color: AppTheme.warning.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+                child: const Row(children: [
+                  Icon(Icons.info_outline, color: AppTheme.warning, size: 16), SizedBox(width: 6),
+                  Text('أدخل اسم العميل للمتابعة', style: TextStyle(color: AppTheme.warning, fontSize: 12)),
+                ]),
+              ),
             SizedBox(height: 48, child: ElevatedButton(
-              onPressed: _isLoading ? null : _createOrder,
+              onPressed: _canSubmit ? _createOrder : null,
               child: _isLoading
                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : Text('Create Order (${_items.length} item${_items.length > 1 ? 's' : ''})'),
+                : _isLookingUp
+                  ? const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                      SizedBox(width: 8),
+                      Text('جاري البحث عن العميل...'),
+                    ])
+                  : Text('إنشاء الطلب (${_items.length} منتج${_items.length > 1 ? '' : ''})'),
             )),
           ]),
         ),

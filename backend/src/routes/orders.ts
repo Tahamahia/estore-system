@@ -13,6 +13,7 @@ export const orderRoutes = new Hono<AppEnv>();
 /**
  * GET /orders — List orders for the current tenant
  * Supports pagination via ?page=1&limit=50
+ * Joins customers so customer_name and customer_phone are always present.
  */
 orderRoutes.get('/', async (c) => {
   const tenantId = c.get('tenant_id') as string;
@@ -21,20 +22,22 @@ orderRoutes.get('/', async (c) => {
   const offset = (page - 1) * limit;
   const status = c.req.query('status');
 
-  let query = `SELECT * FROM orders WHERE tenant_id = ? AND is_deleted = 0`;
+  let query = `SELECT o.*, c.full_name as customer_name, c.phone as customer_phone
+               FROM orders o
+               LEFT JOIN customers c ON o.customer_id = c.id
+               WHERE o.tenant_id = ? AND o.is_deleted = 0`;
   const bindings: any[] = [tenantId];
 
   if (status) {
-    query += ` AND status = ?`;
+    query += ` AND o.status = ?`;
     bindings.push(status);
   }
 
-  query += ` ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+  query += ` ORDER BY o.created_at DESC LIMIT ? OFFSET ?`;
   bindings.push(limit, offset);
 
   const results = await c.env.DB.prepare(query).bind(...bindings).all();
 
-  // FIX 8: Build COUNT query dynamically to match the same WHERE clause as the main query
   let countQuery = `SELECT COUNT(*) as total FROM orders WHERE tenant_id = ? AND is_deleted = 0`;
   const countBindings: any[] = [tenantId];
 
@@ -388,14 +391,54 @@ orderRoutes.patch('/items/:item_id/weight', requireRole('super_admin', 'store_ma
 });
 
 /**
- * GET /orders/:id — Get single order with items
+ * POST /orders/:id/items — Add a single item to an existing order
+ */
+orderRoutes.post('/:id/items', async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const orderId = c.req.param('id');
+  const body = await c.req.json();
+
+  const { id, product_name, product_url, product_image_url, quantity, unit_price_foreign, color, size, sku, notes } = body;
+
+  if (!id || !product_name) {
+    return c.json({ error: 'Bad Request', message: 'id and product_name are required' }, 400);
+  }
+
+  const order = await c.env.DB.prepare(
+    `SELECT id FROM orders WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(orderId, tenantId).first();
+
+  if (!order) {
+    return c.json({ error: 'Not Found', message: 'Order not found' }, 404);
+  }
+
+  await c.env.DB.prepare(
+    `INSERT INTO order_items (id, tenant_id, order_id, product_name, product_url,
+     product_image_url, quantity, unit_price_foreign, unit_price_local, color, size, sku,
+     notes, status, created_at, updated_at, version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
+  ).bind(
+    id, tenantId, orderId, product_name, product_url || null,
+    product_image_url || null, quantity || 1,
+    unit_price_foreign || 0,
+    color || null, size || null, sku || null, notes || null
+  ).run();
+
+  return c.json({ message: 'Item added', id }, 201);
+});
+
+/**
+ * GET /orders/:id — Get single order with items and customer info
  */
 orderRoutes.get('/:id', async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const orderId = c.req.param('id');
 
   const order = await c.env.DB.prepare(
-    `SELECT * FROM orders WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+    `SELECT o.*, c.full_name as customer_name, c.phone as customer_phone
+     FROM orders o
+     LEFT JOIN customers c ON o.customer_id = c.id
+     WHERE o.id = ? AND o.tenant_id = ? AND o.is_deleted = 0`
   ).bind(orderId, tenantId).first();
 
   if (!order) {

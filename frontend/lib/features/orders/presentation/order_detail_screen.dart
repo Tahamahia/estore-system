@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
 
@@ -28,23 +29,10 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   Future<void> _loadOrder() async {
     setState(() { _loading = true; _error = null; });
     try {
-      // Find order from the already-loaded orders list
-      final ordersState = ref.read(ordersProvider);
-      final orders = ordersState.valueOrNull ?? [];
-      final match = orders.where((o) => o['id'] == widget.orderId);
-      if (match.isNotEmpty) {
-        setState(() { _order = match.first; _loading = false; });
-      } else {
-        // Fetch fresh if not in cache
-        await ref.read(ordersProvider.notifier).fetchOrders();
-        final refreshed = ref.read(ordersProvider).valueOrNull ?? [];
-        final m2 = refreshed.where((o) => o['id'] == widget.orderId);
-        setState(() {
-          _order = m2.isNotEmpty ? m2.first : null;
-          _loading = false;
-          if (_order == null) _error = 'Order not found';
-        });
-      }
+      // Always fetch directly from the API so items and customer data are included.
+      // GET /orders/:id returns the full order with a customer JOIN and nested items array.
+      final order = await ref.read(ordersProvider.notifier).fetchOrderById(widget.orderId);
+      setState(() { _order = order; _loading = false; });
     } catch (e) {
       setState(() { _error = e.toString(); _loading = false; });
     }
@@ -103,6 +91,24 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     if (await canLaunchUrl(url)) {
       await launchUrl(url);
     }
+  }
+
+  void _showAddItemDialog() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _AddItemDialog(
+        orderId: widget.orderId,
+        onAdded: () async {
+          await _loadOrder();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('✅ تم إضافة المنتج للطلب'),
+              backgroundColor: AppTheme.success,
+            ));
+          }
+        },
+      ),
+    );
   }
 
   void _showUpdateStatusDialog() {
@@ -215,7 +221,6 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
             ),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Row(children: [
-                // Customer avatar
                 CircleAvatar(
                   radius: 24,
                   backgroundColor: AppTheme.primary.withValues(alpha: 0.2),
@@ -236,7 +241,6 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                       ]),
                     ),
                 ])),
-                // Status badge (large)
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   decoration: BoxDecoration(
@@ -260,14 +264,33 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
           ),
           const SizedBox(height: 20),
 
-          // Items list header
-          Text('العناصر (${items.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+          // Items list header with "Add Item" button
+          Row(children: [
+            Text('العناصر (${items.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+            const Spacer(),
+            TextButton.icon(
+              onPressed: _showAddItemDialog,
+              icon: const Icon(Icons.add_circle, color: AppTheme.secondary, size: 20),
+              label: const Text('إضافة منتج', style: TextStyle(color: AppTheme.secondary, fontWeight: FontWeight.w600)),
+            ),
+          ]),
           const SizedBox(height: 12),
 
           // Items list
           Expanded(
             child: items.isEmpty
-              ? const Center(child: Text('لا توجد عناصر', style: TextStyle(color: Colors.white38, fontSize: 16)))
+              ? Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.shopping_bag_outlined, color: Colors.white24, size: 56),
+                  const SizedBox(height: 12),
+                  const Text('لا توجد عناصر في هذا الطلب', style: TextStyle(color: Colors.white38, fontSize: 16)),
+                  const SizedBox(height: 16),
+                  ElevatedButton.icon(
+                    onPressed: _showAddItemDialog,
+                    icon: const Icon(Icons.add_shopping_cart),
+                    label: const Text('إضافة أول منتج'),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14)),
+                  ),
+                ]))
               : ListView.separated(
                   itemCount: items.length,
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
@@ -288,7 +311,6 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
               border: Border.all(color: AppTheme.darkBorder),
             ),
             child: Row(children: [
-              // Update Status
               Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
                 onPressed: _showUpdateStatusDialog,
                 icon: const Icon(Icons.update, size: 22),
@@ -296,14 +318,12 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
               ))),
               const SizedBox(width: 12),
-              // WhatsApp
               Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
                 onPressed: () => _openWhatsApp(phone, customerName),
                 icon: const Icon(Icons.chat_rounded, size: 22),
                 label: const Text('واتساب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
                 style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
               ))),
-              // Dispatch button if items are ready
               if (hasReadyItems) ...[
                 const SizedBox(width: 12),
                 Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
@@ -327,6 +347,168 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
             ]),
           ),
         ],
+      ),
+    );
+  }
+}
+
+/// Dialog to add a single item to an existing order
+class _AddItemDialog extends ConsumerStatefulWidget {
+  final String orderId;
+  final VoidCallback onAdded;
+  const _AddItemDialog({required this.orderId, required this.onAdded});
+
+  @override
+  ConsumerState<_AddItemDialog> createState() => _AddItemDialogState();
+}
+
+class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
+  final _productCtrl = TextEditingController();
+  final _urlCtrl = TextEditingController();
+  final _priceCtrl = TextEditingController();
+  final _qtyCtrl = TextEditingController(text: '1');
+  final _sizeCtrl = TextEditingController();
+  final _colorCtrl = TextEditingController();
+  bool _isLoading = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _productCtrl.dispose();
+    _urlCtrl.dispose();
+    _priceCtrl.dispose();
+    _qtyCtrl.dispose();
+    _sizeCtrl.dispose();
+    _colorCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    if (_productCtrl.text.trim().isEmpty) {
+      setState(() => _error = 'اسم المنتج مطلوب');
+      return;
+    }
+    if (_urlCtrl.text.trim().isEmpty) {
+      setState(() => _error = 'رابط المنتج مطلوب');
+      return;
+    }
+    setState(() { _isLoading = true; _error = null; });
+    try {
+      await ref.read(ordersProvider.notifier).addItemToOrder(widget.orderId, {
+        'id': const Uuid().v4(),
+        'product_name': _productCtrl.text.trim(),
+        'product_url': _urlCtrl.text.trim(),
+        if (_priceCtrl.text.trim().isNotEmpty) 'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
+        'quantity': int.tryParse(_qtyCtrl.text.trim()) ?? 1,
+        if (_sizeCtrl.text.trim().isNotEmpty) 'size': _sizeCtrl.text.trim(),
+        if (_colorCtrl.text.trim().isNotEmpty) 'color': _colorCtrl.text.trim(),
+      });
+      widget.onAdded();
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Text('إضافة منتج للطلب', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
+            const SizedBox(height: 4),
+            const Text('أدخل تفاصيل المنتج الجديد', style: TextStyle(color: Colors.white54, fontSize: 13)),
+            const SizedBox(height: 20),
+            if (_error != null) Container(
+              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 16),
+              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+              child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+            ),
+            TextField(
+              controller: _productCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'اسم المنتج *',
+                prefixIcon: Icon(Icons.shopping_bag),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _urlCtrl,
+              style: const TextStyle(color: Colors.white),
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                labelText: 'رابط المنتج / رابط الصورة *',
+                hintText: 'https://...',
+                hintStyle: TextStyle(color: Colors.white24),
+                prefixIcon: Icon(Icons.link),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(child: TextField(
+                controller: _priceCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'السعر (اختياري)',
+                  prefixIcon: Icon(Icons.attach_money, size: 18),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+              const SizedBox(width: 12),
+              SizedBox(width: 80, child: TextField(
+                controller: _qtyCtrl,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'الكمية',
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+            ]),
+            const SizedBox(height: 12),
+            Row(children: [
+              Expanded(child: TextField(
+                controller: _sizeCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'المقاس (اختياري)',
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: TextField(
+                controller: _colorCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'اللون (اختياري)',
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+            ]),
+            const SizedBox(height: 24),
+            SizedBox(height: 52, child: ElevatedButton.icon(
+              onPressed: _isLoading ? null : _submit,
+              icon: _isLoading
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.add_shopping_cart, size: 22),
+              label: const Text('إضافة المنتج', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+            )),
+          ]),
+        ),
       ),
     );
   }
@@ -362,7 +544,7 @@ class _OrderItemCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final productName = item['product_name'] as String? ?? 'منتج غير معروف';
-    final imgUrl = (item['product_image_url'] ?? item['product_thumb_url'] ?? '').toString();
+    final imgUrl = (item['product_image_url'] ?? item['product_thumb_url'] ?? item['product_url'] ?? '').toString();
     final size = item['size'] as String?;
     final color = item['color'] as String?;
     final sku = item['sku'] as String?;
@@ -370,8 +552,15 @@ class _OrderItemCard extends StatelessWidget {
     final priceForeign = item['unit_price_foreign'] as num?;
     final priceLocal = item['unit_price_local'] as num?;
     final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
+    final productUrl = item['product_url'] as String?;
     final isSorted = itemStatus == 'sorted' || itemStatus == 'ready_dispatch';
     final sColor = statusColor(itemStatus);
+
+    // Determine if imgUrl is a product image or a product link (not a direct image)
+    final isDirectImage = imgUrl.isNotEmpty &&
+      (imgUrl.endsWith('.jpg') || imgUrl.endsWith('.jpeg') || imgUrl.endsWith('.png') ||
+       imgUrl.endsWith('.webp') || imgUrl.endsWith('.gif') || imgUrl.contains('/image/') ||
+       imgUrl.contains('r2.') || imgUrl.contains('cloudflare'));
 
     return Container(
       padding: const EdgeInsets.all(14),
@@ -381,18 +570,33 @@ class _OrderItemCard extends StatelessWidget {
         border: Border.all(color: isSorted ? AppTheme.success.withValues(alpha: 0.5) : AppTheme.darkBorder),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Product image
+        // Product image or link icon
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
           child: SizedBox(
             width: 72, height: 72,
-            child: imgUrl.isNotEmpty
+            child: isDirectImage
               ? CachedNetworkImage(
                   imageUrl: imgUrl, fit: BoxFit.cover,
                   placeholder: (_, __) => Container(color: AppTheme.darkCard, child: const Center(child: CircularProgressIndicator(strokeWidth: 2))),
                   errorWidget: (_, __, ___) => Container(color: AppTheme.darkCard, child: const Icon(Icons.image, color: Colors.white24, size: 32)),
                 )
-              : Container(color: AppTheme.darkCard, child: const Icon(Icons.image, color: Colors.white24, size: 32)),
+              : productUrl != null && productUrl.isNotEmpty
+                ? GestureDetector(
+                    onTap: () async {
+                      final uri = Uri.tryParse(productUrl);
+                      if (uri != null && await canLaunchUrl(uri)) launchUrl(uri, mode: LaunchMode.externalApplication);
+                    },
+                    child: Container(
+                      color: AppTheme.primary.withValues(alpha: 0.12),
+                      child: const Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        Icon(Icons.open_in_new, color: AppTheme.primary, size: 28),
+                        SizedBox(height: 4),
+                        Text('رابط', style: TextStyle(color: AppTheme.primary, fontSize: 10)),
+                      ]),
+                    ),
+                  )
+                : Container(color: AppTheme.darkCard, child: const Icon(Icons.image, color: Colors.white24, size: 32)),
           ),
         ),
         const SizedBox(width: 14),
