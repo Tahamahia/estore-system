@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
@@ -22,23 +23,24 @@ class InvoiceGenerator {
     }
   }
 
-  static Future<void> print({
+  /// Returns the PDF as bytes. Callers are responsible for displaying/printing it.
+  static Future<Uint8List> generate({
     required Map<String, dynamic> order,
     required List<dynamic> items,
     required InvoiceMode mode,
   }) async {
+    // Load Arabic fonts — Cairo supports proper Arabic shaping
     final font = await PdfGoogleFonts.cairoRegular();
     final fontBold = await PdfGoogleFonts.cairoBold();
-
-    final style = pw.TextStyle(font: font, fontSize: 11);
-    final styleBold = pw.TextStyle(font: fontBold, fontSize: 11);
 
     final customerName = order['customer_name'] as String? ?? 'غير معروف';
     final phone = order['customer_phone'] as String? ?? '';
     final orderStatus = order['status'] as String? ?? '';
     final createdAt = order['created_at'] as String? ?? '';
     final rawId = order['id'] as String? ?? '';
-    final shortId = rawId.length >= 8 ? rawId.substring(0, 8).toUpperCase() : rawId.toUpperCase();
+    final shortId = rawId.length >= 8
+        ? rawId.substring(0, 8).toUpperCase()
+        : rawId.toUpperCase();
 
     final rate = (order['pegged_exchange_rate'] as num?)?.toDouble() ?? 0;
     double itemsCostUsd = 0;
@@ -56,16 +58,23 @@ class InvoiceGenerator {
         ? totalLocal - ((itemsCostUsd + shippingUsd) * rate)
         : null;
 
-    final doc = pw.Document();
+    // Applying ThemeData with Arabic font ensures every pw.Text in the document
+    // inherits the Cairo font, which is required for proper Arabic glyph shaping.
+    final doc = pw.Document(
+      theme: pw.ThemeData.withFont(base: font, bold: fontBold),
+    );
+
+    final baseStyle = pw.TextStyle(font: font, fontSize: 11);
+    final boldStyle = pw.TextStyle(font: fontBold, fontSize: 11);
 
     doc.addPage(pw.Page(
       pageFormat: PdfPageFormat.a4,
       textDirection: pw.TextDirection.rtl,
       margin: const pw.EdgeInsets.all(32),
-      build: (pw.Context context) => pw.Column(
+      build: (pw.Context ctx) => pw.Column(
         crossAxisAlignment: pw.CrossAxisAlignment.stretch,
         children: [
-          // Header bar
+          // ── Header bar ──────────────────────────────────────────
           pw.Container(
             padding: const pw.EdgeInsets.symmetric(horizontal: 20, vertical: 14),
             decoration: const pw.BoxDecoration(
@@ -106,9 +115,9 @@ class InvoiceGenerator {
               ],
             ),
           ),
-          pw.SizedBox(height: 16),
+          pw.SizedBox(height: 14),
 
-          // Customer info box
+          // ── Customer info ────────────────────────────────────────
           pw.Container(
             padding: const pw.EdgeInsets.all(12),
             decoration: pw.BoxDecoration(
@@ -118,44 +127,50 @@ class InvoiceGenerator {
             child: pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-                pw.Text('معلومات الزبون', style: styleBold),
+                pw.Text('معلومات الزبون', style: boldStyle),
                 pw.SizedBox(height: 6),
-                pw.Text('الاسم: $customerName', style: style),
-                if (phone.isNotEmpty) pw.Text('الهاتف: $phone', style: style),
+                pw.Text('الاسم: $customerName', style: baseStyle),
+                if (phone.isNotEmpty) pw.Text('الهاتف: $phone', style: baseStyle),
               ],
             ),
           ),
-          pw.SizedBox(height: 16),
+          pw.SizedBox(height: 14),
 
-          // Items table
+          // ── Items table ──────────────────────────────────────────
           pw.Text('تفاصيل المنتجات', style: pw.TextStyle(font: fontBold, fontSize: 12)),
           pw.SizedBox(height: 6),
           pw.Table(
             border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),
+            // Customer: Product(flex) | Qty(36) | Price(90) | Total(90)
+            // Merchant: Product(flex) | Qty(36) | Cost$(72) | Shipping$(72) | Selling(72) | Total(72)
             columnWidths: mode == InvoiceMode.customer
                 ? {
-                    0: const pw.FlexColumnWidth(4),
-                    1: const pw.FixedColumnWidth(40),
-                    2: const pw.FixedColumnWidth(80),
-                    3: const pw.FixedColumnWidth(80),
+                    0: const pw.FlexColumnWidth(1),
+                    1: const pw.FixedColumnWidth(36),
+                    2: const pw.FixedColumnWidth(90),
+                    3: const pw.FixedColumnWidth(90),
                   }
                 : {
-                    0: const pw.FlexColumnWidth(3),
+                    0: const pw.FlexColumnWidth(1),
                     1: const pw.FixedColumnWidth(36),
-                    2: const pw.FixedColumnWidth(60),
-                    3: const pw.FixedColumnWidth(72),
-                    4: const pw.FixedColumnWidth(72),
+                    2: const pw.FixedColumnWidth(64),
+                    3: const pw.FixedColumnWidth(64),
+                    4: const pw.FixedColumnWidth(64),
+                    5: const pw.FixedColumnWidth(64),
                   },
             children: [
               // Header row
               pw.TableRow(
                 decoration: const pw.BoxDecoration(color: PdfColors.grey200),
                 children: [
-                  _cell('المنتج', styleBold),
-                  _cell('الكمية', styleBold),
-                  if (mode == InvoiceMode.merchant) _cell('التكلفة (\$)', styleBold),
-                  _cell('سعر البيع (د.ل)', styleBold),
-                  _cell('الإجمالي (د.ل)', styleBold),
+                  _cell('المنتج', boldStyle),
+                  _cell('الكمية', boldStyle),
+                  if (mode == InvoiceMode.merchant) ...[
+                    _cell('التكلفة \$', boldStyle),
+                    _cell('الشحن \$', boldStyle),
+                  ],
+                  _cell('السعر (د.ل)', boldStyle),
+                  _cell('الإجمالي (د.ل)', boldStyle),
                 ],
               ),
               // Data rows
@@ -165,46 +180,55 @@ class InvoiceGenerator {
                 final qty = (item['quantity'] as num?)?.toInt() ?? 1;
                 final size = item['size'] as String?;
                 final color = item['color'] as String?;
+                final sku = item['sku'] as String?;
                 final unitLocal = (item['unit_price_local'] as num?)?.toDouble() ?? 0;
                 final unitForeign = (item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
+                final unitShipping = (item['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
                 final isCancelled = (item['status'] as String?) == 'cancelled';
-                final totalItem = unitLocal > 0 ? (unitLocal * qty).toStringAsFixed(0) : '-';
-                final desc = [
+                final lineTotal = unitLocal > 0 ? (unitLocal * qty).toStringAsFixed(0) : '-';
+
+                final descParts = [
                   name,
                   if (size != null && size.isNotEmpty) 'المقاس: $size',
                   if (color != null && color.isNotEmpty) 'اللون: $color',
+                  if (sku != null && sku.isNotEmpty) 'SKU: $sku',
                   if (isCancelled) '(ملغي)',
-                ].join('  ');
+                ];
+                final desc = descParts.join(' | ');
+
                 final cellStyle = isCancelled
                     ? pw.TextStyle(font: font, fontSize: 10, color: PdfColors.grey500)
                     : pw.TextStyle(font: font, fontSize: 10);
+
                 return pw.TableRow(children: [
                   _cell(desc, cellStyle),
                   _cell('$qty', cellStyle),
-                  if (mode == InvoiceMode.merchant)
+                  if (mode == InvoiceMode.merchant) ...[
                     _cell('\$${unitForeign.toStringAsFixed(2)}', cellStyle),
+                    _cell('\$${unitShipping.toStringAsFixed(2)}', cellStyle),
+                  ],
                   _cell(unitLocal > 0 ? unitLocal.toStringAsFixed(0) : '-', cellStyle),
-                  _cell(totalItem, cellStyle),
+                  _cell(lineTotal, cellStyle),
                 ]);
               }),
             ],
           ),
-          pw.SizedBox(height: 16),
+          pw.SizedBox(height: 14),
 
-          // Totals block
+          // ── Totals block ─────────────────────────────────────────
           pw.Align(
             alignment: pw.Alignment.centerLeft,
             child: pw.Container(
-              width: 220,
+              width: 230,
               child: pw.Column(
                 crossAxisAlignment: pw.CrossAxisAlignment.stretch,
                 children: [
                   if (mode == InvoiceMode.merchant) ...[
-                    _totalRow('تكلفة البضاعة (\$)', '\$${itemsCostUsd.toStringAsFixed(2)}', style),
+                    _totalRow('تكلفة البضاعة', '\$${itemsCostUsd.toStringAsFixed(2)}', baseStyle),
                     if (shippingUsd > 0)
-                      _totalRow('تكلفة الشحن (\$)', '\$${shippingUsd.toStringAsFixed(2)}', style),
+                      _totalRow('تكلفة الشحن', '\$${shippingUsd.toStringAsFixed(2)}', baseStyle),
                     if (rate > 0)
-                      _totalRow('سعر الصرف', '${rate.toStringAsFixed(2)} د.ل', style),
+                      _totalRow('سعر الصرف', '${rate.toStringAsFixed(2)} د.ل', baseStyle),
                     pw.Divider(height: 1, color: PdfColors.grey400),
                     pw.SizedBox(height: 4),
                   ],
@@ -244,11 +268,11 @@ class InvoiceGenerator {
       ),
     ));
 
-    await Printing.layoutPdf(onLayout: (_) => doc.save());
+    return doc.save();
   }
 
   static pw.Widget _cell(String text, pw.TextStyle style) => pw.Padding(
-        padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+        padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 5),
         child: pw.Text(text, style: style),
       );
 

@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/invoice_generator.dart';
+import 'package:printing/printing.dart';
 
 /// Order Detail Screen — shows full order info, items, and action buttons.
 class OrderDetailScreen extends ConsumerStatefulWidget {
@@ -38,6 +39,16 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     } catch (e) {
       setState(() { _error = e.toString(); _loading = false; });
     }
+  }
+
+  /// Silently re-fetches the order and overwrites local state without showing
+  /// a full-screen loading spinner. Used after item edits so the financial
+  /// summary rebuilds immediately when the dialog closes.
+  Future<void> _refreshOrder() async {
+    try {
+      final order = await ref.read(ordersProvider.notifier).fetchOrderById(widget.orderId);
+      if (mounted) setState(() => _order = order);
+    } catch (_) {}
   }
 
   String _translateStatus(String status) {
@@ -130,7 +141,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     final items = order['items'] as List<dynamic>? ?? [];
     showDialog(
       context: context,
-      builder: (_) => Dialog(
+      builder: (ctx) => Dialog(
         backgroundColor: AppTheme.darkSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: ConstrainedBox(
@@ -143,9 +154,9 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
               const Text('اختر نوع الفاتورة', style: TextStyle(color: Colors.white54, fontSize: 14)),
               const SizedBox(height: 24),
               SizedBox(height: 52, child: ElevatedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  await InvoiceGenerator.print(order: order, items: items, mode: InvoiceMode.customer);
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  _showPdfPreview(order, items, InvoiceMode.customer);
                 },
                 icon: const Icon(Icons.person_outline, size: 20),
                 label: const Text('نسخة الزبون', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
@@ -153,9 +164,9 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
               )),
               const SizedBox(height: 12),
               SizedBox(height: 52, child: ElevatedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(context);
-                  await InvoiceGenerator.print(order: order, items: items, mode: InvoiceMode.merchant);
+                onPressed: () {
+                  Navigator.of(ctx).pop();
+                  _showPdfPreview(order, items, InvoiceMode.merchant);
                 },
                 icon: const Icon(Icons.store_outlined, size: 20),
                 label: const Text('نسخة التاجر', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
@@ -163,6 +174,48 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
               )),
             ]),
           ),
+        ),
+      ),
+    );
+  }
+
+  /// Shows a full-height dialog containing a PdfPreview widget.
+  /// Using a Dialog (not Printing.layoutPdf) avoids hijacking the browser
+  /// URL/history stack on Flutter Web.
+  void _showPdfPreview(Map<String, dynamic> order, List<dynamic> items, InvoiceMode mode) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        insetPadding: const EdgeInsets.all(10),
+        backgroundColor: Colors.grey[300],
+        child: SizedBox(
+          width: double.maxFinite,
+          height: MediaQuery.sizeOf(context).height * 0.92,
+          child: Column(children: [
+            Container(
+              color: AppTheme.darkSurface,
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+              child: Row(children: [
+                Text(
+                  mode == InvoiceMode.customer ? 'نسخة الزبون' : 'نسخة التاجر',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15),
+                ),
+                const Spacer(),
+                IconButton(
+                  icon: const Icon(Icons.close, color: Colors.white70),
+                  onPressed: () => Navigator.of(ctx).pop(),
+                ),
+              ]),
+            ),
+            Expanded(
+              child: PdfPreview(
+                build: (_) => InvoiceGenerator.generate(order: order, items: items, mode: mode),
+                allowPrinting: true,
+                allowSharing: true,
+                canChangePageFormat: false,
+              ),
+            ),
+          ]),
         ),
       ),
     );
@@ -202,7 +255,9 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
         orderId: widget.orderId,
         item: item,
         onSaved: () async {
-          await _loadOrder();
+          // _refreshOrder() silently overwrites _order + calls setState so the
+          // FinancialSummaryCard rebuilds the instant the dialog closes.
+          await _refreshOrder();
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
               content: Text('✅ تم تحديث المنتج'),
@@ -1037,6 +1092,7 @@ class _EditItemDialog extends ConsumerStatefulWidget {
 
 class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
   late final TextEditingController _nameCtrl;
+  late final TextEditingController _skuCtrl;
   late final TextEditingController _urlCtrl;
   late final TextEditingController _priceCtrl;
   late final TextEditingController _shippingCtrl;
@@ -1065,6 +1121,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
   void initState() {
     super.initState();
     _nameCtrl  = TextEditingController(text: widget.item['product_name'] as String? ?? '');
+    _skuCtrl   = TextEditingController(text: widget.item['sku']          as String? ?? '');
     _urlCtrl   = TextEditingController(text: widget.item['product_url']  as String? ?? '');
     final price = (widget.item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
     _priceCtrl = TextEditingController(text: price > 0 ? price.toString() : '');
@@ -1084,6 +1141,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _skuCtrl.dispose();
     _urlCtrl.dispose();
     _priceCtrl.dispose();
     _shippingCtrl.dispose();
@@ -1107,6 +1165,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
         widget.item['id'] as String,
         {
           'product_name':       name,
+          'sku':                _skuCtrl.text.trim(),
           'product_url':        _urlCtrl.text.trim(),
           'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
           'shipping_cost_foreign': double.tryParse(_shippingCtrl.text.trim()) ?? 0,
@@ -1219,6 +1278,17 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
               decoration: const InputDecoration(
                 labelText: 'اسم المنتج *',
                 prefixIcon: Icon(Icons.shopping_bag),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // SKU / barcode
+            TextField(
+              controller: _skuCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'الرقم التسلسلي (الباركود)',
+                prefixIcon: Icon(Icons.qr_code),
               ),
             ),
             const SizedBox(height: 12),
