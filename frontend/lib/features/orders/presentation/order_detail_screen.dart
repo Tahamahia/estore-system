@@ -136,7 +136,10 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 onPressed: () async {
                   Navigator.pop(ctx);
                   try {
-                    await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {'status': selectedStatus});
+                    await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
+                      'status': selectedStatus,
+                      'version': _order?['version'],
+                    });
                     await _loadOrder();
                     if (mounted) {
                       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -306,7 +309,10 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
                   onPressed: () async {
                     try {
-                      await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {'status': 'dispatched'});
+                      await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
+                        'status': 'dispatched',
+                        'version': _order?['version'],
+                      });
                       await _loadOrder();
                       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
                     } catch (e) {

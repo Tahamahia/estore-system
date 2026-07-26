@@ -39,7 +39,7 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
 
   if (items.results.length > 1) {
     return c.json({ found: true, ambiguous: true, candidates: items.results.map((i: any) => ({
-      item_id: i.id, product_name: i.product_name, customer_name: i.customer_name, status: i.status,
+      id: i.id, product_name: i.product_name, customer_name: i.customer_name, status: i.status,
     }))});
   }
 

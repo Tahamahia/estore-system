@@ -128,8 +128,7 @@ class _InAppBrowserScreenState extends ConsumerState<InAppBrowserScreen> {
                   const SizedBox(height: 10),
                   Text(
                     '• Compile as a Native Desktop app (Windows/macOS)\n'
-                    '• Or compile as a Mobile app (Android/iOS)\n'
-                    '• Or use the Chrome Extension for web',
+                    '• Or compile as a Mobile app (Android/iOS)',
                     style: TextStyle(color: Colors.white.withValues(alpha: 0.5), fontSize: 13, height: 1.6),
                   ),
                 ],
@@ -409,18 +408,21 @@ class _InAppBrowserScreenState extends ConsumerState<InAppBrowserScreen> {
   }
 
   Future<String> _findOrCreateCustomer(String name, String phone) async {
-    try {
-      final existing = await ref.read(customersProvider.notifier).searchCustomers(name);
-      if (existing != null) return existing;
-    } catch (_) {}
+    // Phone-first identity: if a phone is provided, use exact phone lookup
+    // (name lookup is non-unique and bypasses the phone-first identity pattern)
+    if (phone.isNotEmpty) {
+      final existing = await ref.read(customersProvider.notifier).lookupByPhone(phone);
+      if (existing != null) return existing['id'] as String;
+    }
 
-    final customerId = const Uuid().v4();
-    await ref.read(customersProvider.notifier).createCustomer({
-      'id': customerId,
+    // Create via silent upsert and return the ID the backend actually assigned,
+    // not a locally-generated UUID (which would be wrong on a phone collision).
+    final result = await ref.read(customersProvider.notifier).createCustomer({
+      'id': const Uuid().v4(),
       'full_name': name,
       'phone': phone.isNotEmpty ? phone : null,
     });
-    return customerId;
+    return result['id'] as String;
   }
 }
 
