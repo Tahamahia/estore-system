@@ -113,66 +113,23 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     );
   }
 
-  void _showItemEditDialog(Map<String, dynamic> item) {
-    String selectedStatus = (item['status'] as String?) ?? 'pending';
-    showDialog(context: context, builder: (ctx) => Dialog(
-      backgroundColor: AppTheme.darkSurface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: StatefulBuilder(builder: (_, setDialogState) {
-            return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              Text(item['product_name'] as String? ?? 'المنتج',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
-                maxLines: 2, overflow: TextOverflow.ellipsis),
-              const SizedBox(height: 4),
-              const Text('تغيير حالة العنصر', style: TextStyle(color: Colors.white54, fontSize: 13)),
-              const SizedBox(height: 20),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                for (final s in ['pending', 'purchased', 'shipped', 'arrived_warehouse', 'sorted', 'ready_dispatch', 'dispatched', 'delivered'])
-                  ChoiceChip(
-                    label: Text(_translateStatus(s)),
-                    selected: selectedStatus == s,
-                    onSelected: (_) => setDialogState(() => selectedStatus = s),
-                    selectedColor: _statusColor(s),
-                    backgroundColor: AppTheme.darkCard,
-                    labelStyle: TextStyle(color: selectedStatus == s ? Colors.white : Colors.white70, fontSize: 12),
-                  ),
-              ]),
-              const SizedBox(height: 24),
-              SizedBox(height: 48, child: ElevatedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  final messenger = ScaffoldMessenger.of(context);
-                  try {
-                    await ref.read(ordersProvider.notifier).bulkUpdateItems(
-                      [item['id'] as String],
-                      status: selectedStatus,
-                    );
-                    await _loadOrder();
-                    if (mounted) {
-                      messenger.showSnackBar(SnackBar(
-                        content: Text('✅ تم تحديث العنصر إلى ${_translateStatus(selectedStatus)}'),
-                        backgroundColor: AppTheme.success,
-                      ));
-                    }
-                  } catch (e) {
-                    if (mounted) {
-                      messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
-                    }
-                  }
-                },
-                icon: const Icon(Icons.check, size: 20),
-                label: const Text('تحديث الحالة'),
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
-              )),
-            ]);
-          }),
-        ),
+  void _showEditItemDialog(Map<String, dynamic> item) {
+    showDialog(
+      context: context,
+      builder: (_) => _EditItemDialog(
+        orderId: widget.orderId,
+        item: item,
+        onSaved: () async {
+          await _loadOrder();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('✅ تم تحديث المنتج'),
+              backgroundColor: AppTheme.success,
+            ));
+          }
+        },
       ),
-    ));
+    );
   }
 
   void _showAddItemDialog() {
@@ -389,7 +346,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {
                     final item = items[index] as Map<String, dynamic>;
-                    return _OrderItemCard(item: item, statusColor: _statusColor, translateStatus: _translateStatus, onEditStatus: () => _showItemEditDialog(item));
+                    return _OrderItemCard(item: item, statusColor: _statusColor, translateStatus: _translateStatus, onEdit: () => _showEditItemDialog(item));
                   },
                 ),
           ),
@@ -632,8 +589,8 @@ class _OrderItemCard extends StatelessWidget {
   final Map<String, dynamic> item;
   final Color Function(String) statusColor;
   final String Function(String) translateStatus;
-  final VoidCallback? onEditStatus;
-  const _OrderItemCard({required this.item, required this.statusColor, required this.translateStatus, this.onEditStatus});
+  final VoidCallback? onEdit;
+  const _OrderItemCard({required this.item, required this.statusColor, required this.translateStatus, this.onEdit});
 
   @override
   Widget build(BuildContext context) {
@@ -647,6 +604,7 @@ class _OrderItemCard extends StatelessWidget {
     final priceLocal = item['unit_price_local'] as num?;
     final quantity = (item['quantity'] as num?)?.toInt() ?? 1;
     final productUrl = item['product_url'] as String?;
+    final isCancelled = itemStatus == 'cancelled';
     final isSorted = itemStatus == 'sorted' || itemStatus == 'ready_dispatch';
     final sColor = statusColor(itemStatus);
 
@@ -656,12 +614,16 @@ class _OrderItemCard extends StatelessWidget {
        imgUrl.endsWith('.webp') || imgUrl.endsWith('.gif') || imgUrl.contains('/image/') ||
        imgUrl.contains('r2.') || imgUrl.contains('cloudflare'));
 
-    return Container(
+    return Opacity(
+      opacity: isCancelled ? 0.5 : 1.0,
+      child: Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
         color: AppTheme.darkSurface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: isSorted ? AppTheme.success.withValues(alpha: 0.5) : AppTheme.darkBorder),
+        border: Border.all(color: isCancelled
+            ? AppTheme.error.withValues(alpha: 0.4)
+            : isSorted ? AppTheme.success.withValues(alpha: 0.5) : AppTheme.darkBorder),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         // Product image or link icon
@@ -714,9 +676,9 @@ class _OrderItemCard extends StatelessWidget {
         const SizedBox(width: 10),
         // Status + ready badge + edit
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          if (onEditStatus != null)
+          if (onEdit != null)
             InkWell(
-              onTap: onEditStatus,
+              onTap: onEdit,
               borderRadius: BorderRadius.circular(6),
               child: const Padding(
                 padding: EdgeInsets.all(4),
@@ -743,6 +705,7 @@ class _OrderItemCard extends StatelessWidget {
           ],
         ]),
       ]),
+      ),
     );
   }
 
@@ -909,10 +872,11 @@ class _FinancialSummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Sum item costs (price × quantity)
+    // Sum item costs (price × quantity), skipping cancelled/out-of-stock items
     double itemsCostUsd = 0;
     for (final raw in items) {
       final item = raw as Map<String, dynamic>;
+      if ((item['status'] as String?) == 'cancelled') continue;
       final price = (item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
       final qty = (item['quantity'] as num?)?.toInt() ?? 1;
       itemsCostUsd += price * qty;
@@ -1010,5 +974,274 @@ class _FinancialRow extends StatelessWidget {
         fontSize: bold ? 15 : 14,
       )),
     ]);
+  }
+}
+
+// ─── Full Item Edit Dialog ────────────────────────────────
+
+class _EditItemDialog extends ConsumerStatefulWidget {
+  final String orderId;
+  final Map<String, dynamic> item;
+  final VoidCallback onSaved;
+  const _EditItemDialog({required this.orderId, required this.item, required this.onSaved});
+
+  @override
+  ConsumerState<_EditItemDialog> createState() => _EditItemDialogState();
+}
+
+class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _urlCtrl;
+  late final TextEditingController _priceCtrl;
+  late final TextEditingController _qtyCtrl;
+  late final TextEditingController _sizeCtrl;
+  late final TextEditingController _colorCtrl;
+  late String _selectedStatus;
+  bool _saving = false;
+  String? _error;
+
+  // (value, Arabic label) pairs for the status dropdown
+  static const _statusOptions = [
+    ('pending',           'في انتظار الشراء'),
+    ('purchased',         'تم الشراء'),
+    ('shipped',           'تم الشحن'),
+    ('arrived_warehouse', 'وصل المخزن'),
+    ('sorted',            'تم الفرز'),
+    ('ready_dispatch',    'جاهز للتوصيل'),
+    ('dispatched',        'في الطريق'),
+    ('delivered',         'تم التوصيل'),
+    ('cancelled',         'نفذ من المخزون / ملغي'),
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    _nameCtrl  = TextEditingController(text: widget.item['product_name'] as String? ?? '');
+    _urlCtrl   = TextEditingController(text: widget.item['product_url']  as String? ?? '');
+    final price = (widget.item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
+    _priceCtrl = TextEditingController(text: price > 0 ? price.toString() : '');
+    final qty  = (widget.item['quantity'] as num?)?.toInt() ?? 1;
+    _qtyCtrl   = TextEditingController(text: qty.toString());
+    _sizeCtrl  = TextEditingController(text: widget.item['size']  as String? ?? '');
+    _colorCtrl = TextEditingController(text: widget.item['color'] as String? ?? '');
+    final rawStatus = (widget.item['status'] as String?) ?? 'pending';
+    // Fall back to 'pending' if the status isn't in our dropdown list
+    _selectedStatus = _statusOptions.any((o) => o.$1 == rawStatus) ? rawStatus : 'pending';
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _urlCtrl.dispose();
+    _priceCtrl.dispose();
+    _qtyCtrl.dispose();
+    _sizeCtrl.dispose();
+    _colorCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _save() async {
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) {
+      setState(() => _error = 'اسم المنتج مطلوب');
+      return;
+    }
+    setState(() { _saving = true; _error = null; });
+    try {
+      await ref.read(ordersProvider.notifier).updateOrderItem(
+        widget.orderId,
+        widget.item['id'] as String,
+        {
+          'product_name':       name,
+          'product_url':        _urlCtrl.text.trim(),
+          'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
+          'quantity':           int.tryParse(_qtyCtrl.text.trim()) ?? 1,
+          'size':               _sizeCtrl.text.trim(),
+          'color':              _colorCtrl.text.trim(),
+          'status':             _selectedStatus,
+          'version':            widget.item['version'],
+        },
+      );
+      widget.onSaved();
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) setState(() { _saving = false; _error = e.toString(); });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isCancelled = _selectedStatus == 'cancelled';
+    return Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            // Header
+            Row(children: [
+              const Icon(Icons.edit_rounded, color: AppTheme.accent, size: 20),
+              const SizedBox(width: 8),
+              const Expanded(child: Text('تعديل المنتج',
+                style: TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: Colors.white))),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white38),
+                onPressed: () => Navigator.of(context).pop(),
+                padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+              ),
+            ]),
+            const SizedBox(height: 20),
+
+            if (_error != null) Container(
+              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(
+                color: AppTheme.error.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+            ),
+
+            // Status dropdown
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTheme.darkCard,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: isCancelled ? AppTheme.error.withValues(alpha: 0.5) : AppTheme.darkBorder,
+                ),
+              ),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String>(
+                  value: _selectedStatus,
+                  isExpanded: true,
+                  dropdownColor: AppTheme.darkCard,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  icon: const Icon(Icons.expand_more, color: Colors.white54),
+                  items: _statusOptions.map((opt) {
+                    final isCancel = opt.$1 == 'cancelled';
+                    return DropdownMenuItem(
+                      value: opt.$1,
+                      child: Text(opt.$2, style: TextStyle(
+                        color: isCancel ? AppTheme.error : Colors.white,
+                        fontWeight: isCancel ? FontWeight.w600 : FontWeight.normal,
+                      )),
+                    );
+                  }).toList(),
+                  onChanged: (v) { if (v != null) setState(() => _selectedStatus = v); },
+                ),
+              ),
+            ),
+
+            if (isCancelled) Container(
+              margin: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(
+                color: AppTheme.error.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppTheme.error.withValues(alpha: 0.25)),
+              ),
+              child: const Row(children: [
+                Icon(Icons.info_outline, color: AppTheme.error, size: 15),
+                SizedBox(width: 8),
+                Expanded(child: Text(
+                  'هذا المنتج سيُستثنى من حساب التكلفة والتوصيل',
+                  style: TextStyle(color: AppTheme.error, fontSize: 12),
+                )),
+              ]),
+            ),
+
+            const SizedBox(height: 14),
+
+            // Product name
+            TextField(
+              controller: _nameCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'اسم المنتج *',
+                prefixIcon: Icon(Icons.shopping_bag),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // URL
+            TextField(
+              controller: _urlCtrl,
+              style: const TextStyle(color: Colors.white),
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                labelText: 'رابط المنتج',
+                hintText: 'https://...',
+                hintStyle: TextStyle(color: Colors.white24),
+                prefixIcon: Icon(Icons.link),
+              ),
+            ),
+            const SizedBox(height: 12),
+
+            // Price + quantity
+            Row(children: [
+              Expanded(child: TextField(
+                controller: _priceCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'السعر (\$)',
+                  prefixIcon: Icon(Icons.attach_money, size: 18),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+              const SizedBox(width: 12),
+              SizedBox(width: 88, child: TextField(
+                controller: _qtyCtrl,
+                keyboardType: TextInputType.number,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'الكمية',
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+            ]),
+            const SizedBox(height: 12),
+
+            // Size + color
+            Row(children: [
+              Expanded(child: TextField(
+                controller: _sizeCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'المقاس',
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: TextField(
+                controller: _colorCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'اللون',
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+            ]),
+            const SizedBox(height: 24),
+
+            SizedBox(height: 52, child: ElevatedButton.icon(
+              onPressed: _saving ? null : _save,
+              icon: _saving
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.save_rounded, size: 22),
+              label: const Text('حفظ التغييرات', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+            )),
+          ]),
+        ),
+      ),
+    );
   }
 }

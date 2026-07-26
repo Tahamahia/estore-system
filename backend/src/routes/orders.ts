@@ -467,6 +467,54 @@ orderRoutes.post('/:id/items', async (c) => {
 });
 
 /**
+ * PATCH /orders/:id/items/:itemId — Update a single order item (all fields + status)
+ * Uses OCC via the version column to prevent lost-update races.
+ */
+orderRoutes.patch('/:id/items/:itemId', async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const orderId = c.req.param('id');
+  const itemId = c.req.param('itemId');
+  const body = await c.req.json();
+  const { version, ...updates } = body;
+
+  if (!version) {
+    return c.json({ error: 'Bad Request', message: 'version required for OCC' }, 400);
+  }
+
+  const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'quantity', 'size', 'color', 'status'];
+  const setClauses: string[] = [];
+  const values: any[] = [];
+
+  for (const field of allowedFields) {
+    if (updates[field] !== undefined) {
+      setClauses.push(`${field} = ?`);
+      values.push(updates[field] === '' ? null : updates[field]);
+    }
+  }
+
+  if (setClauses.length === 0) {
+    return c.json({ error: 'Bad Request', message: 'No valid fields to update' }, 400);
+  }
+
+  setClauses.push(`version = version + 1`);
+  setClauses.push(`updated_at = datetime('now')`);
+
+  const result = await c.env.DB.prepare(
+    `UPDATE order_items SET ${setClauses.join(', ')}
+     WHERE id = ? AND order_id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
+  ).bind(...values, itemId, orderId, tenantId, version).run();
+
+  if (result.meta.changes === 0) {
+    return c.json({
+      error: 'Conflict',
+      message: 'Item was modified by another request (version mismatch) or not found',
+    }, 409);
+  }
+
+  return c.json({ message: 'Item updated', id: itemId });
+});
+
+/**
  * GET /orders/:id — Get single order with items and customer info
  */
 orderRoutes.get('/:id', async (c) => {

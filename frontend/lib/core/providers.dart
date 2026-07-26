@@ -70,6 +70,12 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
     await _dio.post('/orders/$orderId/items', data: itemData);
   }
 
+  /// Update a single order item's fields (name, url, price, qty, size, color, status).
+  /// Uses OCC — pass the current item version in [data].
+  Future<void> updateOrderItem(String orderId, String itemId, Map<String, dynamic> data) async {
+    await _dio.patch('/orders/$orderId/items/$itemId', data: data);
+  }
+
   /// Bulk update item status/shipment for night purchasing workflow.
   /// Pass [itemIds] when you have resolved item primary keys, or [orderIds]
   /// when you only have order IDs (the backend resolves items server-side).
