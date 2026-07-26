@@ -232,6 +232,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       context: context,
       builder: (_) => _EditItemDialog(
         orderId: widget.orderId,
+        order: _order!,
         item: item,
         onSaved: () async {
           // _refreshOrder() silently overwrites _order + calls setState so the
@@ -253,6 +254,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       context: context,
       builder: (ctx) => _AddItemDialog(
         orderId: widget.orderId,
+        order: _order!,
         onAdded: () async {
           await _loadOrder();
           if (mounted) {
@@ -538,8 +540,9 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
 /// Dialog to add a single item to an existing order
 class _AddItemDialog extends ConsumerStatefulWidget {
   final String orderId;
+  final Map<String, dynamic> order;
   final VoidCallback onAdded;
-  const _AddItemDialog({required this.orderId, required this.onAdded});
+  const _AddItemDialog({required this.orderId, required this.order, required this.onAdded});
 
   @override
   ConsumerState<_AddItemDialog> createState() => _AddItemDialogState();
@@ -550,13 +553,24 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
   final _skuCtrl = TextEditingController();
   final _urlCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
-  final _shippingCtrl = TextEditingController();
+  final _weightCtrl = TextEditingController();
   final _localPriceCtrl = TextEditingController();
   final _qtyCtrl = TextEditingController(text: '1');
   final _sizeCtrl = TextEditingController();
   final _colorCtrl = TextEditingController();
+  final _brandCtrl = TextEditingController();
+  String? _selectedCategory;
   bool _isLoading = false;
   String? _error;
+
+  static const _categories = ['Clothes', 'Electronic', 'Accessories', 'Other'];
+
+  @override
+  void initState() {
+    super.initState();
+    _weightCtrl.addListener(() => setState(() {}));
+    _qtyCtrl.addListener(() => setState(() {}));
+  }
 
   @override
   void dispose() {
@@ -564,11 +578,12 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
     _skuCtrl.dispose();
     _urlCtrl.dispose();
     _priceCtrl.dispose();
-    _shippingCtrl.dispose();
+    _weightCtrl.dispose();
     _localPriceCtrl.dispose();
     _qtyCtrl.dispose();
     _sizeCtrl.dispose();
     _colorCtrl.dispose();
+    _brandCtrl.dispose();
     super.dispose();
   }
 
@@ -582,15 +597,17 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
       await ref.read(ordersProvider.notifier).addItemToOrder(widget.orderId, {
         'id': const Uuid().v4(),
         'product_name': _productCtrl.text.trim(),
-        'sku': _skuCtrl.text.trim(),
-        'product_url': _urlCtrl.text.trim(),
+        if (_skuCtrl.text.trim().isNotEmpty) 'sku': _skuCtrl.text.trim(),
+        if (_urlCtrl.text.trim().isNotEmpty) 'product_url': _urlCtrl.text.trim(),
         'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
-        'shipping_cost_foreign': double.tryParse(_shippingCtrl.text.trim()) ?? 0,
+        'weight': double.tryParse(_weightCtrl.text.trim()) ?? 0,
         if (_localPriceCtrl.text.trim().isNotEmpty)
           'unit_price_local': double.tryParse(_localPriceCtrl.text.trim()) ?? 0,
         'quantity': int.tryParse(_qtyCtrl.text.trim()) ?? 1,
+        if (_selectedCategory != null) 'item_category': _selectedCategory,
         if (_sizeCtrl.text.trim().isNotEmpty) 'size': _sizeCtrl.text.trim(),
         if (_colorCtrl.text.trim().isNotEmpty) 'color': _colorCtrl.text.trim(),
+        if (_brandCtrl.text.trim().isNotEmpty) 'brand': _brandCtrl.text.trim(),
       });
       widget.onAdded();
       if (mounted) Navigator.of(context).pop();
@@ -603,11 +620,18 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final shippingRate = (widget.order['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
+    final weight = double.tryParse(_weightCtrl.text.trim()) ?? 0;
+    final qty = int.tryParse(_qtyCtrl.text.trim()) ?? 1;
+    final calcShipping = weight * shippingRate * qty;
+    final showClothesFields = _selectedCategory == 'Clothes';
+    final showBrandField = _selectedCategory == 'Electronic' || _selectedCategory == 'Accessories';
+
     return Dialog(
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
+        constraints: const BoxConstraints(maxWidth: 520),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -620,106 +644,162 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
               decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
               child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
             ),
-            TextField(
-              controller: _productCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'اسم المنتج *',
-                prefixIcon: Icon(Icons.shopping_bag),
+
+            // ── Section 1: تفاصيل المنتج ─────────────────────────────
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppTheme.darkCard,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white12),
               ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                const Text('تفاصيل المنتج', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white70)),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: _productCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'اسم المنتج *',
+                    prefixIcon: Icon(Icons.shopping_bag_outlined),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _skuCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'الرقم التسلسلي (الباركود)',
+                    prefixIcon: Icon(Icons.qr_code),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _urlCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: TextInputType.url,
+                  decoration: const InputDecoration(
+                    labelText: 'رابط المنتج',
+                    hintText: 'https://...',
+                    hintStyle: TextStyle(color: Colors.white24),
+                    prefixIcon: Icon(Icons.link),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  value: _selectedCategory,
+                  dropdownColor: AppTheme.darkCard,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'فئة المنتج',
+                    prefixIcon: Icon(Icons.category_outlined),
+                  ),
+                  items: _categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+                  onChanged: (v) => setState(() { _selectedCategory = v; _sizeCtrl.clear(); _colorCtrl.clear(); _brandCtrl.clear(); }),
+                ),
+                if (showClothesFields) ...[
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Expanded(child: TextField(
+                      controller: _sizeCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'المقاس',
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      ),
+                    )),
+                    const SizedBox(width: 10),
+                    Expanded(child: TextField(
+                      controller: _colorCtrl,
+                      style: const TextStyle(color: Colors.white),
+                      decoration: const InputDecoration(
+                        labelText: 'اللون',
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                      ),
+                    )),
+                  ]),
+                ] else if (showBrandField) ...[
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: _brandCtrl,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'الماركة (Brand)',
+                      prefixIcon: Icon(Icons.branding_watermark_outlined),
+                    ),
+                  ),
+                ],
+              ]),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _skuCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'الرقم التسلسلي (الباركود)',
-                prefixIcon: Icon(Icons.qr_code),
+            const SizedBox(height: 14),
+
+            // ── Section 2: التفاصيل المالية ──────────────────────────
+            Container(
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: AppTheme.darkCard,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.white12),
               ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                const Text('التفاصيل المالية', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white70)),
+                const SizedBox(height: 12),
+                Row(children: [
+                  Expanded(child: TextField(
+                    controller: _priceCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'تكلفة الشراء (\$)',
+                      prefixIcon: Icon(Icons.attach_money, size: 18),
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                  )),
+                  const SizedBox(width: 10),
+                  SizedBox(width: 80, child: TextField(
+                    controller: _qtyCtrl,
+                    keyboardType: TextInputType.number,
+                    style: const TextStyle(color: Colors.white),
+                    decoration: const InputDecoration(
+                      labelText: 'الكمية',
+                      isDense: true,
+                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    ),
+                  )),
+                ]),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _weightCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    labelText: 'الوزن (كغ)',
+                    prefixIcon: const Icon(Icons.scale_outlined, size: 18),
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                    helperText: shippingRate > 0
+                        ? 'شحن محسوب: \$${calcShipping.toStringAsFixed(2)}  ($weight kg × \$$shippingRate × $qty)'
+                        : null,
+                    helperStyle: const TextStyle(color: Colors.white38, fontSize: 11),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: _localPriceCtrl,
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'سعر البيع المحلي (د.ل)',
+                    prefixIcon: Icon(Icons.sell_outlined, size: 18),
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                ),
+              ]),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _urlCtrl,
-              style: const TextStyle(color: Colors.white),
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                labelText: 'رابط المنتج',
-                hintText: 'https://...',
-                hintStyle: TextStyle(color: Colors.white24),
-                prefixIcon: Icon(Icons.link),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextField(
-                controller: _priceCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'تكلفة الشراء (\$)',
-                  prefixIcon: Icon(Icons.attach_money, size: 18),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-              )),
-              const SizedBox(width: 10),
-              Expanded(child: TextField(
-                controller: _shippingCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'تكلفة الشحن (\$)',
-                  prefixIcon: Icon(Icons.local_shipping_outlined, size: 18),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-              )),
-              const SizedBox(width: 10),
-              SizedBox(width: 72, child: TextField(
-                controller: _qtyCtrl,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'الكمية',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-              )),
-            ]),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _localPriceCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'سعر البيع المحلي (د.ل)',
-                prefixIcon: Icon(Icons.sell_outlined, size: 18),
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              ),
-            ),
-            const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextField(
-                controller: _sizeCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'المقاس',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-              )),
-              const SizedBox(width: 12),
-              Expanded(child: TextField(
-                controller: _colorCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'اللون',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-              )),
-            ]),
             const SizedBox(height: 24),
             SizedBox(height: 52, child: ElevatedButton.icon(
               onPressed: _isLoading ? null : _submit,
@@ -904,6 +984,7 @@ class _EditOrderDialog extends StatefulWidget {
 class _EditOrderDialogState extends State<_EditOrderDialog> {
   late final TextEditingController _notesCtrl;
   late final TextEditingController _rateCtrl;
+  late final TextEditingController _shippingRateCtrl;
   bool _saving = false;
   String? _error;
 
@@ -914,12 +995,16 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
     _rateCtrl = TextEditingController(
       text: (widget.order['pegged_exchange_rate'] as num?)?.toString() ?? '',
     );
+    _shippingRateCtrl = TextEditingController(
+      text: (widget.order['shipping_rate_per_kg'] as num?)?.toString() ?? '',
+    );
   }
 
   @override
   void dispose() {
     _notesCtrl.dispose();
     _rateCtrl.dispose();
+    _shippingRateCtrl.dispose();
     super.dispose();
   }
 
@@ -952,6 +1037,16 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
             ),
             const SizedBox(height: 14),
             TextField(
+              controller: _shippingRateCtrl,
+              style: const TextStyle(color: Colors.white),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'سعر الشحن للكيلو (\$)',
+                prefixIcon: Icon(Icons.scale_outlined),
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
               controller: _notesCtrl,
               style: const TextStyle(color: Colors.white),
               maxLines: 2,
@@ -968,6 +1063,8 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                 final updates = <String, dynamic>{'version': widget.order['version']};
                 final rate = double.tryParse(_rateCtrl.text.trim());
                 if (rate != null) updates['pegged_exchange_rate'] = rate;
+                final shippingRate = double.tryParse(_shippingRateCtrl.text.trim());
+                if (shippingRate != null) updates['shipping_rate_per_kg'] = shippingRate;
                 final notes = _notesCtrl.text.trim();
                 if (notes.isNotEmpty) updates['notes'] = notes;
                 try {
@@ -1000,7 +1097,8 @@ class _FinancialSummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Sum item-level costs, shipping, and local selling prices, skipping cancelled
+    // Shipping = weight × order-level shipping_rate_per_kg × qty (weight-based, not static field)
+    final shippingRate = (order['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
     double itemsCostUsd = 0;
     double shippingUsd = 0;
     double totalLocal = 0;
@@ -1009,7 +1107,7 @@ class _FinancialSummaryCard extends StatelessWidget {
       if ((item['status'] as String?) == 'cancelled') continue;
       final qty = (item['quantity'] as num?)?.toInt() ?? 1;
       itemsCostUsd += ((item['unit_price_foreign'] as num?)?.toDouble() ?? 0) * qty;
-      shippingUsd += ((item['shipping_cost_foreign'] as num?)?.toDouble() ?? 0) * qty;
+      shippingUsd += ((item['weight'] as num?)?.toDouble() ?? 0) * shippingRate * qty;
       totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? 0) * qty;
     }
 
@@ -1110,9 +1208,10 @@ class _FinancialRow extends StatelessWidget {
 
 class _EditItemDialog extends ConsumerStatefulWidget {
   final String orderId;
+  final Map<String, dynamic> order;
   final Map<String, dynamic> item;
   final Future<void> Function() onSaved;
-  const _EditItemDialog({required this.orderId, required this.item, required this.onSaved});
+  const _EditItemDialog({required this.orderId, required this.order, required this.item, required this.onSaved});
 
   @override
   ConsumerState<_EditItemDialog> createState() => _EditItemDialogState();
@@ -1123,16 +1222,19 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
   late final TextEditingController _skuCtrl;
   late final TextEditingController _urlCtrl;
   late final TextEditingController _priceCtrl;
-  late final TextEditingController _shippingCtrl;
+  late final TextEditingController _weightCtrl;
   late final TextEditingController _localPriceCtrl;
   late final TextEditingController _qtyCtrl;
   late final TextEditingController _sizeCtrl;
   late final TextEditingController _colorCtrl;
+  late final TextEditingController _brandCtrl;
+  String? _selectedCategory;
   late String _selectedStatus;
   bool _saving = false;
   String? _error;
 
-  // (value, Arabic label) pairs for the status dropdown
+  static const _categories = ['Clothes', 'Electronic', 'Accessories', 'Other'];
+
   static const _statusOptions = [
     ('pending',           'في انتظار الشراء'),
     ('purchased',         'تم الشراء'),
@@ -1153,17 +1255,21 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     _urlCtrl   = TextEditingController(text: widget.item['product_url']  as String? ?? '');
     final price = (widget.item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
     _priceCtrl = TextEditingController(text: price > 0 ? price.toString() : '');
-    final shipping = (widget.item['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
-    _shippingCtrl = TextEditingController(text: shipping > 0 ? shipping.toString() : '');
+    final weight = (widget.item['weight'] as num?)?.toDouble() ?? 0;
+    _weightCtrl = TextEditingController(text: weight > 0 ? weight.toString() : '');
     final localPrice = (widget.item['unit_price_local'] as num?)?.toDouble() ?? 0;
     _localPriceCtrl = TextEditingController(text: localPrice > 0 ? localPrice.toStringAsFixed(0) : '');
     final qty  = (widget.item['quantity'] as num?)?.toInt() ?? 1;
     _qtyCtrl   = TextEditingController(text: qty.toString());
     _sizeCtrl  = TextEditingController(text: widget.item['size']  as String? ?? '');
     _colorCtrl = TextEditingController(text: widget.item['color'] as String? ?? '');
+    _brandCtrl = TextEditingController(text: widget.item['brand'] as String? ?? '');
+    final rawCat = widget.item['item_category'] as String?;
+    _selectedCategory = _categories.contains(rawCat) ? rawCat : null;
     final rawStatus = (widget.item['status'] as String?) ?? 'pending';
-    // Fall back to 'pending' if the status isn't in our dropdown list
     _selectedStatus = _statusOptions.any((o) => o.$1 == rawStatus) ? rawStatus : 'pending';
+    _weightCtrl.addListener(() => setState(() {}));
+    _qtyCtrl.addListener(() => setState(() {}));
   }
 
   @override
@@ -1172,11 +1278,12 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     _skuCtrl.dispose();
     _urlCtrl.dispose();
     _priceCtrl.dispose();
-    _shippingCtrl.dispose();
+    _weightCtrl.dispose();
     _localPriceCtrl.dispose();
     _qtyCtrl.dispose();
     _sizeCtrl.dispose();
     _colorCtrl.dispose();
+    _brandCtrl.dispose();
     super.dispose();
   }
 
@@ -1192,18 +1299,20 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
         widget.orderId,
         widget.item['id'] as String,
         {
-          'product_name':       name,
-          'sku':                _skuCtrl.text.trim(),
-          'product_url':        _urlCtrl.text.trim(),
+          'product_name': name,
+          'sku':          _skuCtrl.text.trim(),
+          'product_url':  _urlCtrl.text.trim(),
           'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
-          'shipping_cost_foreign': double.tryParse(_shippingCtrl.text.trim()) ?? 0,
+          'weight':       double.tryParse(_weightCtrl.text.trim()) ?? 0,
           if (_localPriceCtrl.text.trim().isNotEmpty)
             'unit_price_local': double.tryParse(_localPriceCtrl.text.trim()) ?? 0,
-          'quantity':           int.tryParse(_qtyCtrl.text.trim()) ?? 1,
-          'size':               _sizeCtrl.text.trim(),
-          'color':              _colorCtrl.text.trim(),
-          'status':             _selectedStatus,
-          'version':            widget.item['version'],
+          'quantity':     int.tryParse(_qtyCtrl.text.trim()) ?? 1,
+          'size':         _sizeCtrl.text.trim(),
+          'color':        _colorCtrl.text.trim(),
+          'brand':        _brandCtrl.text.trim(),
+          if (_selectedCategory != null) 'item_category': _selectedCategory,
+          'status':       _selectedStatus,
+          'version':      widget.item['version'],
         },
       );
       await widget.onSaved();
@@ -1216,6 +1325,13 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
   @override
   Widget build(BuildContext context) {
     final isCancelled = _selectedStatus == 'cancelled';
+    final shippingRate = (widget.order['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
+    final weight = double.tryParse(_weightCtrl.text.trim()) ?? 0;
+    final qty = int.tryParse(_qtyCtrl.text.trim()) ?? 1;
+    final calcShipping = weight * shippingRate * qty;
+    final showClothesFields = _selectedCategory == 'Clothes';
+    final showBrandField = _selectedCategory == 'Electronic' || _selectedCategory == 'Accessories';
+
     return Dialog(
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -1236,14 +1352,11 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
                 padding: EdgeInsets.zero, constraints: const BoxConstraints(),
               ),
             ]),
-            const SizedBox(height: 20),
+            const SizedBox(height: 16),
 
             if (_error != null) Container(
-              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 14),
-              decoration: BoxDecoration(
-                color: AppTheme.error.withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(8),
-              ),
+              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
               child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
             ),
 
@@ -1253,163 +1366,124 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
               decoration: BoxDecoration(
                 color: AppTheme.darkCard,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: isCancelled ? AppTheme.error.withValues(alpha: 0.5) : AppTheme.darkBorder,
-                ),
+                border: Border.all(color: isCancelled ? AppTheme.error.withValues(alpha: 0.5) : AppTheme.darkBorder),
               ),
               child: DropdownButtonHideUnderline(
                 child: DropdownButton<String>(
-                  value: _selectedStatus,
-                  isExpanded: true,
+                  value: _selectedStatus, isExpanded: true,
                   dropdownColor: AppTheme.darkCard,
                   style: const TextStyle(color: Colors.white, fontSize: 14),
                   icon: const Icon(Icons.expand_more, color: Colors.white54),
                   items: _statusOptions.map((opt) {
                     final isCancel = opt.$1 == 'cancelled';
-                    return DropdownMenuItem(
-                      value: opt.$1,
-                      child: Text(opt.$2, style: TextStyle(
-                        color: isCancel ? AppTheme.error : Colors.white,
-                        fontWeight: isCancel ? FontWeight.w600 : FontWeight.normal,
-                      )),
-                    );
+                    return DropdownMenuItem(value: opt.$1,
+                      child: Text(opt.$2, style: TextStyle(color: isCancel ? AppTheme.error : Colors.white, fontWeight: isCancel ? FontWeight.w600 : FontWeight.normal)));
                   }).toList(),
                   onChanged: (v) { if (v != null) setState(() => _selectedStatus = v); },
                 ),
               ),
             ),
-
             if (isCancelled) Container(
               margin: const EdgeInsets.only(top: 8),
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               decoration: BoxDecoration(
-                color: AppTheme.error.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(8),
+                color: AppTheme.error.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8),
                 border: Border.all(color: AppTheme.error.withValues(alpha: 0.25)),
               ),
               child: const Row(children: [
-                Icon(Icons.info_outline, color: AppTheme.error, size: 15),
-                SizedBox(width: 8),
-                Expanded(child: Text(
-                  'هذا المنتج سيُستثنى من حساب التكلفة والتوصيل',
-                  style: TextStyle(color: AppTheme.error, fontSize: 12),
-                )),
+                Icon(Icons.info_outline, color: AppTheme.error, size: 15), SizedBox(width: 8),
+                Expanded(child: Text('هذا المنتج سيُستثنى من حساب التكلفة والتوصيل', style: TextStyle(color: AppTheme.error, fontSize: 12))),
               ]),
             ),
+            const SizedBox(height: 16),
 
-            const SizedBox(height: 14),
-
-            // Product name
+            // ── Section 1: تفاصيل المنتج ──────────────────────
+            const Text('تفاصيل المنتج', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white60)),
+            const Divider(color: AppTheme.darkBorder, height: 14),
             TextField(
-              controller: _nameCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'اسم المنتج *',
-                prefixIcon: Icon(Icons.shopping_bag),
-              ),
+              controller: _nameCtrl, style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'اسم المنتج *', prefixIcon: Icon(Icons.shopping_bag)),
             ),
             const SizedBox(height: 12),
-
-            // SKU / barcode
             TextField(
-              controller: _skuCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'الرقم التسلسلي (الباركود)',
-                prefixIcon: Icon(Icons.qr_code),
-              ),
+              controller: _skuCtrl, style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'الرقم التسلسلي (الباركود)', prefixIcon: Icon(Icons.qr_code)),
             ),
             const SizedBox(height: 12),
-
-            // URL
             TextField(
-              controller: _urlCtrl,
-              style: const TextStyle(color: Colors.white),
-              keyboardType: TextInputType.url,
-              decoration: const InputDecoration(
-                labelText: 'رابط المنتج',
-                hintText: 'https://...',
-                hintStyle: TextStyle(color: Colors.white24),
-                prefixIcon: Icon(Icons.link),
-              ),
+              controller: _urlCtrl, style: const TextStyle(color: Colors.white), keyboardType: TextInputType.url,
+              decoration: const InputDecoration(labelText: 'رابط المنتج', hintText: 'https://...', hintStyle: TextStyle(color: Colors.white24), prefixIcon: Icon(Icons.link)),
             ),
             const SizedBox(height: 12),
+            // Category dropdown
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+              decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.darkBorder)),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  value: _selectedCategory, isExpanded: true, dropdownColor: AppTheme.darkCard,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  icon: const Icon(Icons.expand_more, color: Colors.white54),
+                  hint: const Text('الفئة (اختياري)', style: TextStyle(color: Colors.white38)),
+                  items: [
+                    const DropdownMenuItem<String?>(value: null, child: Text('— بدون فئة —', style: TextStyle(color: Colors.white38))),
+                    ..._categories.map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(color: Colors.white)))),
+                  ],
+                  onChanged: (v) => setState(() => _selectedCategory = v),
+                ),
+              ),
+            ),
+            if (showClothesFields) ...[
+              const SizedBox(height: 12),
+              Row(children: [
+                Expanded(child: TextField(controller: _sizeCtrl, style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(labelText: 'المقاس', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+                const SizedBox(width: 12),
+                Expanded(child: TextField(controller: _colorCtrl, style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(labelText: 'اللون', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+              ]),
+            ] else if (showBrandField) ...[
+              const SizedBox(height: 12),
+              TextField(controller: _brandCtrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'الماركة', prefixIcon: Icon(Icons.verified_outlined, size: 18))),
+            ],
+            const SizedBox(height: 16),
 
-            // Financial fields: purchase price + shipping + quantity
+            // ── Section 2: التفاصيل المالية ───────────────────
+            const Text('التفاصيل المالية', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white60)),
+            const Divider(color: AppTheme.darkBorder, height: 14),
             Row(children: [
               Expanded(child: TextField(
-                controller: _priceCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                controller: _priceCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'تكلفة الشراء (\$)',
-                  prefixIcon: Icon(Icons.attach_money, size: 18),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
+                decoration: const InputDecoration(labelText: 'تكلفة الشراء (\$)', prefixIcon: Icon(Icons.attach_money, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
               )),
               const SizedBox(width: 10),
-              Expanded(child: TextField(
-                controller: _shippingCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              SizedBox(width: 80, child: TextField(
+                controller: _qtyCtrl, keyboardType: TextInputType.number,
                 style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'تكلفة الشحن (\$)',
-                  prefixIcon: Icon(Icons.local_shipping_outlined, size: 18),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-              )),
-              const SizedBox(width: 10),
-              SizedBox(width: 72, child: TextField(
-                controller: _qtyCtrl,
-                keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'الكمية',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
+                decoration: const InputDecoration(labelText: 'الكمية', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
               )),
             ]),
             const SizedBox(height: 12),
-
-            // Local selling price
             TextField(
-              controller: _localPriceCtrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              controller: _weightCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
               style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'سعر البيع المحلي (د.ل)',
-                prefixIcon: Icon(Icons.sell_outlined, size: 18),
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              decoration: InputDecoration(
+                labelText: 'الوزن (كيلو)', prefixIcon: const Icon(Icons.scale_outlined, size: 18),
+                isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                helperText: shippingRate > 0
+                    ? 'شحن محسوب: \$${calcShipping.toStringAsFixed(2)}  ($weight kg × \$$shippingRate × $qty)'
+                    : 'سعر الشحن/كيلو غير محدد في إعدادات الطلب',
+                helperStyle: TextStyle(color: shippingRate > 0 ? AppTheme.secondary : Colors.white38, fontSize: 11),
               ),
             ),
             const SizedBox(height: 12),
-
-            // Size + color
-            Row(children: [
-              Expanded(child: TextField(
-                controller: _sizeCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'المقاس',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-              )),
-              const SizedBox(width: 12),
-              Expanded(child: TextField(
-                controller: _colorCtrl,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(
-                  labelText: 'اللون',
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-              )),
-            ]),
+            TextField(
+              controller: _localPriceCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'سعر البيع المحلي (د.ل)', prefixIcon: Icon(Icons.sell_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+            ),
             const SizedBox(height: 24),
 
             SizedBox(height: 52, child: ElevatedButton.icon(
