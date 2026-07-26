@@ -564,8 +564,11 @@ class _AddItemDialog extends ConsumerStatefulWidget {
 
 class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
   final _productCtrl = TextEditingController();
+  final _skuCtrl = TextEditingController();
   final _urlCtrl = TextEditingController();
   final _priceCtrl = TextEditingController();
+  final _shippingCtrl = TextEditingController();
+  final _localPriceCtrl = TextEditingController();
   final _qtyCtrl = TextEditingController(text: '1');
   final _sizeCtrl = TextEditingController();
   final _colorCtrl = TextEditingController();
@@ -575,8 +578,11 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
   @override
   void dispose() {
     _productCtrl.dispose();
+    _skuCtrl.dispose();
     _urlCtrl.dispose();
     _priceCtrl.dispose();
+    _shippingCtrl.dispose();
+    _localPriceCtrl.dispose();
     _qtyCtrl.dispose();
     _sizeCtrl.dispose();
     _colorCtrl.dispose();
@@ -588,17 +594,17 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
       setState(() => _error = 'اسم المنتج مطلوب');
       return;
     }
-    if (_urlCtrl.text.trim().isEmpty) {
-      setState(() => _error = 'رابط المنتج مطلوب');
-      return;
-    }
     setState(() { _isLoading = true; _error = null; });
     try {
       await ref.read(ordersProvider.notifier).addItemToOrder(widget.orderId, {
         'id': const Uuid().v4(),
         'product_name': _productCtrl.text.trim(),
+        'sku': _skuCtrl.text.trim(),
         'product_url': _urlCtrl.text.trim(),
-        if (_priceCtrl.text.trim().isNotEmpty) 'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
+        'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
+        'shipping_cost_foreign': double.tryParse(_shippingCtrl.text.trim()) ?? 0,
+        if (_localPriceCtrl.text.trim().isNotEmpty)
+          'unit_price_local': double.tryParse(_localPriceCtrl.text.trim()) ?? 0,
         'quantity': int.tryParse(_qtyCtrl.text.trim()) ?? 1,
         if (_sizeCtrl.text.trim().isNotEmpty) 'size': _sizeCtrl.text.trim(),
         if (_colorCtrl.text.trim().isNotEmpty) 'color': _colorCtrl.text.trim(),
@@ -641,11 +647,20 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
             ),
             const SizedBox(height: 12),
             TextField(
+              controller: _skuCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'الرقم التسلسلي (الباركود)',
+                prefixIcon: Icon(Icons.qr_code),
+              ),
+            ),
+            const SizedBox(height: 12),
+            TextField(
               controller: _urlCtrl,
               style: const TextStyle(color: Colors.white),
               keyboardType: TextInputType.url,
               decoration: const InputDecoration(
-                labelText: 'رابط المنتج / رابط الصورة *',
+                labelText: 'رابط المنتج',
                 hintText: 'https://...',
                 hintStyle: TextStyle(color: Colors.white24),
                 prefixIcon: Icon(Icons.link),
@@ -658,14 +673,26 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                 keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(
-                  labelText: 'السعر (اختياري)',
+                  labelText: 'تكلفة الشراء (\$)',
                   prefixIcon: Icon(Icons.attach_money, size: 18),
                   isDense: true,
                   contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 ),
               )),
-              const SizedBox(width: 12),
-              SizedBox(width: 80, child: TextField(
+              const SizedBox(width: 10),
+              Expanded(child: TextField(
+                controller: _shippingCtrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'تكلفة الشحن (\$)',
+                  prefixIcon: Icon(Icons.local_shipping_outlined, size: 18),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+              const SizedBox(width: 10),
+              SizedBox(width: 72, child: TextField(
                 controller: _qtyCtrl,
                 keyboardType: TextInputType.number,
                 style: const TextStyle(color: Colors.white),
@@ -677,12 +704,24 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
               )),
             ]),
             const SizedBox(height: 12),
+            TextField(
+              controller: _localPriceCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'سعر البيع المحلي (د.ل)',
+                prefixIcon: Icon(Icons.sell_outlined, size: 18),
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
+            const SizedBox(height: 12),
             Row(children: [
               Expanded(child: TextField(
                 controller: _sizeCtrl,
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(
-                  labelText: 'المقاس (اختياري)',
+                  labelText: 'المقاس',
                   isDense: true,
                   contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 ),
@@ -692,7 +731,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                 controller: _colorCtrl,
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(
-                  labelText: 'اللون (اختياري)',
+                  labelText: 'اللون',
                   isDense: true,
                   contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
                 ),

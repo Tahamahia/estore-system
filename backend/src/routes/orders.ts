@@ -437,7 +437,7 @@ orderRoutes.post('/:id/items', async (c) => {
   const orderId = c.req.param('id');
   const body = await c.req.json();
 
-  const { id, product_name, product_url, product_image_url, quantity, unit_price_foreign, color, size, sku, notes } = body;
+  const { id, product_name, product_url, product_image_url, quantity, unit_price_foreign, unit_price_local, shipping_cost_foreign, color, size, sku, notes } = body;
 
   if (!id || !product_name) {
     return c.json({ error: 'Bad Request', message: 'id and product_name are required' }, 400);
@@ -453,13 +453,13 @@ orderRoutes.post('/:id/items', async (c) => {
 
   await c.env.DB.prepare(
     `INSERT INTO order_items (id, tenant_id, order_id, product_name, product_url,
-     product_image_url, quantity, unit_price_foreign, unit_price_local, color, size, sku,
+     product_image_url, quantity, unit_price_foreign, unit_price_local, shipping_cost_foreign, color, size, sku,
      notes, status, created_at, updated_at, version)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
   ).bind(
     id, tenantId, orderId, product_name, product_url || null,
     product_image_url || null, quantity || 1,
-    unit_price_foreign || 0,
+    unit_price_foreign || 0, unit_price_local || 0, shipping_cost_foreign || 0,
     color || null, size || null, sku || null, notes || null
   ).run();
 
