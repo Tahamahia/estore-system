@@ -9,7 +9,7 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
   const { barcode } = await c.req.json<{ barcode: string }>();
   if (!barcode) return c.json({ error: 'barcode required' }, 400);
 
-  // Lookup chain: item_uid → sku → tracking_number
+  // Lookup chain: item_uid → sku → tracking_number → primary key (ambiguity confirmation)
   let items = await c.env.DB.prepare(
     `SELECT oi.*, o.customer_id, c.full_name as customer_name FROM order_items oi
      JOIN orders o ON oi.order_id = o.id LEFT JOIN customers c ON o.customer_id = c.id
@@ -32,6 +32,16 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
        JOIN orders o ON oi.order_id = o.id JOIN shipments s ON oi.shipment_id = s.id
        LEFT JOIN customers c ON o.customer_id = c.id
        WHERE s.tracking_number = ? AND oi.tenant_id = ? AND oi.is_deleted = 0`
+    ).bind(barcode, tenantId).all();
+  }
+
+  // Fallback 4: Direct primary key lookup — used when the ambiguity dialog confirms
+  // a specific item by passing its UUID back through the scanner input.
+  if (!items.results?.length) {
+    items = await c.env.DB.prepare(
+      `SELECT oi.*, o.customer_id, c.full_name as customer_name FROM order_items oi
+       JOIN orders o ON oi.order_id = o.id LEFT JOIN customers c ON o.customer_id = c.id
+       WHERE oi.id = ? AND oi.tenant_id = ? AND oi.is_deleted = 0`
     ).bind(barcode, tenantId).all();
   }
 

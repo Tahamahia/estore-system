@@ -185,31 +185,20 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   }
 
   void _showBulkUpdateDialog() {
-    // NOTE: _selectedIds contains ORDER IDs. The bulkUpdateItems API expects
-    // item IDs. We collect item IDs from the selected orders' items lists.
-    // If the backend adds order_id support to the bulk endpoint, this can be simplified.
-    final ordersState = ref.read(ordersProvider);
-    final allOrders = ordersState.valueOrNull ?? [];
-    final itemIds = <String>[];
-    for (final order in allOrders) {
-      final orderId = order['id'] as String? ?? '';
-      if (_selectedIds.contains(orderId)) {
-        final items = order['items'] as List<dynamic>? ?? [];
-        for (final item in items) {
-          final itemId = (item as Map<String, dynamic>)['id'] as String?;
-          if (itemId != null) itemIds.add(itemId);
-        }
-      }
-    }
-    // Fallback: if orders don't have embedded items, send order IDs as-is
-    // and rely on backend order_id support (added by backend fixer).
-    final idsToSend = itemIds.isNotEmpty ? itemIds : _selectedIds.toList();
+    // GET /orders returns order metadata without embedded items.
+    // Always send selected order IDs as order_ids so the backend resolves
+    // the item list server-side via the order_ids branch of PATCH /orders/items/bulk.
+    final orderIds = _selectedIds.toList();
 
     showDialog(context: context, builder: (_) => _BulkUpdateDialog(
       selectedCount: _selectedIds.length,
       onConfirm: (status) async {
         try {
-          await ref.read(ordersProvider.notifier).bulkUpdateItems(idsToSend, status: status);
+          await ref.read(ordersProvider.notifier).bulkUpdateItems(
+            [], // no pre-resolved item IDs
+            orderIds: orderIds,
+            status: status,
+          );
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
               content: Text('✅ ${_selectedIds.length} orders updated to "$status"'),

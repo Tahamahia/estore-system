@@ -29,20 +29,27 @@ class OverviewScreen extends ConsumerWidget {
                 ),
                 error: (_, __) => _buildStaticCards(crossCount),
                 data: (data) {
-                  final stats = data['stats'] as Map<String, dynamic>? ?? {};
+                  // Backend returns stats at root level — no 'stats' wrapper key.
+                  // Action items are nested under items_needing_action.
+                  final totalOrders = data['total_orders'] ?? 0;
+                  final totalCustomers = data['total_customers'] ?? 0;
+                  final totalRevenue = data['total_revenue_local'] ?? 0;
+                  final actionItems = data['items_needing_action'] as Map<String, dynamic>? ?? {};
+                  final unsorted = actionItems['unsorted'] ?? 0;
+                  final revenue = (totalRevenue as num).toStringAsFixed(2);
                   return GridView.count(
                     crossAxisCount: crossCount, shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     mainAxisSpacing: 16, crossAxisSpacing: 16, childAspectRatio: 2.2,
                     children: [
-                      _StatCard(title: 'Total Orders', value: '${stats['total_orders'] ?? 0}',
-                        icon: Icons.receipt_long, color: AppTheme.primary, change: '+${stats['orders_growth'] ?? 0}%'),
-                      _StatCard(title: 'Pending Sort', value: '${stats['pending_sort'] ?? 0}',
-                        icon: Icons.inventory_2, color: AppTheme.warning, change: '${stats['sort_change'] ?? 0}%'),
-                      _StatCard(title: 'Revenue', value: '\$${stats['revenue'] ?? '0.00'}',
-                        icon: Icons.attach_money, color: AppTheme.success, change: '+${stats['revenue_growth'] ?? 0}%'),
-                      _StatCard(title: 'Active Customers', value: '${stats['active_customers'] ?? 0}',
-                        icon: Icons.people, color: AppTheme.secondary, change: '+${stats['customers_growth'] ?? 0}%'),
+                      _StatCard(title: 'Total Orders', value: '$totalOrders',
+                        icon: Icons.receipt_long, color: AppTheme.primary, change: '+0%'),
+                      _StatCard(title: 'Pending Sort', value: '$unsorted',
+                        icon: Icons.inventory_2, color: AppTheme.warning, change: '0%'),
+                      _StatCard(title: 'Revenue (Local)', value: revenue,
+                        icon: Icons.attach_money, color: AppTheme.success, change: '+0%'),
+                      _StatCard(title: 'Customers', value: '$totalCustomers',
+                        icon: Icons.people, color: AppTheme.secondary, change: '+0%'),
                     ],
                   );
                 },

@@ -48,13 +48,21 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
     await _dio.post('/orders/$orderId/items', data: itemData);
   }
 
-  /// Bulk update item status/shipment for night purchasing workflow
-  Future<Map<String, dynamic>> bulkUpdateItems(List<String> itemIds, {String? status, String? shipmentId}) async {
-    final response = await _dio.patch('/orders/items/bulk', data: {
-      'item_ids': itemIds,
-      if (status != null) 'status': status,
-      if (shipmentId != null) 'shipment_id': shipmentId,
-    });
+  /// Bulk update item status/shipment for night purchasing workflow.
+  /// Pass [itemIds] when you have resolved item primary keys, or [orderIds]
+  /// when you only have order IDs (the backend resolves items server-side).
+  Future<Map<String, dynamic>> bulkUpdateItems(
+    List<String> itemIds, {
+    List<String>? orderIds,
+    String? status,
+    String? shipmentId,
+  }) async {
+    final body = <String, dynamic>{};
+    if (itemIds.isNotEmpty) body['item_ids'] = itemIds;
+    if (orderIds != null && orderIds.isNotEmpty) body['order_ids'] = orderIds;
+    if (status != null) body['status'] = status;
+    if (shipmentId != null) body['shipment_id'] = shipmentId;
+    final response = await _dio.patch('/orders/items/bulk', data: body);
     return response.data as Map<String, dynamic>;
   }
 
