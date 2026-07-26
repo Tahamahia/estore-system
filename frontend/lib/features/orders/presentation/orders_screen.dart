@@ -265,11 +265,20 @@ class _OrderTile extends StatelessWidget {
   final VoidCallback? onTap;
   const _OrderTile({required this.order, this.bulkMode = false, this.selected = false, this.onToggle, this.onTap});
 
+  String _formatDate(String raw) {
+    if (raw.length < 10) return raw.isEmpty ? '—' : raw;
+    final parts = raw.substring(0, 10).split('-');
+    if (parts.length < 3) return raw.substring(0, 10);
+    return '${parts[2]}/${parts[1]}/${parts[0]}';
+  }
+
   @override
   Widget build(BuildContext context) {
     final status = (order['status'] ?? 'pending') as String;
     final color = _statusColor(status);
     final customerName = order['customer_name'] as String? ?? '';
+    final rawId = order['id'] as String? ?? '';
+    final shortId = '#${rawId.length >= 8 ? rawId.substring(0, 8).toUpperCase() : rawId.toUpperCase()}';
 
     return InkWell(
       onTap: bulkMode ? onToggle : onTap,
@@ -295,10 +304,16 @@ class _OrderTile extends StatelessWidget {
         Expanded(child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(customerName.isNotEmpty ? customerName : (order['id'] ?? ''),
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+            Row(children: [
+              Text(shortId,
+                style: const TextStyle(color: AppTheme.secondary, fontWeight: FontWeight.w700, fontSize: 11, letterSpacing: 0.5)),
+              const SizedBox(width: 8),
+              Expanded(child: Text(customerName.isNotEmpty ? customerName : 'عميل غير معروف',
+                style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+                overflow: TextOverflow.ellipsis)),
+            ]),
             const SizedBox(height: 4),
-            Text('${order['platform'] ?? 'Manual'} • ${order['currency'] ?? 'USD'}',
+            Text('${order['platform'] ?? 'Manual'} • ${_formatDate(order['created_at'] as String? ?? '')}',
               style: const TextStyle(color: Colors.white54, fontSize: 13)),
           ],
         )),

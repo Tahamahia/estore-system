@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
@@ -91,6 +92,87 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     if (await canLaunchUrl(url)) {
       await launchUrl(url);
     }
+  }
+
+  void _showEditOrderDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => _EditOrderDialog(
+        order: _order!,
+        onSave: (updates) async {
+          await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, updates);
+          await _loadOrder();
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+              content: Text('✅ تم تحديث الطلب'),
+              backgroundColor: AppTheme.success,
+            ));
+          }
+        },
+      ),
+    );
+  }
+
+  void _showItemEditDialog(Map<String, dynamic> item) {
+    String selectedStatus = (item['status'] as String?) ?? 'pending';
+    showDialog(context: context, builder: (ctx) => Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 420),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: StatefulBuilder(builder: (_, setDialogState) {
+            return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Text(item['product_name'] as String? ?? 'المنتج',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white),
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+              const SizedBox(height: 4),
+              const Text('تغيير حالة العنصر', style: TextStyle(color: Colors.white54, fontSize: 13)),
+              const SizedBox(height: 20),
+              Wrap(spacing: 8, runSpacing: 8, children: [
+                for (final s in ['pending', 'purchased', 'shipped', 'arrived_warehouse', 'sorted', 'ready_dispatch', 'dispatched', 'delivered'])
+                  ChoiceChip(
+                    label: Text(_translateStatus(s)),
+                    selected: selectedStatus == s,
+                    onSelected: (_) => setDialogState(() => selectedStatus = s),
+                    selectedColor: _statusColor(s),
+                    backgroundColor: AppTheme.darkCard,
+                    labelStyle: TextStyle(color: selectedStatus == s ? Colors.white : Colors.white70, fontSize: 12),
+                  ),
+              ]),
+              const SizedBox(height: 24),
+              SizedBox(height: 48, child: ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(ctx);
+                  final messenger = ScaffoldMessenger.of(context);
+                  try {
+                    await ref.read(ordersProvider.notifier).bulkUpdateItems(
+                      [item['id'] as String],
+                      status: selectedStatus,
+                    );
+                    await _loadOrder();
+                    if (mounted) {
+                      messenger.showSnackBar(SnackBar(
+                        content: Text('✅ تم تحديث العنصر إلى ${_translateStatus(selectedStatus)}'),
+                        backgroundColor: AppTheme.success,
+                      ));
+                    }
+                  } catch (e) {
+                    if (mounted) {
+                      messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
+                    }
+                  }
+                },
+                icon: const Icon(Icons.check, size: 20),
+                label: const Text('تحديث الحالة'),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+              )),
+            ]);
+          }),
+        ),
+      ),
+    ));
   }
 
   void _showAddItemDialog() {
@@ -200,14 +282,21 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Back button + title
+          // Back button + title + edit button
           Row(children: [
             IconButton(
               icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 28),
-              onPressed: () => Navigator.of(context).maybePop(),
+              onPressed: () {
+                if (context.canPop()) { context.pop(); } else { context.go('/orders'); }
+              },
             ),
             const SizedBox(width: 8),
             Expanded(child: Text('تفاصيل الطلب', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white))),
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, color: Colors.white70, size: 22),
+              tooltip: 'تعديل الطلب',
+              onPressed: _order != null ? _showEditOrderDialog : null,
+            ),
           ]),
           const SizedBox(height: 20),
 
@@ -296,7 +385,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                   separatorBuilder: (_, __) => const SizedBox(height: 10),
                   itemBuilder: (context, index) {
                     final item = items[index] as Map<String, dynamic>;
-                    return _OrderItemCard(item: item, statusColor: _statusColor, translateStatus: _translateStatus);
+                    return _OrderItemCard(item: item, statusColor: _statusColor, translateStatus: _translateStatus, onEditStatus: () => _showItemEditDialog(item));
                   },
                 ),
           ),
@@ -539,7 +628,8 @@ class _OrderItemCard extends StatelessWidget {
   final Map<String, dynamic> item;
   final Color Function(String) statusColor;
   final String Function(String) translateStatus;
-  const _OrderItemCard({required this.item, required this.statusColor, required this.translateStatus});
+  final VoidCallback? onEditStatus;
+  const _OrderItemCard({required this.item, required this.statusColor, required this.translateStatus, this.onEditStatus});
 
   @override
   Widget build(BuildContext context) {
@@ -618,8 +708,18 @@ class _OrderItemCard extends StatelessWidget {
           ]),
         ])),
         const SizedBox(width: 10),
-        // Status + ready badge
+        // Status + ready badge + edit
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+          if (onEditStatus != null)
+            InkWell(
+              onTap: onEditStatus,
+              borderRadius: BorderRadius.circular(6),
+              child: const Padding(
+                padding: EdgeInsets.all(4),
+                child: Icon(Icons.edit_outlined, color: Colors.white38, size: 16),
+              ),
+            ),
+          const SizedBox(height: 4),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
             decoration: BoxDecoration(color: sColor.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
@@ -647,6 +747,106 @@ class _OrderItemCard extends StatelessWidget {
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(color: color.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
       child: Text(text, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w500)),
+    );
+  }
+}
+
+// ─── Edit Order Dialog ────────────────────────────────────
+
+class _EditOrderDialog extends StatefulWidget {
+  final Map<String, dynamic> order;
+  final Future<void> Function(Map<String, dynamic> updates) onSave;
+  const _EditOrderDialog({required this.order, required this.onSave});
+
+  @override
+  State<_EditOrderDialog> createState() => _EditOrderDialogState();
+}
+
+class _EditOrderDialogState extends State<_EditOrderDialog> {
+  late final TextEditingController _notesCtrl;
+  late final TextEditingController _rateCtrl;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _notesCtrl = TextEditingController(text: widget.order['notes'] as String? ?? '');
+    _rateCtrl = TextEditingController(
+      text: (widget.order['pegged_exchange_rate'] as num?)?.toString() ?? '',
+    );
+  }
+
+  @override
+  void dispose() {
+    _notesCtrl.dispose();
+    _rateCtrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Text('تعديل الطلب', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
+            const SizedBox(height: 20),
+            if (_error != null) Container(
+              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 14),
+              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+              child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+            ),
+            TextField(
+              controller: _notesCtrl,
+              style: const TextStyle(color: Colors.white),
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: 'ملاحظات',
+                prefixIcon: Icon(Icons.notes),
+                alignLabelWithHint: true,
+              ),
+            ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _rateCtrl,
+              style: const TextStyle(color: Colors.white),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'سعر الصرف المثبت (اختياري)',
+                prefixIcon: Icon(Icons.currency_exchange),
+              ),
+            ),
+            const SizedBox(height: 24),
+            SizedBox(height: 52, child: ElevatedButton.icon(
+              onPressed: _saving ? null : () async {
+                setState(() { _saving = true; _error = null; });
+                final updates = <String, dynamic>{'version': widget.order['version']};
+                final notes = _notesCtrl.text.trim();
+                if (notes.isNotEmpty) updates['notes'] = notes;
+                final rate = double.tryParse(_rateCtrl.text.trim());
+                if (rate != null) updates['pegged_exchange_rate'] = rate;
+                try {
+                  final nav = Navigator.of(context);
+                  await widget.onSave(updates);
+                  if (mounted) nav.pop();
+                } catch (e) {
+                  if (mounted) setState(() { _saving = false; _error = e.toString(); });
+                }
+              },
+              icon: _saving
+                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Icon(Icons.save_rounded, size: 22),
+              label: const Text('حفظ التغييرات', style: TextStyle(fontSize: 16)),
+              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+            )),
+          ]),
+        ),
+      ),
     );
   }
 }
