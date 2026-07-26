@@ -6,6 +6,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/utils/invoice_generator.dart';
 
 /// Order Detail Screen — shows full order info, items, and action buttons.
 class OrderDetailScreen extends ConsumerStatefulWidget {
@@ -77,13 +78,88 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       return;
     }
     final cleanPhone = phone.replaceAll(RegExp(r'[^0-9+]'), '');
-    final items = _order?['items'] as List<dynamic>? ?? [];
-    final orderStatus = _order?['status'] as String? ?? 'pending';
-    final msg = Uri.encodeComponent('مرحبا $name، طلبك المكون من ${items.length} عناصر حالته: ${_translateStatus(orderStatus)}.');
-    final url = Uri.parse('https://wa.me/$cleanPhone?text=$msg');
+    final items = (_order?['items'] as List<dynamic>? ?? [])
+        .where((r) => (r as Map<String, dynamic>)['status'] != 'cancelled')
+        .toList();
+    final orderStatus = _order?['status'] as String? ?? '';
+    final totalLocal = (_order?['total_local'] as num?)?.toDouble() ?? 0;
+
+    final buffer = StringBuffer();
+    buffer.writeln('مرحبا $name،');
+    buffer.writeln();
+    buffer.writeln('تفاصيل طلبك:');
+    buffer.writeln('━━━━━━━━━━━━━━━━━━━');
+    for (int i = 0; i < items.length; i++) {
+      final item = items[i] as Map<String, dynamic>;
+      final pName = item['product_name'] as String? ?? 'منتج';
+      final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+      final size = item['size'] as String?;
+      final color = item['color'] as String?;
+      final unitLocal = (item['unit_price_local'] as num?)?.toDouble();
+      buffer.write('${i + 1}. $pName');
+      if (qty > 1) buffer.write(' × $qty');
+      buffer.writeln();
+      if (size != null && size.isNotEmpty) buffer.writeln('   📐 المقاس: $size');
+      if (color != null && color.isNotEmpty) buffer.writeln('   🎨 اللون: $color');
+      if (unitLocal != null && unitLocal > 0) {
+        final lineTotal = (unitLocal * qty).toStringAsFixed(0);
+        buffer.writeln('   💰 ${unitLocal.toStringAsFixed(0)} × $qty = $lineTotal د.ع');
+      }
+    }
+    buffer.writeln('━━━━━━━━━━━━━━━━━━━');
+    if (totalLocal > 0) buffer.writeln('الإجمالي: ${totalLocal.toStringAsFixed(0)} د.ع');
+    if (orderStatus.isNotEmpty) buffer.writeln('الحالة: ${_translateStatus(orderStatus)}');
+    buffer.writeln();
+    buffer.writeln('شكراً لتسوقك معنا ✨');
+
+    final url = Uri.parse('https://wa.me/$cleanPhone?text=${Uri.encodeComponent(buffer.toString())}');
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
     }
+  }
+
+  void _showInvoiceTypeDialog() {
+    final order = _order;
+    if (order == null) return;
+    final items = order['items'] as List<dynamic>? ?? [];
+    showDialog(
+      context: context,
+      builder: (_) => Dialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 360),
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              const Text('طباعة الفاتورة', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
+              const SizedBox(height: 8),
+              const Text('اختر نوع الفاتورة', style: TextStyle(color: Colors.white54, fontSize: 14)),
+              const SizedBox(height: 24),
+              SizedBox(height: 52, child: ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await InvoiceGenerator.print(order: order, items: items, mode: InvoiceMode.customer);
+                },
+                icon: const Icon(Icons.person_outline, size: 20),
+                label: const Text('نسخة الزبون', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+              )),
+              const SizedBox(height: 12),
+              SizedBox(height: 52, child: ElevatedButton.icon(
+                onPressed: () async {
+                  Navigator.pop(context);
+                  await InvoiceGenerator.print(order: order, items: items, mode: InvoiceMode.merchant);
+                },
+                icon: const Icon(Icons.store_outlined, size: 20),
+                label: const Text('نسخة التاجر', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.secondary),
+              )),
+            ]),
+          ),
+        ),
+      ),
+    );
   }
 
   void _callPhone(String phone) async {
@@ -159,7 +235,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
         constraints: const BoxConstraints(maxWidth: 420),
         child: Padding(
           padding: const EdgeInsets.all(28),
-          child: StatefulBuilder(builder: (context, setDialogState) {
+          child: StatefulBuilder(builder: (_, setDialogState) {
             return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               const Text('تحديث الحالة', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
               const SizedBox(height: 8),
@@ -170,7 +246,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                   ChoiceChip(
                     label: Text(_translateStatus(s)),
                     selected: selectedStatus == s,
-                    onSelected: (_) => setDialogState(() => selectedStatus = s),
+                    onSelected: (v) => setDialogState(() => selectedStatus = s),
                     selectedColor: _statusColor(s),
                     backgroundColor: AppTheme.darkCard,
                     labelStyle: TextStyle(color: selectedStatus == s ? Colors.white : Colors.white70, fontSize: 13),
@@ -180,6 +256,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
               SizedBox(height: 52, child: ElevatedButton.icon(
                 onPressed: () async {
                   Navigator.pop(ctx);
+                  final messenger = ScaffoldMessenger.of(context);
                   try {
                     await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
                       'status': selectedStatus,
@@ -187,13 +264,13 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                     });
                     await _loadOrder();
                     if (mounted) {
-                      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+                      messenger.showSnackBar(SnackBar(
                         content: Text('✅ تم تحديث الحالة إلى ${_translateStatus(selectedStatus)}'),
                         backgroundColor: AppTheme.success,
                       ));
                     }
                   } catch (e) {
-                    if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
+                    if (mounted) messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
                   }
                 },
                 icon: const Icon(Icons.check, size: 22),
@@ -239,7 +316,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Back button + title + edit button
+          // Back button + title + edit + print buttons
           Row(children: [
             IconButton(
               icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 28),
@@ -249,6 +326,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
             ),
             const SizedBox(width: 8),
             Expanded(child: Text('تفاصيل الطلب', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white))),
+            IconButton(
+              icon: const Icon(Icons.print_outlined, color: Colors.white70, size: 22),
+              tooltip: 'طباعة الفاتورة',
+              onPressed: _order != null ? _showInvoiceTypeDialog : null,
+            ),
             IconButton(
               icon: const Icon(Icons.edit_outlined, color: Colors.white70, size: 22),
               tooltip: 'تعديل الطلب',
@@ -378,15 +460,16 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 const SizedBox(width: 12),
                 Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
                   onPressed: () async {
+                    final messenger = ScaffoldMessenger.of(context);
                     try {
                       await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
                         'status': 'dispatched',
                         'version': _order?['version'],
                       });
                       await _loadOrder();
-                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
+                      if (mounted) messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
                     } catch (e) {
-                      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
+                      if (mounted) messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
                     }
                   },
                   icon: const Icon(Icons.local_shipping, size: 22),
@@ -993,6 +1076,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _urlCtrl;
   late final TextEditingController _priceCtrl;
+  late final TextEditingController _localPriceCtrl;
   late final TextEditingController _qtyCtrl;
   late final TextEditingController _sizeCtrl;
   late final TextEditingController _colorCtrl;
@@ -1020,6 +1104,8 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     _urlCtrl   = TextEditingController(text: widget.item['product_url']  as String? ?? '');
     final price = (widget.item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
     _priceCtrl = TextEditingController(text: price > 0 ? price.toString() : '');
+    final localPrice = (widget.item['unit_price_local'] as num?)?.toDouble() ?? 0;
+    _localPriceCtrl = TextEditingController(text: localPrice > 0 ? localPrice.toStringAsFixed(0) : '');
     final qty  = (widget.item['quantity'] as num?)?.toInt() ?? 1;
     _qtyCtrl   = TextEditingController(text: qty.toString());
     _sizeCtrl  = TextEditingController(text: widget.item['size']  as String? ?? '');
@@ -1034,6 +1120,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     _nameCtrl.dispose();
     _urlCtrl.dispose();
     _priceCtrl.dispose();
+    _localPriceCtrl.dispose();
     _qtyCtrl.dispose();
     _sizeCtrl.dispose();
     _colorCtrl.dispose();
@@ -1055,6 +1142,8 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
           'product_name':       name,
           'product_url':        _urlCtrl.text.trim(),
           'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
+          if (_localPriceCtrl.text.trim().isNotEmpty)
+            'unit_price_local': double.tryParse(_localPriceCtrl.text.trim()) ?? 0,
           'quantity':           int.tryParse(_qtyCtrl.text.trim()) ?? 1,
           'size':               _sizeCtrl.text.trim(),
           'color':              _colorCtrl.text.trim(),
@@ -1205,6 +1294,20 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
                 ),
               )),
             ]),
+            const SizedBox(height: 12),
+
+            // Local selling price
+            TextField(
+              controller: _localPriceCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'سعر البيع المحلي (دينار)',
+                prefixIcon: Icon(Icons.sell_outlined, size: 18),
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
             const SizedBox(height: 12),
 
             // Size + color
