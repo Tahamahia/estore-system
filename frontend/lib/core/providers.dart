@@ -236,6 +236,16 @@ class ScanNotifier extends StateNotifier<AsyncValue<Map<String, dynamic>?>> {
     try {
       final response = await _dio.post('/warehouse/scan', data: {'barcode': barcode});
       state = AsyncValue.data(response.data as Map<String, dynamic>);
+    } on DioException catch (e) {
+      // 4xx responses from warehouse/scan carry useful JSON (e.g. invalid item
+      // status). Treat them as data so the scanner UI can show the reason
+      // instead of getting stuck on "Processing..." forever.
+      final body = e.response?.data;
+      if (body is Map<String, dynamic>) {
+        state = AsyncValue.data(body);
+      } else {
+        state = AsyncValue.error(e, StackTrace.current);
+      }
     } catch (e, st) {
       state = AsyncValue.error(e, st);
     }

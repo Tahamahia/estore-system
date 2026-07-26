@@ -103,28 +103,40 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
     });
     try {
       await ref.read(scanResultProvider.notifier).scanBarcode(barcode);
-      final scanResult = ref.read(scanResultProvider).valueOrNull;
+      final scanState = ref.read(scanResultProvider);
+      if (mounted && scanState.hasError) {
+        setState(() => _scanHistory[0] = _scanHistory[0].copyWith(
+          status: _ScanStatus.error, errorMsg: scanState.error?.toString() ?? 'Network error'));
+        _playAudioCue(false);
+        _showMassiveFlash(success: false);
+        return;
+      }
+      final scanResult = scanState.valueOrNull;
       if (mounted && scanResult != null) {
         final found = scanResult['found'] == true;
         final ambiguous = scanResult['ambiguous'] == true;
+        final hasError = scanResult['error'] != null;
         final itemMap = scanResult['item'] as Map<String, dynamic>?;
         final candidatesList = scanResult['candidates'] as List<dynamic>?;
         String? custName;
         String? prodName;
-        if (found && !ambiguous && itemMap != null) {
+        if (found && !ambiguous && !hasError && itemMap != null) {
           custName = itemMap['customer_name'] as String?;
           prodName = itemMap['product_name'] as String?;
         }
         setState(() {
           _scanHistory[0] = _scanHistory[0].copyWith(
-            status: !found ? _ScanStatus.notFound : ambiguous ? _ScanStatus.ambiguous : _ScanStatus.found,
+            status: !found ? _ScanStatus.notFound
+                : hasError ? _ScanStatus.error
+                : ambiguous ? _ScanStatus.ambiguous
+                : _ScanStatus.found,
             customerName: custName, productName: prodName,
-            candidates: ambiguous && candidatesList != null ? candidatesList.cast<Map<String, dynamic>>() : null,
+            errorMsg: hasError ? (scanResult['message'] as String?) : null,
+            candidates: ambiguous && !hasError && candidatesList != null ? candidatesList.cast<Map<String, dynamic>>() : null,
           );
         });
-        // Audio + Flash
-        _playAudioCue(found && !ambiguous);
-        _showMassiveFlash(success: found && !ambiguous, customer: custName, product: prodName);
+        _playAudioCue(found && !ambiguous && !hasError);
+        _showMassiveFlash(success: found && !ambiguous && !hasError, customer: custName, product: prodName);
       }
     } catch (e) {
       if (mounted) {

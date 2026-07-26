@@ -208,11 +208,17 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
               ]),
             ),
             Expanded(
-              child: PdfPreview(
-                build: (_) => InvoiceGenerator.generate(order: order, items: items, mode: mode),
-                allowPrinting: true,
-                allowSharing: true,
-                canChangePageFormat: false,
+              child: LayoutBuilder(
+                builder: (_, constraints) => SizedBox(
+                  width: constraints.maxWidth,
+                  height: constraints.maxHeight,
+                  child: PdfPreview(
+                    build: (_) => InvoiceGenerator.generate(order: order, items: items, mode: mode),
+                    allowPrinting: true,
+                    allowSharing: true,
+                    canChangePageFormat: false,
+                  ),
+                ),
               ),
             ),
           ]),
@@ -447,7 +453,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 const SizedBox(width: 12),
                 if (createdAt.isNotEmpty) _InfoChip(icon: Icons.calendar_today, label: createdAt.length > 10 ? createdAt.substring(0, 10) : createdAt),
                 const SizedBox(width: 12),
-                _InfoChip(icon: Icons.shopping_bag, label: '${items.length} عنصر'),
+                _InfoChip(icon: Icons.shopping_bag, label: '${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))} عنصر'),
               ]),
             ]),
           ),
@@ -459,7 +465,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
 
           // Items list header with "Add Item" button
           Row(children: [
-            Text('العناصر (${items.length})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+            Text('العناصر (${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
             const Spacer(),
             TextButton.icon(
               onPressed: _showAddItemDialog,
