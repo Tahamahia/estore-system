@@ -40,15 +40,16 @@ class InvoiceGenerator {
     final rawId = order['id'] as String? ?? '';
     final shortId = rawId.length >= 8 ? rawId.substring(0, 8).toUpperCase() : rawId.toUpperCase();
 
-    final shippingUsd = (order['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
     final rate = (order['pegged_exchange_rate'] as num?)?.toDouble() ?? 0;
     double itemsCostUsd = 0;
+    double shippingUsd = 0;
     double totalLocal = 0;
     for (final raw in items) {
       final item = raw as Map<String, dynamic>;
       if ((item['status'] as String?) == 'cancelled') continue;
       final qty = (item['quantity'] as num?)?.toInt() ?? 1;
       itemsCostUsd += ((item['unit_price_foreign'] as num?)?.toDouble() ?? 0) * qty;
+      shippingUsd += ((item['shipping_cost_foreign'] as num?)?.toDouble() ?? 0) * qty;
       totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? 0) * qty;
     }
     final profit = (totalLocal > 0 && rate > 0)

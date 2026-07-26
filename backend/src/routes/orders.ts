@@ -481,7 +481,7 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
     return c.json({ error: 'Bad Request', message: 'version required for OCC' }, 400);
   }
 
-  const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'unit_price_local', 'quantity', 'size', 'color', 'status'];
+  const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'unit_price_local', 'shipping_cost_foreign', 'quantity', 'size', 'color', 'status'];
   const setClauses: string[] = [];
   const values: any[] = [];
 
