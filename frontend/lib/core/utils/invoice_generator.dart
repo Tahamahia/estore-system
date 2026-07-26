@@ -54,6 +54,10 @@ class InvoiceGenerator {
       shippingUsd += ((item['shipping_cost_foreign'] as num?)?.toDouble() ?? 0) * qty;
       totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? 0) * qty;
     }
+    final totalUnits = items.fold<int>(
+      0,
+      (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1),
+    );
     final profit = (totalLocal > 0 && rate > 0)
         ? totalLocal - ((itemsCostUsd + shippingUsd) * rate)
         : null;
@@ -137,7 +141,7 @@ class InvoiceGenerator {
           pw.SizedBox(height: 14),
 
           // ── Items table ──────────────────────────────────────────
-          pw.Text('تفاصيل المنتجات', style: pw.TextStyle(font: fontBold, fontSize: 12)),
+          pw.Text('تفاصيل المنتجات ($totalUnits قطعة)', style: pw.TextStyle(font: fontBold, fontSize: 12)),
           pw.SizedBox(height: 6),
           pw.Table(
             border: pw.TableBorder.all(color: PdfColors.grey300, width: 0.5),

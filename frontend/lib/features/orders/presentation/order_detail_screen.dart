@@ -188,10 +188,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       builder: (ctx) => Dialog(
         insetPadding: const EdgeInsets.all(10),
         backgroundColor: Colors.grey[300],
-        child: SizedBox(
-          width: double.maxFinite,
-          height: MediaQuery.sizeOf(context).height * 0.92,
-          child: Column(children: [
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
             Container(
               color: AppTheme.darkSurface,
               padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
@@ -207,23 +204,18 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 ),
               ]),
             ),
-            Expanded(
-              child: LayoutBuilder(
-                builder: (_, constraints) => SizedBox(
-                  width: constraints.maxWidth,
-                  height: constraints.maxHeight,
-                  child: PdfPreview(
-                    build: (_) => InvoiceGenerator.generate(order: order, items: items, mode: mode),
-                    allowPrinting: true,
-                    allowSharing: true,
-                    canChangePageFormat: false,
-                  ),
-                ),
+            SizedBox(
+              width: 800,
+              height: 600,
+              child: PdfPreview(
+                build: (format) async => await InvoiceGenerator.generate(order: order, items: items, mode: mode),
+                allowPrinting: true,
+                allowSharing: true,
+                canChangePageFormat: false,
               ),
             ),
           ]),
         ),
-      ),
     );
   }
 
@@ -630,7 +622,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const Text('إضافة منتج للطلب', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
             const SizedBox(height: 4),
-            const Text('أدخل تفاصيل المنتج الجديد', style: TextStyle(color: Colors.white54, fontSize: 13)),
+            const Text('أدخل بيانات المنتج الجديد بالكامل', style: TextStyle(color: Colors.white54, fontSize: 13)),
             const SizedBox(height: 20),
             if (_error != null) Container(
               padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 16),
