@@ -82,7 +82,13 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
         .where((r) => (r as Map<String, dynamic>)['status'] != 'cancelled')
         .toList();
     final orderStatus = _order?['status'] as String? ?? '';
-    final totalLocal = (_order?['total_local'] as num?)?.toDouble() ?? 0;
+    double totalLocal = 0;
+    for (final r in items) {
+      final item = r as Map<String, dynamic>;
+      final unitLocal = (item['unit_price_local'] as num?)?.toDouble() ?? 0;
+      final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+      totalLocal += unitLocal * qty;
+    }
 
     final buffer = StringBuffer();
     buffer.writeln('مرحبا $name،');
@@ -103,11 +109,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       if (color != null && color.isNotEmpty) buffer.writeln('   🎨 اللون: $color');
       if (unitLocal != null && unitLocal > 0) {
         final lineTotal = (unitLocal * qty).toStringAsFixed(0);
-        buffer.writeln('   💰 ${unitLocal.toStringAsFixed(0)} × $qty = $lineTotal د.ع');
+        buffer.writeln('   💰 ${unitLocal.toStringAsFixed(0)} × $qty = $lineTotal د.ل');
       }
     }
     buffer.writeln('━━━━━━━━━━━━━━━━━━━');
-    if (totalLocal > 0) buffer.writeln('الإجمالي: ${totalLocal.toStringAsFixed(0)} د.ع');
+    if (totalLocal > 0) buffer.writeln('الإجمالي: ${totalLocal.toStringAsFixed(0)} د.ل');
     if (orderStatus.isNotEmpty) buffer.writeln('الحالة: ${_translateStatus(orderStatus)}');
     buffer.writeln();
     buffer.writeln('شكراً لتسوقك معنا ✨');
@@ -815,7 +821,6 @@ class _EditOrderDialog extends StatefulWidget {
 class _EditOrderDialogState extends State<_EditOrderDialog> {
   late final TextEditingController _notesCtrl;
   late final TextEditingController _rateCtrl;
-  late final TextEditingController _totalLocalCtrl;
   late final TextEditingController _shippingCtrl;
   bool _saving = false;
   String? _error;
@@ -827,10 +832,6 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
     _rateCtrl = TextEditingController(
       text: (widget.order['pegged_exchange_rate'] as num?)?.toString() ?? '',
     );
-    final totalLocal = (widget.order['total_local'] as num?)?.toDouble() ?? 0;
-    _totalLocalCtrl = TextEditingController(
-      text: totalLocal > 0 ? totalLocal.toStringAsFixed(0) : '',
-    );
     final shippingVal = (widget.order['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
     _shippingCtrl = TextEditingController(
       text: shippingVal > 0 ? shippingVal.toString() : '',
@@ -841,7 +842,6 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
   void dispose() {
     _notesCtrl.dispose();
     _rateCtrl.dispose();
-    _totalLocalCtrl.dispose();
     _shippingCtrl.dispose();
     super.dispose();
   }
@@ -864,32 +864,16 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
               child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
             ),
 
-            // Financial fields
-            Row(children: [
-              Expanded(child: TextField(
-                controller: _totalLocalCtrl,
-                style: const TextStyle(color: Colors.white),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'سعر البيع الإجمالي (دينار)',
-                  prefixIcon: Icon(Icons.sell_outlined),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                ),
-              )),
-              const SizedBox(width: 12),
-              Expanded(child: TextField(
-                controller: _shippingCtrl,
-                style: const TextStyle(color: Colors.white),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'تكلفة الشحن (دولار)',
-                  prefixIcon: Icon(Icons.local_shipping_outlined),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
-                ),
-              )),
-            ]),
+            // Shipping cost
+            TextField(
+              controller: _shippingCtrl,
+              style: const TextStyle(color: Colors.white),
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              decoration: const InputDecoration(
+                labelText: 'تكلفة الشحن (دولار)',
+                prefixIcon: Icon(Icons.local_shipping_outlined),
+              ),
+            ),
             const SizedBox(height: 14),
 
             TextField(
@@ -917,8 +901,6 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
               onPressed: _saving ? null : () async {
                 setState(() { _saving = true; _error = null; });
                 final updates = <String, dynamic>{'version': widget.order['version']};
-                final totalLocal = double.tryParse(_totalLocalCtrl.text.trim());
-                if (totalLocal != null) updates['total_local'] = totalLocal;
                 final shipping = double.tryParse(_shippingCtrl.text.trim());
                 if (shipping != null) updates['shipping_cost_foreign'] = shipping;
                 final rate = double.tryParse(_rateCtrl.text.trim());
@@ -955,18 +937,18 @@ class _FinancialSummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Sum item costs (price × quantity), skipping cancelled/out-of-stock items
+    // Sum item costs and local selling prices, skipping cancelled items
     double itemsCostUsd = 0;
+    double totalLocal = 0;
     for (final raw in items) {
       final item = raw as Map<String, dynamic>;
       if ((item['status'] as String?) == 'cancelled') continue;
-      final price = (item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
       final qty = (item['quantity'] as num?)?.toInt() ?? 1;
-      itemsCostUsd += price * qty;
+      itemsCostUsd += ((item['unit_price_foreign'] as num?)?.toDouble() ?? 0) * qty;
+      totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? 0) * qty;
     }
 
     final shippingUsd = (order['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
-    final totalLocal = (order['total_local'] as num?)?.toDouble() ?? 0;
     final rate = (order['pegged_exchange_rate'] as num?)?.toDouble() ?? 0;
 
     final hasPrice = totalLocal > 0;
@@ -1001,7 +983,7 @@ class _FinancialSummaryCard extends StatelessWidget {
         ],
         if (hasRate) ...[
           const SizedBox(height: 6),
-          _FinancialRow(label: 'سعر الصرف', value: '${rate.toStringAsFixed(2)} د.ع', dimValue: true),
+          _FinancialRow(label: 'سعر الصرف', value: '${rate.toStringAsFixed(2)} د.ل', dimValue: true),
         ],
         const Divider(height: 20, color: AppTheme.darkBorder),
         if (!hasPrice)
@@ -1009,7 +991,7 @@ class _FinancialSummaryCard extends StatelessWidget {
             child: Text('في انتظار تحديد سعر البيع', style: TextStyle(color: Colors.white38, fontSize: 13)),
           )
         else ...[
-          _FinancialRow(label: 'سعر البيع (دينار)', value: '${totalLocal.toStringAsFixed(0)} د.ع', bold: true),
+          _FinancialRow(label: 'سعر البيع (دينار)', value: '${totalLocal.toStringAsFixed(0)} د.ل', bold: true),
           if (profit != null) ...[
             const SizedBox(height: 10),
             Container(
@@ -1025,7 +1007,7 @@ class _FinancialSummaryCard extends StatelessWidget {
                 const Text('المكسب التقديري',
                   style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600, fontSize: 14)),
                 Text(
-                  '${isProfit ? '+' : ''}${profit.toStringAsFixed(0)} د.ع',
+                  '${isProfit ? '+' : ''}${profit.toStringAsFixed(0)} د.ل',
                   style: TextStyle(
                     color: isProfit ? AppTheme.success : AppTheme.error,
                     fontWeight: FontWeight.w800, fontSize: 18,
@@ -1065,7 +1047,7 @@ class _FinancialRow extends StatelessWidget {
 class _EditItemDialog extends ConsumerStatefulWidget {
   final String orderId;
   final Map<String, dynamic> item;
-  final VoidCallback onSaved;
+  final Future<void> Function() onSaved;
   const _EditItemDialog({required this.orderId, required this.item, required this.onSaved});
 
   @override
@@ -1151,7 +1133,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
           'version':            widget.item['version'],
         },
       );
-      widget.onSaved();
+      await widget.onSaved();
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
       if (mounted) setState(() { _saving = false; _error = e.toString(); });

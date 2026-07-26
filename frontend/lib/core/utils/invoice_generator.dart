@@ -36,7 +36,6 @@ class InvoiceGenerator {
     final customerName = order['customer_name'] as String? ?? 'غير معروف';
     final phone = order['customer_phone'] as String? ?? '';
     final orderStatus = order['status'] as String? ?? '';
-    final totalLocal = (order['total_local'] as num?)?.toDouble() ?? 0;
     final createdAt = order['created_at'] as String? ?? '';
     final rawId = order['id'] as String? ?? '';
     final shortId = rawId.length >= 8 ? rawId.substring(0, 8).toUpperCase() : rawId.toUpperCase();
@@ -44,11 +43,13 @@ class InvoiceGenerator {
     final shippingUsd = (order['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
     final rate = (order['pegged_exchange_rate'] as num?)?.toDouble() ?? 0;
     double itemsCostUsd = 0;
+    double totalLocal = 0;
     for (final raw in items) {
       final item = raw as Map<String, dynamic>;
       if ((item['status'] as String?) == 'cancelled') continue;
-      itemsCostUsd += ((item['unit_price_foreign'] as num?)?.toDouble() ?? 0) *
-          ((item['quantity'] as num?)?.toInt() ?? 1);
+      final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+      itemsCostUsd += ((item['unit_price_foreign'] as num?)?.toDouble() ?? 0) * qty;
+      totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? 0) * qty;
     }
     final profit = (totalLocal > 0 && rate > 0)
         ? totalLocal - ((itemsCostUsd + shippingUsd) * rate)
@@ -152,8 +153,8 @@ class InvoiceGenerator {
                   _cell('المنتج', styleBold),
                   _cell('الكمية', styleBold),
                   if (mode == InvoiceMode.merchant) _cell('التكلفة (\$)', styleBold),
-                  _cell('سعر البيع (د.ع)', styleBold),
-                  _cell('الإجمالي (د.ع)', styleBold),
+                  _cell('سعر البيع (د.ل)', styleBold),
+                  _cell('الإجمالي (د.ل)', styleBold),
                 ],
               ),
               // Data rows
@@ -202,20 +203,20 @@ class InvoiceGenerator {
                     if (shippingUsd > 0)
                       _totalRow('تكلفة الشحن (\$)', '\$${shippingUsd.toStringAsFixed(2)}', style),
                     if (rate > 0)
-                      _totalRow('سعر الصرف', '${rate.toStringAsFixed(2)} د.ع', style),
+                      _totalRow('سعر الصرف', '${rate.toStringAsFixed(2)} د.ل', style),
                     pw.Divider(height: 1, color: PdfColors.grey400),
                     pw.SizedBox(height: 4),
                   ],
                   _totalRow(
                     'الإجمالي',
-                    '${totalLocal.toStringAsFixed(0)} د.ع',
+                    '${totalLocal.toStringAsFixed(0)} د.ل',
                     pw.TextStyle(font: fontBold, fontSize: 13),
                   ),
                   if (mode == InvoiceMode.merchant && profit != null) ...[
                     pw.SizedBox(height: 4),
                     _totalRow(
                       'المكسب التقديري',
-                      '${profit >= 0 ? '+' : ''}${profit.toStringAsFixed(0)} د.ع',
+                      '${profit >= 0 ? '+' : ''}${profit.toStringAsFixed(0)} د.ل',
                       pw.TextStyle(
                         font: fontBold,
                         fontSize: 12,
