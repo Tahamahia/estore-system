@@ -73,7 +73,8 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
   }
 
   await c.env.DB.prepare(
-    `UPDATE order_items SET status = 'sorted', sorted_at = datetime('now'), updated_at = datetime('now')
+    `UPDATE order_items SET status = 'sorted', sorted_at = datetime('now'),
+     updated_at = datetime('now'), version = version + 1
      WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
   ).bind(item.id, tenantId).run();
 

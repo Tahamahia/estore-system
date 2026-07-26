@@ -17,6 +17,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   String _activeFilter = 'all';
   final _searchController = TextEditingController();
   String _searchText = '';
+  Timer? _searchDebounce;
   bool _bulkMode = false;
   final Set<String> _selectedIds = {};
 
@@ -25,13 +26,24 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     super.initState();
     Future.microtask(() => ref.read(ordersProvider.notifier).fetchOrders());
     _searchController.addListener(() {
-      setState(() => _searchText = _searchController.text.trim().toLowerCase());
+      final text = _searchController.text.trim();
+      setState(() => _searchText = text.toLowerCase());
+      // Debounce server-side search so item-level results (product_name, sku)
+      // are fetched after the user stops typing.
+      _searchDebounce?.cancel();
+      _searchDebounce = Timer(const Duration(milliseconds: 450), () {
+        ref.read(ordersProvider.notifier).fetchOrders(
+          status: _activeFilter == 'all' ? null : _activeFilter,
+          search: text.isEmpty ? null : text,
+        );
+      });
     });
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _searchDebounce?.cancel();
     super.dispose();
   }
 
@@ -39,6 +51,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     setState(() => _activeFilter = filter);
     ref.read(ordersProvider.notifier).fetchOrders(
       status: filter == 'all' ? null : filter,
+      search: _searchText.isEmpty ? null : _searchText,
     );
   }
 
@@ -370,6 +383,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
   String? _existingCustomerId;
   bool _isLookingUp = false;
   bool _isExisting = false;
+  bool _lookupError = false;
   Timer? _debounce;
 
   @override
@@ -394,33 +408,51 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
     _debounce?.cancel();
     final phone = _phoneCtrl.text.trim();
     if (phone.length < 5) {
-      setState(() { _isExisting = false; _existingCustomerId = null; });
+      setState(() { _isExisting = false; _existingCustomerId = null; _lookupError = false; });
       return;
     }
-    setState(() => _isLookingUp = true);
+    setState(() { _isLookingUp = true; _lookupError = false; });
     _debounce = Timer(const Duration(milliseconds: 500), () async {
-      final result = await ref.read(customersProvider.notifier).lookupByPhone(phone);
-      if (!mounted) return;
-      setState(() {
-        _isLookingUp = false;
-        if (result != null) {
-          _isExisting = true;
-          _existingCustomerId = result['id'] as String?;
-          _nameCtrl.text = result['full_name'] as String? ?? '';
-        } else {
-          _isExisting = false;
-          _existingCustomerId = null;
-        }
-      });
+      try {
+        final result = await ref.read(customersProvider.notifier).lookupByPhone(phone);
+        if (!mounted) return;
+        setState(() {
+          _isLookingUp = false;
+          _lookupError = false;
+          if (result != null) {
+            _isExisting = true;
+            _existingCustomerId = result['id'] as String?;
+            _nameCtrl.text = result['full_name'] as String? ?? '';
+          } else {
+            _isExisting = false;
+            _existingCustomerId = null;
+          }
+        });
+      } on PhoneLookupException catch (e) {
+        if (!mounted) return;
+        setState(() { _isLookingUp = false; _lookupError = true; _isExisting = false; _existingCustomerId = null; });
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(e.toString()),
+          backgroundColor: AppTheme.error,
+          action: SnackBarAction(
+            label: 'إعادة المحاولة',
+            textColor: Colors.white,
+            onPressed: _onPhoneChanged,
+          ),
+        ));
+      }
     });
   }
 
-  // Submit is only allowed when: phone has been typed, lookup finished, name resolved, at least one item named.
+  // Submit requires: phone resolved (no error, not looking up), name filled,
+  // at least one item, and ALL named items must have a product_url.
   bool get _canSubmit {
-    if (_isLoading || _isLookingUp) return false;
+    if (_isLoading || _isLookingUp || _lookupError) return false;
     if (_phoneCtrl.text.trim().length < 5) return false;
     if (_nameCtrl.text.trim().isEmpty) return false;
-    return _items.any((item) => item.productCtrl.text.trim().isNotEmpty);
+    final filledItems = _items.where((item) => item.productCtrl.text.trim().isNotEmpty).toList();
+    if (filledItems.isEmpty) return false;
+    return filledItems.every((item) => item.urlCtrl.text.trim().isNotEmpty);
   }
 
   void _addItem() {
@@ -438,8 +470,10 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
   Future<void> _createOrder() async {
     if (_phoneCtrl.text.trim().isEmpty) { setState(() => _error = 'رقم الهاتف مطلوب'); return; }
     if (_nameCtrl.text.trim().isEmpty) { setState(() => _error = 'اسم العميل مطلوب'); return; }
-    final hasValidItem = _items.any((item) => item.productCtrl.text.trim().isNotEmpty);
-    if (!hasValidItem) { setState(() => _error = 'يجب إدخال اسم منتج واحد على الأقل'); return; }
+    final filledItems = _items.where((item) => item.productCtrl.text.trim().isNotEmpty).toList();
+    if (filledItems.isEmpty) { setState(() => _error = 'يجب إدخال اسم منتج واحد على الأقل'); return; }
+    final missingUrl = filledItems.any((item) => item.urlCtrl.text.trim().isEmpty);
+    if (missingUrl) { setState(() => _error = 'رابط المنتج مطلوب لجميع العناصر'); return; }
     setState(() { _isLoading = true; _error = null; });
     try {
       String customerId;
@@ -505,14 +539,30 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
                 prefixIcon: const Icon(Icons.phone),
                 suffixIcon: _isLookingUp
                   ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
-                  : _isExisting
-                    ? const Icon(Icons.check_circle, color: AppTheme.success)
-                    : _phoneCtrl.text.length >= 5
-                      ? const Icon(Icons.person_add, color: AppTheme.accent)
-                      : null,
+                  : _lookupError
+                    ? const Icon(Icons.wifi_off, color: AppTheme.error)
+                    : _isExisting
+                      ? const Icon(Icons.check_circle, color: AppTheme.success)
+                      : _phoneCtrl.text.length >= 5
+                        ? const Icon(Icons.person_add, color: AppTheme.accent)
+                        : null,
               ),
             ),
-            if (_isExisting) Container(
+            if (_lookupError) Container(
+              margin: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+              child: Row(children: [
+                const Icon(Icons.wifi_off, color: AppTheme.error, size: 16), const SizedBox(width: 6),
+                const Expanded(child: Text('تعذر البحث — تحقق من الاتصال ثم أعد المحاولة', style: TextStyle(color: AppTheme.error, fontSize: 12))),
+                TextButton(
+                  onPressed: _onPhoneChanged,
+                  style: TextButton.styleFrom(foregroundColor: AppTheme.error, padding: EdgeInsets.zero, minimumSize: const Size(50, 28)),
+                  child: const Text('إعادة', style: TextStyle(fontSize: 12)),
+                ),
+              ]),
+            ),
+            if (_isExisting && !_lookupError) Container(
               margin: const EdgeInsets.only(top: 6),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(color: AppTheme.success.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
@@ -521,7 +571,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
                 Text('✅ Existing Customer', style: TextStyle(color: AppTheme.success, fontSize: 12, fontWeight: FontWeight.w600)),
               ]),
             ),
-            if (!_isExisting && _phoneCtrl.text.length >= 5 && !_isLookingUp) Container(
+            if (!_isExisting && !_lookupError && _phoneCtrl.text.length >= 5 && !_isLookingUp) Container(
               margin: const EdgeInsets.only(top: 6),
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(color: AppTheme.accent.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
@@ -589,7 +639,8 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
                       const SizedBox(height: 8),
                       TextField(controller: item.urlCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
                         keyboardType: TextInputType.url,
-                        decoration: const InputDecoration(labelText: 'رابط المنتج', prefixIcon: Icon(Icons.link, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
+                        onChanged: (_) => setState(() {}),
+                        decoration: const InputDecoration(labelText: 'رابط المنتج *', prefixIcon: Icon(Icons.link, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
                       const SizedBox(height: 8),
                       Row(children: [
                         Expanded(child: TextField(controller: item.priceCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white, fontSize: 13),

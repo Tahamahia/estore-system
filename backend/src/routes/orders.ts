@@ -21,6 +21,7 @@ orderRoutes.get('/', async (c) => {
   const limit = Math.min(parseInt(c.req.query('limit') || '50'), 100);
   const offset = (page - 1) * limit;
   const status = c.req.query('status');
+  const search = c.req.query('search')?.trim();
 
   let query = `SELECT o.*, c.full_name as customer_name, c.phone as customer_phone
                FROM orders o
@@ -33,17 +34,55 @@ orderRoutes.get('/', async (c) => {
     bindings.push(status);
   }
 
+  // Full-text search across customer name, order ID, platform order ID,
+  // and item product_name / sku via an EXISTS subquery.
+  if (search) {
+    const like = `%${search}%`;
+    query += ` AND (
+      c.full_name LIKE ? OR
+      o.id LIKE ? OR
+      o.platform_order_id LIKE ? OR
+      EXISTS (
+        SELECT 1 FROM order_items oi2
+        WHERE oi2.order_id = o.id
+          AND oi2.tenant_id = o.tenant_id
+          AND oi2.is_deleted = 0
+          AND (oi2.product_name LIKE ? OR oi2.sku LIKE ?)
+      )
+    )`;
+    bindings.push(like, like, like, like, like);
+  }
+
   query += ` ORDER BY o.created_at DESC LIMIT ? OFFSET ?`;
   bindings.push(limit, offset);
 
   const results = await c.env.DB.prepare(query).bind(...bindings).all();
 
-  let countQuery = `SELECT COUNT(*) as total FROM orders WHERE tenant_id = ? AND is_deleted = 0`;
+  let countQuery = `SELECT COUNT(*) as total FROM orders o
+                    LEFT JOIN customers c ON o.customer_id = c.id
+                    WHERE o.tenant_id = ? AND o.is_deleted = 0`;
   const countBindings: any[] = [tenantId];
 
   if (status) {
-    countQuery += ` AND status = ?`;
+    countQuery += ` AND o.status = ?`;
     countBindings.push(status);
+  }
+
+  if (search) {
+    const like = `%${search}%`;
+    countQuery += ` AND (
+      c.full_name LIKE ? OR
+      o.id LIKE ? OR
+      o.platform_order_id LIKE ? OR
+      EXISTS (
+        SELECT 1 FROM order_items oi2
+        WHERE oi2.order_id = o.id
+          AND oi2.tenant_id = o.tenant_id
+          AND oi2.is_deleted = 0
+          AND (oi2.product_name LIKE ? OR oi2.sku LIKE ?)
+      )
+    )`;
+    countBindings.push(like, like, like, like, like);
   }
 
   const countResult = await c.env.DB.prepare(countQuery).bind(...countBindings).first();

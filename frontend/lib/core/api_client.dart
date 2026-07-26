@@ -28,7 +28,10 @@ final dioProvider = Provider<Dio>((ref) {
         options.headers['Authorization'] = 'Bearer $token';
       }
 
-      // Auto-generate idempotency key for mutations
+      // Auto-generate idempotency key for mutations.
+      // ??= only assigns when the key is absent — callers (e.g. createOrder)
+      // can pre-set a stable key derived from the client-generated resource UUID
+      // so that retries after a timeout reuse the same key.
       if (['POST', 'PUT', 'PATCH'].contains(options.method)) {
         options.headers['Idempotency-Key'] ??= const Uuid().v4();
       }

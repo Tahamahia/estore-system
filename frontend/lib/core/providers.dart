@@ -1,6 +1,16 @@
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:uuid/uuid.dart';
 import 'api_client.dart';
+
+/// Thrown by [CustomersNotifier.lookupByPhone] when a network/server error
+/// occurs, distinguishing a real failure from "customer not found" (null return).
+class PhoneLookupException implements Exception {
+  final String message;
+  const PhoneLookupException(this.message);
+  @override
+  String toString() => message;
+}
 
 // ─── Orders Provider ───────────────────────────────────────
 final ordersProvider = StateNotifierProvider<OrdersNotifier, AsyncValue<List<Map<String, dynamic>>>>((ref) {
@@ -13,11 +23,12 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
 
   Dio get _dio => _ref.read(dioProvider);
 
-  Future<void> fetchOrders({int page = 1, int limit = 50, String? status}) async {
+  Future<void> fetchOrders({int page = 1, int limit = 50, String? status, String? search}) async {
     state = const AsyncValue.loading();
     try {
       final queryParams = <String, dynamic>{'page': page, 'limit': limit};
       if (status != null) queryParams['status'] = status;
+      if (search != null && search.isNotEmpty) queryParams['search'] = search;
 
       final response = await _dio.get('/orders', queryParameters: queryParams);
       final data = response.data as Map<String, dynamic>;
@@ -28,9 +39,17 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
     }
   }
 
+  /// Creates an order. Uses the client-generated [orderData]['id'] as the
+  /// Idempotency-Key so retries after a timeout don't create duplicates.
   Future<Map<String, dynamic>> createOrder(Map<String, dynamic> orderData) async {
-    final response = await _dio.post('/orders', data: orderData);
-    await fetchOrders();  // Refresh list
+    // Derive a stable key from the client-generated order UUID.
+    final key = (orderData['id'] as String?) ?? const Uuid().v4();
+    final response = await _dio.post(
+      '/orders',
+      data: orderData,
+      options: Options(headers: {'Idempotency-Key': key}),
+    );
+    await fetchOrders();
     return response.data as Map<String, dynamic>;
   }
 
@@ -123,17 +142,22 @@ class CustomersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
     return null;
   }
 
-  /// Phone-first identity lookup. Returns customer data if found, null if new.
+  /// Phone-first identity lookup.
+  /// Returns customer data map if found, or null if no customer has this phone.
+  /// Throws [PhoneLookupException] on network/server errors so callers can
+  /// distinguish "not found" from "lookup failed" and avoid creating duplicates.
   Future<Map<String, dynamic>?> lookupByPhone(String phone) async {
+    final cleaned = phone.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
+    if (cleaned.length < 5) return null;
     try {
-      final cleaned = phone.replaceAll(RegExp(r'[\s\-\(\)\.]'), '');
-      if (cleaned.length < 5) return null;
       final response = await _dio.get('/customers', queryParameters: {'phone': cleaned, 'limit': 1});
       final data = response.data as Map<String, dynamic>;
       final customers = List<Map<String, dynamic>>.from(data['data'] ?? []);
       return customers.isNotEmpty ? customers.first : null;
-    } catch (_) {
-      return null;
+    } on DioException catch (e) {
+      throw PhoneLookupException('فشل البحث عن العميل (خطأ في الشبكة): ${e.message}');
+    } catch (e) {
+      throw PhoneLookupException('فشل البحث عن العميل: $e');
     }
   }
 
