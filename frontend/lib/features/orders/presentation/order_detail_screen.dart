@@ -351,7 +351,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
               ]),
             ]),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 16),
+
+          // Financial summary
+          _FinancialSummaryCard(order: order, items: items),
+          const SizedBox(height: 16),
 
           // Items list header with "Add Item" button
           Row(children: [
@@ -765,6 +769,8 @@ class _EditOrderDialog extends StatefulWidget {
 class _EditOrderDialogState extends State<_EditOrderDialog> {
   late final TextEditingController _notesCtrl;
   late final TextEditingController _rateCtrl;
+  late final TextEditingController _totalLocalCtrl;
+  late final TextEditingController _shippingCtrl;
   bool _saving = false;
   String? _error;
 
@@ -775,12 +781,22 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
     _rateCtrl = TextEditingController(
       text: (widget.order['pegged_exchange_rate'] as num?)?.toString() ?? '',
     );
+    final totalLocal = (widget.order['total_local'] as num?)?.toDouble() ?? 0;
+    _totalLocalCtrl = TextEditingController(
+      text: totalLocal > 0 ? totalLocal.toStringAsFixed(0) : '',
+    );
+    final shippingVal = (widget.order['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
+    _shippingCtrl = TextEditingController(
+      text: shippingVal > 0 ? shippingVal.toString() : '',
+    );
   }
 
   @override
   void dispose() {
     _notesCtrl.dispose();
     _rateCtrl.dispose();
+    _totalLocalCtrl.dispose();
+    _shippingCtrl.dispose();
     super.dispose();
   }
 
@@ -790,8 +806,8 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 460),
-        child: Padding(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             const Text('تعديل الطلب', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
@@ -801,17 +817,35 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
               decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
               child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
             ),
-            TextField(
-              controller: _notesCtrl,
-              style: const TextStyle(color: Colors.white),
-              maxLines: 3,
-              decoration: const InputDecoration(
-                labelText: 'ملاحظات',
-                prefixIcon: Icon(Icons.notes),
-                alignLabelWithHint: true,
-              ),
-            ),
+
+            // Financial fields
+            Row(children: [
+              Expanded(child: TextField(
+                controller: _totalLocalCtrl,
+                style: const TextStyle(color: Colors.white),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'سعر البيع الإجمالي (دينار)',
+                  prefixIcon: Icon(Icons.sell_outlined),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                ),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: TextField(
+                controller: _shippingCtrl,
+                style: const TextStyle(color: Colors.white),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'تكلفة الشحن (دولار)',
+                  prefixIcon: Icon(Icons.local_shipping_outlined),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+                ),
+              )),
+            ]),
             const SizedBox(height: 14),
+
             TextField(
               controller: _rateCtrl,
               style: const TextStyle(color: Colors.white),
@@ -821,15 +855,30 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                 prefixIcon: Icon(Icons.currency_exchange),
               ),
             ),
+            const SizedBox(height: 14),
+            TextField(
+              controller: _notesCtrl,
+              style: const TextStyle(color: Colors.white),
+              maxLines: 2,
+              decoration: const InputDecoration(
+                labelText: 'ملاحظات',
+                prefixIcon: Icon(Icons.notes),
+                alignLabelWithHint: true,
+              ),
+            ),
             const SizedBox(height: 24),
             SizedBox(height: 52, child: ElevatedButton.icon(
               onPressed: _saving ? null : () async {
                 setState(() { _saving = true; _error = null; });
                 final updates = <String, dynamic>{'version': widget.order['version']};
-                final notes = _notesCtrl.text.trim();
-                if (notes.isNotEmpty) updates['notes'] = notes;
+                final totalLocal = double.tryParse(_totalLocalCtrl.text.trim());
+                if (totalLocal != null) updates['total_local'] = totalLocal;
+                final shipping = double.tryParse(_shippingCtrl.text.trim());
+                if (shipping != null) updates['shipping_cost_foreign'] = shipping;
                 final rate = double.tryParse(_rateCtrl.text.trim());
                 if (rate != null) updates['pegged_exchange_rate'] = rate;
+                final notes = _notesCtrl.text.trim();
+                if (notes.isNotEmpty) updates['notes'] = notes;
                 try {
                   final nav = Navigator.of(context);
                   await widget.onSave(updates);
@@ -848,5 +897,118 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
         ),
       ),
     );
+  }
+}
+
+// ─── Financial Summary Card ───────────────────────────────
+
+class _FinancialSummaryCard extends StatelessWidget {
+  final Map<String, dynamic> order;
+  final List<dynamic> items;
+  const _FinancialSummaryCard({required this.order, required this.items});
+
+  @override
+  Widget build(BuildContext context) {
+    // Sum item costs (price × quantity)
+    double itemsCostUsd = 0;
+    for (final raw in items) {
+      final item = raw as Map<String, dynamic>;
+      final price = (item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
+      final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+      itemsCostUsd += price * qty;
+    }
+
+    final shippingUsd = (order['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
+    final totalLocal = (order['total_local'] as num?)?.toDouble() ?? 0;
+    final rate = (order['pegged_exchange_rate'] as num?)?.toDouble() ?? 0;
+
+    final hasPrice = totalLocal > 0;
+    final hasRate = rate > 0;
+    final profit = (hasPrice && hasRate)
+        ? totalLocal - ((itemsCostUsd + shippingUsd) * rate)
+        : null;
+    final isProfit = profit != null && profit >= 0;
+
+    final borderColor = profit != null
+        ? (isProfit ? AppTheme.success : AppTheme.error).withValues(alpha: 0.4)
+        : AppTheme.darkBorder;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: AppTheme.darkSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          const Icon(Icons.calculate_outlined, color: AppTheme.accent, size: 18),
+          const SizedBox(width: 8),
+          const Text('الملخص المالي', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
+        ]),
+        const SizedBox(height: 12),
+        _FinancialRow(label: 'تكلفة البضاعة (دولار)', value: '\$${itemsCostUsd.toStringAsFixed(2)}'),
+        if (shippingUsd > 0) ...[
+          const SizedBox(height: 6),
+          _FinancialRow(label: 'تكلفة الشحن (دولار)', value: '\$${shippingUsd.toStringAsFixed(2)}'),
+        ],
+        if (hasRate) ...[
+          const SizedBox(height: 6),
+          _FinancialRow(label: 'سعر الصرف', value: '${rate.toStringAsFixed(2)} د.ع', dimValue: true),
+        ],
+        const Divider(height: 20, color: AppTheme.darkBorder),
+        if (!hasPrice)
+          const Center(
+            child: Text('في انتظار تحديد سعر البيع', style: TextStyle(color: Colors.white38, fontSize: 13)),
+          )
+        else ...[
+          _FinancialRow(label: 'سعر البيع (دينار)', value: '${totalLocal.toStringAsFixed(0)} د.ع', bold: true),
+          if (profit != null) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+              decoration: BoxDecoration(
+                color: (isProfit ? AppTheme.success : AppTheme.error).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(
+                  color: (isProfit ? AppTheme.success : AppTheme.error).withValues(alpha: 0.35),
+                ),
+              ),
+              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+                const Text('المكسب التقديري',
+                  style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600, fontSize: 14)),
+                Text(
+                  '${isProfit ? '+' : ''}${profit.toStringAsFixed(0)} د.ع',
+                  style: TextStyle(
+                    color: isProfit ? AppTheme.success : AppTheme.error,
+                    fontWeight: FontWeight.w800, fontSize: 18,
+                  ),
+                ),
+              ]),
+            ),
+          ],
+        ],
+      ]),
+    );
+  }
+}
+
+class _FinancialRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final bool bold;
+  final bool dimValue;
+  const _FinancialRow({required this.label, required this.value, this.bold = false, this.dimValue = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+      Text(label, style: const TextStyle(color: Colors.white54, fontSize: 13)),
+      Text(value, style: TextStyle(
+        color: dimValue ? Colors.white38 : Colors.white70,
+        fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+        fontSize: bold ? 15 : 14,
+      )),
+    ]);
   }
 }

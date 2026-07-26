@@ -507,7 +507,7 @@ orderRoutes.patch('/:id', async (c) => {
   // Build dynamic SET clause
   const setClauses: string[] = [];
   const values: any[] = [];
-  const allowedFields = ['status', 'notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency'];
+  const allowedFields = ['status', 'notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign'];
 
   for (const field of allowedFields) {
     if (updates[field] !== undefined) {
