@@ -77,7 +77,7 @@ settlementRoutes.get('/', async (c) => {
        COALESCE(SUM(
          CASE WHEN oi.status != 'cancelled'
               THEN (COALESCE(oi.unit_price_foreign, 0) +
-                    COALESCE(oi.weight, 0) * COALESCE(o.shipping_rate_per_kg, 0))
+                    COALESCE(oi.weight, 0) * COALESCE(oi.shipping_rate_per_kg, 0))
                    * COALESCE(oi.quantity, 1)
               ELSE 0 END
        ), 0) AS total_usd_cost,

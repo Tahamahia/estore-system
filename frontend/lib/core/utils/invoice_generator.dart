@@ -42,7 +42,6 @@ class InvoiceGenerator {
         ? rawId.substring(0, 8).toUpperCase()
         : rawId.toUpperCase();
 
-    final rate = (order['pegged_exchange_rate'] as num?)?.toDouble() ?? 0;
     double itemsCostUsd = 0;
     double shippingUsd = 0;
     double totalLocal = 0;
@@ -50,17 +49,15 @@ class InvoiceGenerator {
       final item = raw as Map<String, dynamic>;
       if ((item['status'] as String?) == 'cancelled') continue;
       final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+      final itemShippingRate = (item['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
       itemsCostUsd += ((item['unit_price_foreign'] as num?)?.toDouble() ?? 0) * qty;
-      shippingUsd += ((item['shipping_cost_foreign'] as num?)?.toDouble() ?? 0) * qty;
+      shippingUsd += ((item['weight'] as num?)?.toDouble() ?? 0) * itemShippingRate * qty;
       totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? 0) * qty;
     }
     final totalUnits = items.fold<int>(
       0,
       (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1),
     );
-    final profit = (totalLocal > 0 && rate > 0)
-        ? totalLocal - ((itemsCostUsd + shippingUsd) * rate)
-        : null;
 
     // Applying ThemeData with Arabic font ensures every pw.Text in the document
     // inherits the Cairo font, which is required for proper Arabic glyph shaping.
@@ -231,8 +228,6 @@ class InvoiceGenerator {
                     _totalRow('تكلفة البضاعة', '\$${itemsCostUsd.toStringAsFixed(2)}', baseStyle),
                     if (shippingUsd > 0)
                       _totalRow('تكلفة الشحن', '\$${shippingUsd.toStringAsFixed(2)}', baseStyle),
-                    if (rate > 0)
-                      _totalRow('سعر الصرف', '${rate.toStringAsFixed(2)} د.ل', baseStyle),
                     pw.Divider(height: 1, color: PdfColors.grey400),
                     pw.SizedBox(height: 4),
                   ],
@@ -241,18 +236,6 @@ class InvoiceGenerator {
                     '${totalLocal.toStringAsFixed(0)} د.ل',
                     pw.TextStyle(font: fontBold, fontSize: 13),
                   ),
-                  if (mode == InvoiceMode.merchant && profit != null) ...[
-                    pw.SizedBox(height: 4),
-                    _totalRow(
-                      'المكسب التقديري',
-                      '${profit >= 0 ? '+' : ''}${profit.toStringAsFixed(0)} د.ل',
-                      pw.TextStyle(
-                        font: fontBold,
-                        fontSize: 12,
-                        color: profit >= 0 ? PdfColors.green700 : PdfColors.red700,
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ),

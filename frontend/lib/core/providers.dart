@@ -267,6 +267,44 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   return response.data as Map<String, dynamic>;
 });
 
+// ─── Shipping Sources Provider ────────────────────────────
+final shippingSourcesProvider = StateNotifierProvider<ShippingSourcesNotifier, AsyncValue<List<Map<String, dynamic>>>>((ref) {
+  return ShippingSourcesNotifier(ref);
+});
+
+class ShippingSourcesNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>>> {
+  final Ref _ref;
+  ShippingSourcesNotifier(this._ref) : super(const AsyncValue.loading());
+
+  Dio get _dio => _ref.read(dioProvider);
+
+  Future<void> fetchSources() async {
+    state = const AsyncValue.loading();
+    try {
+      final response = await _dio.get('/settings/sources');
+      final data = response.data as Map<String, dynamic>;
+      state = AsyncValue.data(List<Map<String, dynamic>>.from(data['data'] ?? []));
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  Future<void> createSource(String name, double ratePerKg) async {
+    await _dio.post('/settings/sources', data: {'name': name, 'rate_per_kg': ratePerKg});
+    await fetchSources();
+  }
+
+  Future<void> updateSource(int id, String name, double ratePerKg) async {
+    await _dio.put('/settings/sources/$id', data: {'name': name, 'rate_per_kg': ratePerKg});
+    await fetchSources();
+  }
+
+  Future<void> deleteSource(int id) async {
+    await _dio.delete('/settings/sources/$id');
+    await fetchSources();
+  }
+}
+
 // ─── Settlements Provider ──────────────────────────────────
 final settlementsProvider = StateNotifierProvider<SettlementsNotifier, AsyncValue<List<Map<String, dynamic>>>>((ref) {
   return SettlementsNotifier(ref);

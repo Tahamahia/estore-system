@@ -437,7 +437,7 @@ orderRoutes.post('/:id/items', async (c) => {
   const orderId = c.req.param('id');
   const body = await c.req.json();
 
-  const { id, product_name, product_url, product_image_url, quantity, unit_price_foreign, unit_price_local, shipping_cost_foreign, color, size, sku, notes } = body;
+  const { id, product_name, product_url, product_image_url, quantity, unit_price_foreign, unit_price_local, shipping_cost_foreign, color, size, sku, notes, item_category, weight, brand, source_name, shipping_rate_per_kg } = body;
 
   if (!id || !product_name) {
     return c.json({ error: 'Bad Request', message: 'id and product_name are required' }, 400);
@@ -453,14 +453,17 @@ orderRoutes.post('/:id/items', async (c) => {
 
   await c.env.DB.prepare(
     `INSERT INTO order_items (id, tenant_id, order_id, product_name, product_url,
-     product_image_url, quantity, unit_price_foreign, unit_price_local, shipping_cost_foreign, color, size, sku,
-     notes, status, created_at, updated_at, version)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
+     product_image_url, quantity, unit_price_foreign, unit_price_local, shipping_cost_foreign,
+     color, size, sku, item_category, weight, brand, notes, source_name, shipping_rate_per_kg,
+     status, created_at, updated_at, version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
   ).bind(
     id, tenantId, orderId, product_name, product_url || null,
     product_image_url || null, quantity || 1,
     unit_price_foreign || 0, unit_price_local || 0, shipping_cost_foreign || 0,
-    color || null, size || null, sku || null, notes || null
+    color || null, size || null, sku || null,
+    item_category || null, weight || 0, brand || null, notes || null,
+    source_name || null, shipping_rate_per_kg || 0
   ).run();
 
   return c.json({ message: 'Item added', id }, 201);
@@ -481,7 +484,7 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
     return c.json({ error: 'Bad Request', message: 'version required for OCC' }, 400);
   }
 
-  const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'unit_price_local', 'shipping_cost_foreign', 'quantity', 'size', 'color', 'sku', 'status'];
+  const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'unit_price_local', 'shipping_cost_foreign', 'quantity', 'size', 'color', 'sku', 'status', 'item_category', 'weight', 'brand', 'source_name', 'shipping_rate_per_kg'];
   const setClauses: string[] = [];
   const values: any[] = [];
 
@@ -555,7 +558,7 @@ orderRoutes.patch('/:id', async (c) => {
   // Build dynamic SET clause
   const setClauses: string[] = [];
   const values: any[] = [];
-  const allowedFields = ['status', 'notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign'];
+  const allowedFields = ['status', 'notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign', 'shipping_rate_per_kg'];
 
   for (const field of allowedFields) {
     if (updates[field] !== undefined) {

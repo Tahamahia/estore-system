@@ -560,6 +560,8 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
   final _colorCtrl = TextEditingController();
   final _brandCtrl = TextEditingController();
   String? _selectedCategory;
+  String? _selectedSourceName;
+  double _currentShippingRate = 0;
   bool _isLoading = false;
   String? _error;
 
@@ -570,6 +572,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
     super.initState();
     _weightCtrl.addListener(() => setState(() {}));
     _qtyCtrl.addListener(() => setState(() {}));
+    Future.microtask(() => ref.read(shippingSourcesProvider.notifier).fetchSources());
   }
 
   @override
@@ -601,6 +604,8 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
         if (_urlCtrl.text.trim().isNotEmpty) 'product_url': _urlCtrl.text.trim(),
         'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
         'weight': double.tryParse(_weightCtrl.text.trim()) ?? 0,
+        'shipping_rate_per_kg': _currentShippingRate,
+        if (_selectedSourceName != null) 'source_name': _selectedSourceName,
         if (_localPriceCtrl.text.trim().isNotEmpty)
           'unit_price_local': double.tryParse(_localPriceCtrl.text.trim()) ?? 0,
         'quantity': int.tryParse(_qtyCtrl.text.trim()) ?? 1,
@@ -620,10 +625,11 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final shippingRate = (widget.order['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
+    final sourcesState = ref.watch(shippingSourcesProvider);
+    final sources = sourcesState.valueOrNull ?? [];
     final weight = double.tryParse(_weightCtrl.text.trim()) ?? 0;
     final qty = int.tryParse(_qtyCtrl.text.trim()) ?? 1;
-    final calcShipping = weight * shippingRate * qty;
+    final calcShipping = weight * _currentShippingRate * qty;
     final showClothesFields = _selectedCategory == 'Clothes';
     final showBrandField = _selectedCategory == 'Electronic' || _selectedCategory == 'Accessories';
 
@@ -771,6 +777,40 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                   )),
                 ]),
                 const SizedBox(height: 10),
+                // Source dropdown
+                DropdownButtonFormField<String?>(
+                  value: _selectedSourceName,
+                  dropdownColor: AppTheme.darkSurface,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: const InputDecoration(
+                    labelText: 'الموقع',
+                    prefixIcon: Icon(Icons.language_outlined, size: 18),
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                  items: [
+                    const DropdownMenuItem<String?>(value: null, child: Text('— بدون موقع —', style: TextStyle(color: Colors.white38))),
+                    ...sources.map((s) {
+                      final sName = s['name'] as String;
+                      final sRate = (s['rate_per_kg'] as num).toDouble();
+                      return DropdownMenuItem<String?>(
+                        value: sName,
+                        child: Text('$sName  (\$$sRate/kg)', style: const TextStyle(color: Colors.white)),
+                      );
+                    }),
+                  ],
+                  onChanged: (v) {
+                    final src = sources.firstWhere(
+                      (s) => s['name'] == v,
+                      orElse: () => <String, dynamic>{},
+                    );
+                    setState(() {
+                      _selectedSourceName = v;
+                      _currentShippingRate = v != null ? (src['rate_per_kg'] as num?)?.toDouble() ?? 0 : 0;
+                    });
+                  },
+                ),
+                const SizedBox(height: 10),
                 TextField(
                   controller: _weightCtrl,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
@@ -780,10 +820,10 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                     prefixIcon: const Icon(Icons.scale_outlined, size: 18),
                     isDense: true,
                     contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    helperText: shippingRate > 0
-                        ? 'شحن محسوب: \$${calcShipping.toStringAsFixed(2)}  ($weight kg × \$$shippingRate × $qty)'
-                        : null,
-                    helperStyle: const TextStyle(color: Colors.white38, fontSize: 11),
+                    helperText: _currentShippingRate > 0
+                        ? 'شحن محسوب: \$${calcShipping.toStringAsFixed(2)}  ($weight kg × \$$_currentShippingRate × $qty)'
+                        : 'اختر الموقع لحساب تكلفة الشحن تلقائياً',
+                    helperStyle: TextStyle(color: _currentShippingRate > 0 ? AppTheme.secondary : Colors.white38, fontSize: 11),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -983,8 +1023,6 @@ class _EditOrderDialog extends StatefulWidget {
 
 class _EditOrderDialogState extends State<_EditOrderDialog> {
   late final TextEditingController _notesCtrl;
-  late final TextEditingController _rateCtrl;
-  late final TextEditingController _shippingRateCtrl;
   bool _saving = false;
   String? _error;
 
@@ -992,19 +1030,11 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
   void initState() {
     super.initState();
     _notesCtrl = TextEditingController(text: widget.order['notes'] as String? ?? '');
-    _rateCtrl = TextEditingController(
-      text: (widget.order['pegged_exchange_rate'] as num?)?.toString() ?? '',
-    );
-    _shippingRateCtrl = TextEditingController(
-      text: (widget.order['shipping_rate_per_kg'] as num?)?.toString() ?? '',
-    );
   }
 
   @override
   void dispose() {
     _notesCtrl.dispose();
-    _rateCtrl.dispose();
-    _shippingRateCtrl.dispose();
     super.dispose();
   }
 
@@ -1025,31 +1055,10 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
               decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
               child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
             ),
-
-            TextField(
-              controller: _rateCtrl,
-              style: const TextStyle(color: Colors.white),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'سعر الصرف المثبت (اختياري)',
-                prefixIcon: Icon(Icons.currency_exchange),
-              ),
-            ),
-            const SizedBox(height: 14),
-            TextField(
-              controller: _shippingRateCtrl,
-              style: const TextStyle(color: Colors.white),
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(
-                labelText: 'سعر الشحن للكيلو (\$)',
-                prefixIcon: Icon(Icons.scale_outlined),
-              ),
-            ),
-            const SizedBox(height: 14),
             TextField(
               controller: _notesCtrl,
               style: const TextStyle(color: Colors.white),
-              maxLines: 2,
+              maxLines: 3,
               decoration: const InputDecoration(
                 labelText: 'ملاحظات',
                 prefixIcon: Icon(Icons.notes),
@@ -1061,12 +1070,8 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
               onPressed: _saving ? null : () async {
                 setState(() { _saving = true; _error = null; });
                 final updates = <String, dynamic>{'version': widget.order['version']};
-                final rate = double.tryParse(_rateCtrl.text.trim());
-                if (rate != null) updates['pegged_exchange_rate'] = rate;
-                final shippingRate = double.tryParse(_shippingRateCtrl.text.trim());
-                if (shippingRate != null) updates['shipping_rate_per_kg'] = shippingRate;
                 final notes = _notesCtrl.text.trim();
-                if (notes.isNotEmpty) updates['notes'] = notes;
+                updates['notes'] = notes;
                 try {
                   final nav = Navigator.of(context);
                   await widget.onSave(updates);
@@ -1097,8 +1102,6 @@ class _FinancialSummaryCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Shipping = weight × order-level shipping_rate_per_kg × qty (weight-based, not static field)
-    final shippingRate = (order['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
     double itemsCostUsd = 0;
     double shippingUsd = 0;
     double totalLocal = 0;
@@ -1106,30 +1109,18 @@ class _FinancialSummaryCard extends StatelessWidget {
       final item = raw as Map<String, dynamic>;
       if ((item['status'] as String?) == 'cancelled') continue;
       final qty = (item['quantity'] as num?)?.toInt() ?? 1;
+      final itemRate = (item['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
       itemsCostUsd += ((item['unit_price_foreign'] as num?)?.toDouble() ?? 0) * qty;
-      shippingUsd += ((item['weight'] as num?)?.toDouble() ?? 0) * shippingRate * qty;
+      shippingUsd += ((item['weight'] as num?)?.toDouble() ?? 0) * itemRate * qty;
       totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? 0) * qty;
     }
-
-    final rate = (order['pegged_exchange_rate'] as num?)?.toDouble() ?? 0;
-
-    final hasPrice = totalLocal > 0;
-    final hasRate = rate > 0;
-    final profit = (hasPrice && hasRate)
-        ? totalLocal - ((itemsCostUsd + shippingUsd) * rate)
-        : null;
-    final isProfit = profit != null && profit >= 0;
-
-    final borderColor = profit != null
-        ? (isProfit ? AppTheme.success : AppTheme.error).withValues(alpha: 0.4)
-        : AppTheme.darkBorder;
 
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: AppTheme.darkSurface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: borderColor),
+        border: Border.all(color: AppTheme.darkBorder),
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
@@ -1139,46 +1130,15 @@ class _FinancialSummaryCard extends StatelessWidget {
         ]),
         const SizedBox(height: 12),
         _FinancialRow(label: 'تكلفة البضاعة (دولار)', value: '\$${itemsCostUsd.toStringAsFixed(2)}'),
-        if (shippingUsd > 0) ...[
-          const SizedBox(height: 6),
-          _FinancialRow(label: 'تكلفة الشحن (دولار)', value: '\$${shippingUsd.toStringAsFixed(2)}'),
-        ],
-        if (hasRate) ...[
-          const SizedBox(height: 6),
-          _FinancialRow(label: 'سعر الصرف', value: '${rate.toStringAsFixed(2)} د.ل', dimValue: true),
-        ],
+        const SizedBox(height: 6),
+        _FinancialRow(label: 'تكلفة الشحن (دولار)', value: '\$${shippingUsd.toStringAsFixed(2)}'),
         const Divider(height: 20, color: AppTheme.darkBorder),
-        if (!hasPrice)
+        if (totalLocal == 0)
           const Center(
             child: Text('في انتظار تحديد سعر البيع', style: TextStyle(color: Colors.white38, fontSize: 13)),
           )
-        else ...[
+        else
           _FinancialRow(label: 'سعر البيع (دينار)', value: '${totalLocal.toStringAsFixed(0)} د.ل', bold: true),
-          if (profit != null) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-              decoration: BoxDecoration(
-                color: (isProfit ? AppTheme.success : AppTheme.error).withValues(alpha: 0.12),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: (isProfit ? AppTheme.success : AppTheme.error).withValues(alpha: 0.35),
-                ),
-              ),
-              child: Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
-                const Text('المكسب التقديري',
-                  style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w600, fontSize: 14)),
-                Text(
-                  '${isProfit ? '+' : ''}${profit.toStringAsFixed(0)} د.ل',
-                  style: TextStyle(
-                    color: isProfit ? AppTheme.success : AppTheme.error,
-                    fontWeight: FontWeight.w800, fontSize: 18,
-                  ),
-                ),
-              ]),
-            ),
-          ],
-        ],
       ]),
     );
   }
@@ -1188,15 +1148,14 @@ class _FinancialRow extends StatelessWidget {
   final String label;
   final String value;
   final bool bold;
-  final bool dimValue;
-  const _FinancialRow({required this.label, required this.value, this.bold = false, this.dimValue = false});
+  const _FinancialRow({required this.label, required this.value, this.bold = false});
 
   @override
   Widget build(BuildContext context) {
     return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
       Text(label, style: const TextStyle(color: Colors.white54, fontSize: 13)),
       Text(value, style: TextStyle(
-        color: dimValue ? Colors.white38 : Colors.white70,
+        color: Colors.white70,
         fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
         fontSize: bold ? 15 : 14,
       )),
@@ -1230,6 +1189,8 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
   late final TextEditingController _brandCtrl;
   String? _selectedCategory;
   late String _selectedStatus;
+  String? _selectedSourceName;
+  double _currentShippingRate = 0;
   bool _saving = false;
   String? _error;
 
@@ -1268,8 +1229,12 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     _selectedCategory = _categories.contains(rawCat) ? rawCat : null;
     final rawStatus = (widget.item['status'] as String?) ?? 'pending';
     _selectedStatus = _statusOptions.any((o) => o.$1 == rawStatus) ? rawStatus : 'pending';
+    _selectedSourceName = widget.item['source_name'] as String?;
+    _currentShippingRate = (widget.item['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
     _weightCtrl.addListener(() => setState(() {}));
     _qtyCtrl.addListener(() => setState(() {}));
+    // Load sources if not already loaded
+    Future.microtask(() => ref.read(shippingSourcesProvider.notifier).fetchSources());
   }
 
   @override
@@ -1304,6 +1269,8 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
           'product_url':  _urlCtrl.text.trim(),
           'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
           'weight':       double.tryParse(_weightCtrl.text.trim()) ?? 0,
+          'shipping_rate_per_kg': _currentShippingRate,
+          if (_selectedSourceName != null) 'source_name': _selectedSourceName,
           if (_localPriceCtrl.text.trim().isNotEmpty)
             'unit_price_local': double.tryParse(_localPriceCtrl.text.trim()) ?? 0,
           'quantity':     int.tryParse(_qtyCtrl.text.trim()) ?? 1,
@@ -1324,11 +1291,12 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final sourcesState = ref.watch(shippingSourcesProvider);
+    final sources = sourcesState.valueOrNull ?? [];
     final isCancelled = _selectedStatus == 'cancelled';
-    final shippingRate = (widget.order['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
     final weight = double.tryParse(_weightCtrl.text.trim()) ?? 0;
     final qty = int.tryParse(_qtyCtrl.text.trim()) ?? 1;
-    final calcShipping = weight * shippingRate * qty;
+    final calcShipping = weight * _currentShippingRate * qty;
     final showClothesFields = _selectedCategory == 'Clothes';
     final showBrandField = _selectedCategory == 'Electronic' || _selectedCategory == 'Accessories';
 
@@ -1466,16 +1434,52 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
               )),
             ]),
             const SizedBox(height: 12),
+            // Source dropdown
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+              decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.darkBorder)),
+              child: DropdownButtonHideUnderline(
+                child: DropdownButton<String?>(
+                  value: _selectedSourceName,
+                  isExpanded: true, dropdownColor: AppTheme.darkCard,
+                  style: const TextStyle(color: Colors.white, fontSize: 14),
+                  icon: const Icon(Icons.expand_more, color: Colors.white54),
+                  hint: const Text('الموقع (اختياري)', style: TextStyle(color: Colors.white38)),
+                  items: [
+                    const DropdownMenuItem<String?>(value: null, child: Text('— بدون موقع —', style: TextStyle(color: Colors.white38))),
+                    ...sources.map((s) {
+                      final sName = s['name'] as String;
+                      final sRate = (s['rate_per_kg'] as num).toDouble();
+                      return DropdownMenuItem<String?>(
+                        value: sName,
+                        child: Text('$sName  (\$$sRate/kg)', style: const TextStyle(color: Colors.white)),
+                      );
+                    }),
+                  ],
+                  onChanged: (v) {
+                    final src = sources.firstWhere(
+                      (s) => s['name'] == v,
+                      orElse: () => <String, dynamic>{},
+                    );
+                    setState(() {
+                      _selectedSourceName = v;
+                      _currentShippingRate = v != null ? (src['rate_per_kg'] as num?)?.toDouble() ?? 0 : 0;
+                    });
+                  },
+                ),
+              ),
+            ),
+            const SizedBox(height: 12),
             TextField(
               controller: _weightCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
                 labelText: 'الوزن (كيلو)', prefixIcon: const Icon(Icons.scale_outlined, size: 18),
                 isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                helperText: shippingRate > 0
-                    ? 'شحن محسوب: \$${calcShipping.toStringAsFixed(2)}  ($weight kg × \$$shippingRate × $qty)'
-                    : 'سعر الشحن/كيلو غير محدد في إعدادات الطلب',
-                helperStyle: TextStyle(color: shippingRate > 0 ? AppTheme.secondary : Colors.white38, fontSize: 11),
+                helperText: _currentShippingRate > 0
+                    ? 'شحن محسوب: \$${calcShipping.toStringAsFixed(2)}  ($weight kg × \$$_currentShippingRate × $qty)'
+                    : 'اختر الموقع لحساب تكلفة الشحن تلقائياً',
+                helperStyle: TextStyle(color: _currentShippingRate > 0 ? AppTheme.secondary : Colors.white38, fontSize: 11),
               ),
             ),
             const SizedBox(height: 12),

@@ -11,6 +11,7 @@ import '../features/shipments/presentation/shipments_screen.dart';
 import '../features/customers/presentation/customers_screen.dart';
 import '../features/browser/in_app_browser_screen.dart';
 import '../features/settlements/presentation/settlements_screen.dart';
+import '../features/settings/presentation/settings_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   // Watch auth state for redirects
@@ -79,6 +80,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/settlements',
             name: 'settlements',
             builder: (context, state) => const SettlementsScreen(),
+          ),
+          GoRoute(
+            path: '/settings',
+            name: 'settings',
+            builder: (context, state) => const SettingsScreen(),
           ),
         ],
       ),
