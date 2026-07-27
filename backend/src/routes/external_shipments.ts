@@ -13,13 +13,32 @@ async function syncTrackingAPI(trackingNumber: string): Promise<{
 }> {
   const tn = trackingNumber.toUpperCase();
   let courier = 'Unknown Courier';
-  if (tn.startsWith('LP') || tn.startsWith('JD')) courier = 'JD Logistics';
-  else if (tn.startsWith('SF')) courier = 'SF Express';
-  else if (tn.startsWith('1Z')) courier = 'UPS';
-  else if (/^[0-9]{12,14}$/.test(tn)) courier = 'FedEx';
-  else if (/^[0-9]{20,22}$/.test(tn)) courier = 'DHL';
-  else if (tn.startsWith('SH') || tn.startsWith('SG')) courier = 'Shein Logistics';
-  else if (tn.startsWith('TY') || tn.startsWith('TRY')) courier = 'Trendyol Express';
+  // J&T Express — used by Shein for most international parcels (JTE prefix)
+  if (tn.startsWith('JTE'))                                courier = 'J&T Express (Shein)';
+  // Shein Global Logistics (GSH prefix)
+  else if (tn.startsWith('GSH'))                           courier = 'Shein Global Logistics';
+  // YunExpress — common Shein/AliExpress carrier (YT prefix)
+  else if (tn.startsWith('YT'))                            courier = 'YunExpress';
+  // AliExpress Standard Shipping (LP prefix)
+  else if (tn.startsWith('LP'))                            courier = 'AliExpress Standard';
+  // EMS / ePacket (EX or EE prefix)
+  else if (tn.startsWith('EX') || tn.startsWith('EE'))     courier = 'EMS';
+  // JD Logistics (JD prefix — distinct from JTE above)
+  else if (tn.startsWith('JD'))                            courier = 'JD Logistics';
+  // SF Express
+  else if (tn.startsWith('SF'))                            courier = 'SF Express';
+  // Trendyol Express
+  else if (tn.startsWith('TY') || tn.startsWith('TRY'))   courier = 'Trendyol Express';
+  // Cainiao / AliExpress logistics
+  else if (tn.startsWith('CA') || tn.startsWith('CN'))     courier = 'Cainiao';
+  // UPS
+  else if (tn.startsWith('1Z'))                            courier = 'UPS';
+  // DHL (22-digit all-numeric)
+  else if (/^[0-9]{20,22}$/.test(tn))                     courier = 'DHL';
+  // FedEx (12–14-digit all-numeric)
+  else if (/^[0-9]{12,14}$/.test(tn))                     courier = 'FedEx';
+  // Legacy Shein SH/SG prefixes
+  else if (tn.startsWith('SH') || tn.startsWith('SG'))    courier = 'Shein Logistics';
 
   const hash = trackingNumber.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
   const stages = [
