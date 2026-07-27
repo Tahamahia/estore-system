@@ -410,133 +410,158 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       return s == 'sorted' || s == 'ready_dispatch';
     });
 
-    return SingleChildScrollView(
-      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Back button + title + edit + print buttons
-          Row(children: [
-            IconButton(
-              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 28),
-              onPressed: () {
-                if (context.canPop()) { context.pop(); } else { context.go('/orders'); }
-              },
-            ),
-            const SizedBox(width: 8),
-            Expanded(child: Text('تفاصيل الطلب', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white))),
-            IconButton(
-              icon: const Icon(Icons.print_outlined, color: Colors.white70, size: 22),
-              tooltip: 'طباعة الفاتورة',
-              onPressed: _order != null ? _showInvoiceTypeDialog : null,
-            ),
-            IconButton(
-              icon: const Icon(Icons.edit_outlined, color: Colors.white70, size: 22),
-              tooltip: 'تعديل الطلب',
-              onPressed: _order != null ? _showEditOrderDialog : null,
-            ),
-          ]),
-          const SizedBox(height: 20),
+    return Column(
+      children: [
+        // Scrollable body — header + financial summary + items list scroll together
+        Expanded(
+          child: SingleChildScrollView(
+            padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Back button + title + edit + print
+                Row(children: [
+                  IconButton(
+                    icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 28),
+                    onPressed: () {
+                      if (context.canPop()) { context.pop(); } else { context.go('/orders'); }
+                    },
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'تفاصيل الطلب',
+                      style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white),
+                    ),
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.print_outlined, color: Colors.white70, size: 22),
+                    tooltip: 'طباعة الفاتورة',
+                    onPressed: _order != null ? _showInvoiceTypeDialog : null,
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.edit_outlined, color: Colors.white70, size: 22),
+                    tooltip: 'تعديل الطلب',
+                    onPressed: _order != null ? _showEditOrderDialog : null,
+                  ),
+                ]),
+                const SizedBox(height: 20),
 
-          // Order header card
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: AppTheme.darkSurface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
-            ),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Row(children: [
-                      CircleAvatar(
-                        radius: 24,
-                        backgroundColor: AppTheme.primary.withValues(alpha: 0.2),
-                        child: Text(customerName.isNotEmpty ? customerName[0] : '?',
-                          style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 20)),
-                      ),
-                      const SizedBox(width: 14),
-                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(customerName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18)),
-                        const SizedBox(height: 4),
-                        if (phone != null && phone.isNotEmpty)
-                          GestureDetector(
-                            onTap: () => _callPhone(phone),
-                            child: Row(mainAxisSize: MainAxisSize.min, children: [
-                              const Icon(Icons.phone, color: AppTheme.secondary, size: 16),
-                              const SizedBox(width: 6),
-                              Text(phone, style: const TextStyle(color: AppTheme.secondary, fontSize: 14, fontWeight: FontWeight.w500, decoration: TextDecoration.underline)),
-                            ]),
+                // Order header card
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: AppTheme.darkSurface,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(children: [
+                        CircleAvatar(
+                          radius: 24,
+                          backgroundColor: AppTheme.primary.withValues(alpha: 0.2),
+                          child: Text(
+                            customerName.isNotEmpty ? customerName[0] : '?',
+                            style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 20),
                           ),
-                        if (phone2 != null && phone2.isNotEmpty) ...[
-                          const SizedBox(height: 3),
-                          GestureDetector(
-                            onTap: () => _callPhone(phone2),
-                            child: Row(mainAxisSize: MainAxisSize.min, children: [
-                              const Icon(Icons.phone_outlined, color: AppTheme.secondary, size: 15),
-                              const SizedBox(width: 6),
-                              Text(phone2, style: const TextStyle(color: AppTheme.secondary, fontSize: 13, decoration: TextDecoration.underline)),
-                            ]),
-                          ),
-                        ],
-                        Builder(builder: (_) {
-                          final parts = [city, area, street].where((p) => p != null && p.isNotEmpty).toList();
-                          if (parts.isEmpty) return const SizedBox.shrink();
-                          return Padding(
-                            padding: const EdgeInsets.only(top: 5),
-                            child: Row(mainAxisSize: MainAxisSize.min, children: [
-                              const Icon(Icons.location_on_outlined, color: Colors.white38, size: 15),
-                              const SizedBox(width: 5),
-                              Flexible(child: Text(parts.join(' - '), style: const TextStyle(color: Colors.white54, fontSize: 12))),
-                              if (locationUrl != null && locationUrl.isNotEmpty)
+                        ),
+                        const SizedBox(width: 14),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(customerName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 18)),
+                              const SizedBox(height: 4),
+                              if (phone != null && phone.isNotEmpty)
+                                GestureDetector(
+                                  onTap: () => _callPhone(phone),
+                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                    const Icon(Icons.phone, color: AppTheme.secondary, size: 16),
+                                    const SizedBox(width: 6),
+                                    Text(phone, style: const TextStyle(color: AppTheme.secondary, fontSize: 14, fontWeight: FontWeight.w500, decoration: TextDecoration.underline)),
+                                  ]),
+                                ),
+                              if (phone2 != null && phone2.isNotEmpty) ...[
+                                const SizedBox(height: 3),
+                                GestureDetector(
+                                  onTap: () => _callPhone(phone2),
+                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                    const Icon(Icons.phone_outlined, color: AppTheme.secondary, size: 15),
+                                    const SizedBox(width: 6),
+                                    Text(phone2, style: const TextStyle(color: AppTheme.secondary, fontSize: 13, decoration: TextDecoration.underline)),
+                                  ]),
+                                ),
+                              ],
+                              Builder(builder: (_) {
+                                final parts = [city, area, street].where((p) => p != null && p.isNotEmpty).toList();
+                                if (parts.isEmpty) return const SizedBox.shrink();
+                                return Padding(
+                                  padding: const EdgeInsets.only(top: 5),
+                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                    const Icon(Icons.location_on_outlined, color: Colors.white38, size: 15),
+                                    const SizedBox(width: 5),
+                                    Flexible(child: Text(parts.join(' - '), style: const TextStyle(color: Colors.white54, fontSize: 12))),
+                                    if (locationUrl != null && locationUrl.isNotEmpty)
+                                      Padding(
+                                        padding: const EdgeInsets.only(left: 6),
+                                        child: InkWell(
+                                          onTap: () async {
+                                            final uri = Uri.tryParse(locationUrl);
+                                            if (uri != null && await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                          },
+                                          child: const Icon(Icons.open_in_new, color: AppTheme.primary, size: 15),
+                                        ),
+                                      ),
+                                  ]),
+                                );
+                              }),
+                              if ((city == null || city.isEmpty) && (area == null || area.isEmpty) && (street == null || street.isEmpty) && locationUrl != null && locationUrl.isNotEmpty)
                                 Padding(
-                                  padding: const EdgeInsets.only(left: 6),
+                                  padding: const EdgeInsets.only(top: 5),
                                   child: InkWell(
                                     onTap: () async {
                                       final uri = Uri.tryParse(locationUrl);
                                       if (uri != null && await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
                                     },
-                                    child: const Icon(Icons.open_in_new, color: AppTheme.primary, size: 15),
+                                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                                      Icon(Icons.location_on, color: AppTheme.primary, size: 15),
+                                      SizedBox(width: 4),
+                                      Text('عرض اللوكيشن', style: TextStyle(color: AppTheme.primary, fontSize: 12, decoration: TextDecoration.underline)),
+                                    ]),
                                   ),
                                 ),
-                            ]),
-                          );
-                        }),
-                        if ((city == null || city.isEmpty) && (area == null || area.isEmpty) && (street == null || street.isEmpty) && locationUrl != null && locationUrl.isNotEmpty)
-                          Padding(
-                            padding: const EdgeInsets.only(top: 5),
-                            child: InkWell(
-                              onTap: () async {
-                                final uri = Uri.tryParse(locationUrl);
-                                if (uri != null && await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
-                              },
-                              child: const Row(mainAxisSize: MainAxisSize.min, children: [
-                                Icon(Icons.location_on, color: AppTheme.primary, size: 15),
-                                SizedBox(width: 4),
-                                Text('عرض اللوكيشن', style: TextStyle(color: AppTheme.primary, fontSize: 12, decoration: TextDecoration.underline)),
-                              ]),
-                            ),
+                            ],
                           ),
-                      ])),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        decoration: BoxDecoration(
-                          color: _statusColor(status).withValues(alpha: 0.15),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
                         ),
-                        child: Text(_translateStatus(status),
-                          style: TextStyle(color: _statusColor(status), fontSize: 14, fontWeight: FontWeight.w700)),
-                      ),
-                    ]),
-                    const SizedBox(height: 12),
-                    Row(children: [
-                      _InfoChip(icon: Icons.storefront, label: platform),
-                      const SizedBox(width: 12),
-                      if (createdAt.isNotEmpty) _InfoChip(icon: Icons.calendar_today, label: createdAt.length > 10 ? createdAt.substring(0, 10) : createdAt),
-                      const SizedBox(width: 12),
-                      _InfoChip(icon: Icons.shopping_bag, label: '${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))} عنصر'),
-                    ]),
-                  ]),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: _statusColor(status).withValues(alpha: 0.15),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
+                          ),
+                          child: Text(
+                            _translateStatus(status),
+                            style: TextStyle(color: _statusColor(status), fontSize: 14, fontWeight: FontWeight.w700),
+                          ),
+                        ),
+                      ]),
+                      const SizedBox(height: 12),
+                      Row(children: [
+                        _InfoChip(icon: Icons.storefront, label: platform),
+                        const SizedBox(width: 12),
+                        if (createdAt.isNotEmpty)
+                          _InfoChip(icon: Icons.calendar_today, label: createdAt.length > 10 ? createdAt.substring(0, 10) : createdAt),
+                        const SizedBox(width: 12),
+                        _InfoChip(
+                          icon: Icons.shopping_bag,
+                          label: '${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))} عنصر',
+                        ),
+                      ]),
+                    ],
+                  ),
                 ),
                 const SizedBox(height: 16),
 
@@ -546,7 +571,10 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
 
                 // Items list header with "Add Item" button
                 Row(children: [
-                  Text('العناصر (${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))})', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white)),
+                  Text(
+                    'العناصر (${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))})',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white),
+                  ),
                   const Spacer(),
                   TextButton.icon(
                     onPressed: _showAddItemDialog,
@@ -556,7 +584,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 ]),
                 const SizedBox(height: 12),
 
-                // Items — shrinkWrap so the list expands to full height inside the ScrollView
+                // Items — shrinkWrap so list expands to full height inside SingleChildScrollView
                 if (items.isEmpty)
                   Padding(
                     padding: const EdgeInsets.symmetric(vertical: 32),
@@ -569,7 +597,10 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                         onPressed: _showAddItemDialog,
                         icon: const Icon(Icons.add_shopping_cart),
                         label: const Text('إضافة أول منتج'),
-                        style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary, padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14)),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: AppTheme.primary,
+                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                        ),
                       ),
                     ]),
                   )
@@ -581,78 +612,91 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, index) {
                       final item = items[index] as Map<String, dynamic>;
-                      return _OrderItemCard(item: item, statusColor: _statusColor, translateStatus: _translateStatus, onEdit: () => _showEditItemDialog(item));
+                      return _OrderItemCard(
+                        item: item,
+                        statusColor: _statusColor,
+                        translateStatus: _translateStatus,
+                        onEdit: () => _showEditItemDialog(item),
+                      );
                     },
                   ),
-          const SizedBox(height: 24),
-
-          // Action buttons — scroll with content, no pinned bar
-          Container(
-            padding: const EdgeInsets.all(16),
-            decoration: BoxDecoration(
-              color: AppTheme.darkSurface,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: AppTheme.darkBorder),
+                const SizedBox(height: 16),
+              ],
             ),
-            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              if (!const ['pending_payment', 'delivered', 'cancelled', 'auto_cancelled', 'refunded'].contains(status)) ...[
-                SizedBox(height: 46, child: OutlinedButton.icon(
+          ),
+        ),
+
+        // Action buttons — pinned at bottom, outside the scroll view
+        Container(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+          decoration: BoxDecoration(
+            color: AppTheme.darkSurface,
+            border: Border(top: BorderSide(color: AppTheme.darkBorder)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            if (!const ['pending_payment', 'delivered', 'cancelled', 'auto_cancelled', 'refunded'].contains(status)) ...[
+              SizedBox(
+                height: 46,
+                child: OutlinedButton.icon(
                   onPressed: _orphanLoading ? null : _orphanItems,
                   icon: _orphanLoading
                     ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.warning))
                     : const Icon(Icons.inventory_2_outlined, size: 18),
                   label: const Text('إلغاء وتحويل لفوري', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                  style: OutlinedButton.styleFrom(foregroundColor: AppTheme.warning, side: BorderSide(color: AppTheme.warning.withValues(alpha: 0.5))),
-                )),
-                const SizedBox(height: 10),
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: AppTheme.warning,
+                    side: BorderSide(color: AppTheme.warning.withValues(alpha: 0.5)),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+            ],
+            Row(children: [
+              Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
+                onPressed: _showUpdateStatusDialog,
+                icon: const Icon(Icons.update, size: 22),
+                label: const Text('تحديث الحالة', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+              ))),
+              const SizedBox(width: 12),
+              Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
+                onPressed: () => _openWhatsApp(phone, customerName),
+                icon: const Icon(Icons.chat_rounded, size: 22),
+                label: const Text('واتساب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
+              ))),
+              if (hasReadyItems) ...[
+                const SizedBox(width: 12),
+                Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
+                  onPressed: _dispatchLoading ? null : () async {
+                    setState(() => _dispatchLoading = true);
+                    final messenger = ScaffoldMessenger.of(context);
+                    try {
+                      await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
+                        'status': 'dispatched',
+                        'version': _order?['version'],
+                      });
+                      await _loadOrder();
+                      if (!mounted) return;
+                      messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
+                    } catch (e) {
+                      if (!mounted) return;
+                      messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
+                    } finally {
+                      if (mounted) setState(() => _dispatchLoading = false);
+                    }
+                  },
+                  icon: _dispatchLoading
+                    ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Icon(Icons.local_shipping, size: 22),
+                  label: const Text('إرسال للتوصيل', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+                ))),
               ],
-              Row(children: [
-                Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                  onPressed: _showUpdateStatusDialog,
-                  icon: const Icon(Icons.update, size: 22),
-                  label: const Text('تحديث الحالة', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-                ))),
-                const SizedBox(width: 10),
-                Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                  onPressed: () => _openWhatsApp(phone, customerName),
-                  icon: const Icon(Icons.chat_rounded, size: 22),
-                  label: const Text('واتساب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
-                ))),
-                if (hasReadyItems) ...[
-                  const SizedBox(width: 10),
-                  Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                    onPressed: _dispatchLoading ? null : () async {
-                      setState(() => _dispatchLoading = true);
-                      final messenger = ScaffoldMessenger.of(context);
-                      try {
-                        await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
-                          'status': 'dispatched',
-                          'version': _order?['version'],
-                        });
-                        await _loadOrder();
-                        if (!mounted) return;
-                        messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
-                      } catch (e) {
-                        if (!mounted) return;
-                        messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
-                      } finally {
-                        if (mounted) setState(() => _dispatchLoading = false);
-                      }
-                    },
-                    icon: _dispatchLoading
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : const Icon(Icons.local_shipping, size: 22),
-                    label: const Text('إرسال للتوصيل', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
-                  ))),
-                ],
-              ]),
             ]),
-          ),
-        ],
-      ),
+          ]),
+        ),
+      ],
     );
   }
 }
