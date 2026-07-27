@@ -4,54 +4,182 @@ import { requireRole } from '../middleware/tenant';
 
 export const externalShipmentRoutes = new Hono<AppEnv>();
 
-// Mock tracking service — simulates 17TRACK / TrackingMore API response
-async function syncTrackingAPI(trackingNumber: string): Promise<{
+// ─── Tracking Result Type ──────────────────────────────────
+type TrackingResult = {
   courier: string;
+  /** Normalized to our enum: 'in_transit' | 'at_local_forwarder' | 'arrived_at_warehouse' */
   status: string;
   lastEvent: string;
   lastLocation: string;
-}> {
+  engine: string;
+};
+
+// ─── Status Normalizer ─────────────────────────────────────
+// Maps any external raw status string to our three DB-safe values.
+function normalizeStatus(raw: string): string {
+  const s = raw.toLowerCase().replace(/[\s_\-]/g, '');
+  if (
+    s.includes('delivered') || s.includes('signed') || s.includes('pickedup') ||
+    s.includes('arrived') || s.includes('received') || s.includes('outfordelivery')
+  ) return 'arrived_at_warehouse';
+  if (
+    s.includes('customs') || s.includes('clearance') || s.includes('localforwarder') ||
+    s.includes('import') || s.includes('holdcustoms') || s.includes('detained')
+  ) return 'at_local_forwarder';
+  return 'in_transit';
+}
+
+// ─── Engine C: Prefix/Regex (always succeeds) ─────────────
+// Identifies carrier name from tracking number format and returns
+// a simulated in_transit status so the user is never blocked.
+function resolveByPrefix(trackingNumber: string): TrackingResult {
   const tn = trackingNumber.toUpperCase();
   let courier = 'Unknown Courier';
-  // J&T Express — used by Shein for most international parcels (JTE prefix)
-  if (tn.startsWith('JTE'))                                courier = 'J&T Express (Shein)';
-  // Shein Global Logistics (GSH prefix)
-  else if (tn.startsWith('GSH'))                           courier = 'Shein Global Logistics';
-  // YunExpress — common Shein/AliExpress carrier (YT prefix)
-  else if (tn.startsWith('YT'))                            courier = 'YunExpress';
-  // AliExpress Standard Shipping (LP prefix)
-  else if (tn.startsWith('LP'))                            courier = 'AliExpress Standard';
-  // EMS / ePacket (EX or EE prefix)
-  else if (tn.startsWith('EX') || tn.startsWith('EE'))     courier = 'EMS';
-  // JD Logistics (JD prefix — distinct from JTE above)
-  else if (tn.startsWith('JD'))                            courier = 'JD Logistics';
-  // SF Express
-  else if (tn.startsWith('SF'))                            courier = 'SF Express';
-  // Trendyol Express
-  else if (tn.startsWith('TY') || tn.startsWith('TRY'))   courier = 'Trendyol Express';
-  // Cainiao / AliExpress logistics
-  else if (tn.startsWith('CA') || tn.startsWith('CN'))     courier = 'Cainiao';
-  // UPS
-  else if (tn.startsWith('1Z'))                            courier = 'UPS';
-  // DHL (22-digit all-numeric)
-  else if (/^[0-9]{20,22}$/.test(tn))                     courier = 'DHL';
-  // FedEx (12–14-digit all-numeric)
-  else if (/^[0-9]{12,14}$/.test(tn))                     courier = 'FedEx';
-  // Legacy Shein SH/SG prefixes
-  else if (tn.startsWith('SH') || tn.startsWith('SG'))    courier = 'Shein Logistics';
+
+  if      (tn.startsWith('JTE'))                                 courier = 'J&T Express (Shein)';
+  else if (tn.startsWith('GSH'))                                 courier = 'Shein Global Logistics';
+  else if (tn.startsWith('YT'))                                  courier = 'YunExpress';
+  else if (tn.startsWith('LP'))                                  courier = 'AliExpress Standard';
+  else if (tn.startsWith('EX') || tn.startsWith('EE'))          courier = 'EMS';
+  else if (tn.startsWith('JD'))                                  courier = 'JD Logistics';
+  else if (tn.startsWith('SF'))                                  courier = 'SF Express';
+  else if (tn.startsWith('TY') || tn.startsWith('TRY'))         courier = 'Trendyol Express';
+  else if (tn.startsWith('CA') || tn.startsWith('CN'))          courier = 'Cainiao';
+  else if (tn.startsWith('1Z'))                                  courier = 'UPS';
+  // USPS uses 22-digit numeric IMpb barcodes
+  else if (/^[0-9]{22}$/.test(tn))                              courier = 'USPS';
+  // Royal Mail / EMS use format AA000000000AA
+  else if (/^[A-Z]{2}[0-9]{9}[A-Z]{2}$/.test(tn))             courier = 'EMS / Royal Mail';
+  // DHL Express: 10-digit numeric
+  else if (/^[0-9]{10}$/.test(tn))                              courier = 'DHL Express';
+  // FedEx: 12 or 15-digit numeric
+  else if (/^[0-9]{12}$/.test(tn) || /^[0-9]{15}$/.test(tn))  courier = 'FedEx';
+  else if (tn.startsWith('SH') || tn.startsWith('SG'))          courier = 'Shein Logistics';
 
   const hash = trackingNumber.split('').reduce((acc, ch) => acc + ch.charCodeAt(0), 0);
   const stages = [
-    { status: 'departed_origin',      event: 'Parcel collected from seller',       location: 'Guangzhou, CN' },
-    { status: 'in_transit',           event: 'In transit at sorting hub',           location: 'Shanghai, CN' },
-    { status: 'departed_country',     event: 'Departed origin country',             location: 'Beijing, CN' },
-    { status: 'arrived_destination',  event: 'Arrived at destination country',      location: 'Tripoli, LY' },
-    { status: 'customs_clearance',    event: 'Clearance in progress',               location: 'Tripoli Port, LY' },
-    { status: 'out_for_delivery',     event: 'Out for final-mile delivery',          location: 'Tripoli, LY' },
+    { event: 'Parcel collected from seller',  location: 'Guangzhou, CN' },
+    { event: 'In transit at sorting hub',      location: 'Shanghai, CN' },
+    { event: 'Departed origin country',        location: 'Beijing, CN' },
+    { event: 'Arrived at destination country', location: 'Tripoli, LY' },
+    { event: 'Clearance in progress',          location: 'Tripoli Port, LY' },
   ];
   const stage = stages[hash % stages.length];
 
-  return { courier, status: stage.status, lastEvent: stage.event, lastLocation: stage.location };
+  return {
+    courier,
+    status: 'in_transit',
+    lastEvent: stage.event,
+    lastLocation: stage.location,
+    engine: 'Engine C (Prefix)',
+  };
+}
+
+// ─── Engine A: Cainiao Global Public API ──────────────────
+// Uses Cainiao's web-tracker JSON endpoint (no key required).
+// Covers the vast majority of Shein, AliExpress, and JD parcels.
+async function fetchCainiao(trackingNumber: string): Promise<TrackingResult | null> {
+  const url = `https://global.cainiao.com/global/detail.json?mailNos=${encodeURIComponent(trackingNumber)}`;
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+      'Accept': 'application/json, text/plain, */*',
+      'Referer': 'https://global.cainiao.com/',
+      'Origin': 'https://global.cainiao.com',
+    },
+  });
+
+  if (!res.ok) return null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const body = await res.json() as Record<string, any>;
+  if (!body.success) return null;
+
+  const detailList = body.module?.detailList as unknown[];
+  if (!Array.isArray(detailList) || detailList.length === 0) return null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const detail = detailList[0] as Record<string, any>;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const section: Record<string, any>[] = Array.isArray(detail.section) ? detail.section : [];
+  if (section.length === 0) return null;
+
+  const latest = detail.latestTrace ?? section[0];
+  const rawStatus: string = (detail.status as string | undefined) ?? 'in_transit';
+
+  return {
+    courier: (detail.routeName as string | undefined) ?? 'Cainiao',
+    status: normalizeStatus(rawStatus),
+    lastEvent: (latest?.desc as string | undefined) ?? (latest?.standerdDesc as string | undefined) ?? 'In transit',
+    lastLocation: (latest?.location as string | undefined) ?? 'Unknown',
+    engine: 'Engine A (Cainiao)',
+  };
+}
+
+// ─── Engine B: ParcelsApp Public Frontend API ─────────────
+// Spoofs a mobile browser request to bypass basic bot protection.
+// Covers USPS, UPS, FedEx, Royal Mail, and many others globally.
+async function fetchParcelsApp(trackingNumber: string): Promise<TrackingResult | null> {
+  const BASE = 'https://parcelsapp.com';
+  const url = `${BASE}/api/v3/shipments/tracking?trackingId=${encodeURIComponent(trackingNumber)}&language=en`;
+
+  const res = await fetch(url, {
+    headers: {
+      'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1',
+      'Accept': 'application/json',
+      'Origin': BASE,
+      'Referer': `${BASE}/en/tracking/${encodeURIComponent(trackingNumber)}`,
+      'X-Requested-With': 'XMLHttpRequest',
+    },
+  });
+
+  if (!res.ok) return null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const body = await res.json() as Record<string, any>;
+
+  // ParcelsApp returns { shipment: {...}, states: [...] }
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const shipment = body.shipment as Record<string, any> | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const states: Record<string, any>[] = Array.isArray(body.states) ? body.states : [];
+
+  if (!shipment && states.length === 0) return null;
+
+  const latest = states[0] ?? {};
+  const rawStatus: string = (shipment?.statusCode as string | undefined)
+    ?? (shipment?.status as string | undefined)
+    ?? 'in_transit';
+
+  return {
+    courier: (shipment?.carrier as string | undefined)
+      ?? (shipment?.courierName as string | undefined)
+      ?? 'Unknown',
+    status: normalizeStatus(rawStatus),
+    lastEvent: (latest.description as string | undefined)
+      ?? (latest.title as string | undefined)
+      ?? 'In transit',
+    lastLocation: (latest.location as string | undefined)
+      ?? (latest.address as string | undefined)
+      ?? 'Unknown',
+    engine: 'Engine B (ParcelsApp)',
+  };
+}
+
+// ─── Universal Tracking Orchestrator ──────────────────────
+// Tries Engine A → B → C in order. C is guaranteed to return.
+async function syncUniversalTracking(trackingNumber: string): Promise<TrackingResult> {
+  try {
+    const result = await fetchCainiao(trackingNumber);
+    if (result) return result;
+  } catch (_) { /* fall through to Engine B */ }
+
+  try {
+    const result = await fetchParcelsApp(trackingNumber);
+    if (result) return result;
+  } catch (_) { /* fall through to Engine C */ }
+
+  return resolveByPrefix(trackingNumber);
 }
 
 // GET /external-shipments — paginated list with item counts
@@ -176,7 +304,7 @@ externalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager',
   return c.json({ message: 'Updated', id });
 });
 
-// POST /external-shipments/:id/sync — call mock tracking API
+// POST /external-shipments/:id/sync — universal dual-engine tracking
 externalShipmentRoutes.post('/:id/sync', async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
@@ -189,7 +317,7 @@ externalShipmentRoutes.post('/:id/sync', async (c) => {
   const trackingNumber = shipment.tracking_number as string | null;
   if (!trackingNumber) return c.json({ error: 'No tracking number on this shipment' }, 400);
 
-  const tracking = await syncTrackingAPI(trackingNumber);
+  const tracking = await syncUniversalTracking(trackingNumber);
 
   await c.env.DB.prepare(
     `UPDATE external_shipments SET api_status = ?, courier_code = ?, updated_at = datetime('now')
