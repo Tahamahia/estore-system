@@ -21,6 +21,8 @@ class OrderDetailScreen extends ConsumerStatefulWidget {
 class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   Map<String, dynamic>? _order;
   bool _loading = true;
+  bool _orphanLoading = false;
+  bool _dispatchLoading = false;
   String? _error;
 
   @override
@@ -30,13 +32,14 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   }
 
   Future<void> _loadOrder() async {
+    if (!mounted) return;
     setState(() { _loading = true; _error = null; });
     try {
-      // Always fetch directly from the API so items and customer data are included.
-      // GET /orders/:id returns the full order with a customer JOIN and nested items array.
       final order = await ref.read(ordersProvider.notifier).fetchOrderById(widget.orderId);
+      if (!mounted) return;
       setState(() { _order = order; _loading = false; });
     } catch (e) {
+      if (!mounted) return;
       setState(() { _error = e.toString(); _loading = false; });
     }
   }
@@ -65,6 +68,8 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       case 'delivered': return 'تم التوصيل';
       case 'cancelled': return 'ملغي';
       case 'auto_cancelled': return 'ملغي تلقائياً';
+      case 'refunded': return 'مُسترد';
+      case 'in_stock': return 'فوري';
       default: return status.replaceAll('_', ' ');
     }
   }
@@ -79,6 +84,8 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       case 'dispatched': return const Color(0xFF3B82F6);
       case 'delivered': return AppTheme.success;
       case 'cancelled': case 'auto_cancelled': return AppTheme.error;
+      case 'refunded': return AppTheme.warning;
+      case 'in_stock': return AppTheme.secondary;
       default: return AppTheme.accent;
     }
   }
@@ -294,17 +301,22 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     );
     if (!mounted) return;
     if (confirm != true) return;
+    setState(() => _orphanLoading = true);
     try {
       await ref.read(ordersProvider.notifier).orphanOrderItems(widget.orderId);
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+      final messenger = ScaffoldMessenger.of(context);
+      await _loadOrder();
+      if (!mounted) return;
+      messenger.showSnackBar(const SnackBar(
         content: Text('تم إلغاء الطلبية وتحويل المنتجات للفوري'),
         backgroundColor: AppTheme.success,
       ));
-      await _loadOrder();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e'), backgroundColor: AppTheme.error));
+    } finally {
+      if (mounted) setState(() => _orphanLoading = false);
     }
   }
 
@@ -398,46 +410,42 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
       return s == 'sorted' || s == 'ready_dispatch';
     });
 
-    return Column(
-      children: [
-        // Scrollable body — header card + financial summary + items list all scroll together
-        Expanded(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(24, 24, 24, 0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // Back button + title + edit + print buttons
-                Row(children: [
-                  IconButton(
-                    icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 28),
-                    onPressed: () {
-                      if (context.canPop()) { context.pop(); } else { context.go('/orders'); }
-                    },
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(child: Text('تفاصيل الطلب', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white))),
-                  IconButton(
-                    icon: const Icon(Icons.print_outlined, color: Colors.white70, size: 22),
-                    tooltip: 'طباعة الفاتورة',
-                    onPressed: _order != null ? _showInvoiceTypeDialog : null,
-                  ),
-                  IconButton(
-                    icon: const Icon(Icons.edit_outlined, color: Colors.white70, size: 22),
-                    tooltip: 'تعديل الطلب',
-                    onPressed: _order != null ? _showEditOrderDialog : null,
-                  ),
-                ]),
-                const SizedBox(height: 20),
+    return SingleChildScrollView(
+      padding: const EdgeInsets.fromLTRB(24, 24, 24, 32),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // Back button + title + edit + print buttons
+          Row(children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back_rounded, color: Colors.white, size: 28),
+              onPressed: () {
+                if (context.canPop()) { context.pop(); } else { context.go('/orders'); }
+              },
+            ),
+            const SizedBox(width: 8),
+            Expanded(child: Text('تفاصيل الطلب', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white))),
+            IconButton(
+              icon: const Icon(Icons.print_outlined, color: Colors.white70, size: 22),
+              tooltip: 'طباعة الفاتورة',
+              onPressed: _order != null ? _showInvoiceTypeDialog : null,
+            ),
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, color: Colors.white70, size: 22),
+              tooltip: 'تعديل الطلب',
+              onPressed: _order != null ? _showEditOrderDialog : null,
+            ),
+          ]),
+          const SizedBox(height: 20),
 
-                // Order header card
-                Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: BoxDecoration(
-                    color: AppTheme.darkSurface,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
-                  ),
+          // Order header card
+          Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: AppTheme.darkSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
+            ),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Row(children: [
                       CircleAvatar(
@@ -576,68 +584,75 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                       return _OrderItemCard(item: item, statusColor: _statusColor, translateStatus: _translateStatus, onEdit: () => _showEditItemDialog(item));
                     },
                   ),
-                const SizedBox(height: 16),
-              ],
-            ),
-          ),
-        ),
+          const SizedBox(height: 24),
 
-        // Action buttons — pinned at the bottom, outside the scroll view
-        Container(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-          decoration: BoxDecoration(
-            color: AppTheme.darkSurface,
-            border: Border(top: BorderSide(color: AppTheme.darkBorder)),
-          ),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            if (!const ['pending_payment', 'delivered', 'cancelled', 'auto_cancelled', 'refunded'].contains(status)) ...[
-              SizedBox(height: 44, child: OutlinedButton.icon(
-                onPressed: _orphanItems,
-                icon: const Icon(Icons.inventory_2_outlined, size: 18),
-                label: const Text('إلغاء وتحويل لفوري', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
-                style: OutlinedButton.styleFrom(foregroundColor: AppTheme.warning, side: BorderSide(color: AppTheme.warning.withValues(alpha: 0.5))),
-              )),
-              const SizedBox(height: 8),
-            ],
-            Row(children: [
-              Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                onPressed: _showUpdateStatusDialog,
-                icon: const Icon(Icons.update, size: 22),
-                label: const Text('تحديث الحالة', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-              ))),
-              const SizedBox(width: 12),
-              Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                onPressed: () => _openWhatsApp(phone, customerName),
-                icon: const Icon(Icons.chat_rounded, size: 22),
-                label: const Text('واتساب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
-              ))),
-              if (hasReadyItems) ...[
-                const SizedBox(width: 12),
-                Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                  onPressed: () async {
-                    final messenger = ScaffoldMessenger.of(context);
-                    try {
-                      await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
-                        'status': 'dispatched',
-                        'version': _order?['version'],
-                      });
-                      await _loadOrder();
-                      if (mounted) messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
-                    } catch (e) {
-                      if (mounted) messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
-                    }
-                  },
-                  icon: const Icon(Icons.local_shipping, size: 22),
-                  label: const Text('إرسال للتوصيل', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
-                ))),
+          // Action buttons — scroll with content, no pinned bar
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppTheme.darkSurface,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: AppTheme.darkBorder),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              if (!const ['pending_payment', 'delivered', 'cancelled', 'auto_cancelled', 'refunded'].contains(status)) ...[
+                SizedBox(height: 46, child: OutlinedButton.icon(
+                  onPressed: _orphanLoading ? null : _orphanItems,
+                  icon: _orphanLoading
+                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: AppTheme.warning))
+                    : const Icon(Icons.inventory_2_outlined, size: 18),
+                  label: const Text('إلغاء وتحويل لفوري', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  style: OutlinedButton.styleFrom(foregroundColor: AppTheme.warning, side: BorderSide(color: AppTheme.warning.withValues(alpha: 0.5))),
+                )),
+                const SizedBox(height: 10),
               ],
+              Row(children: [
+                Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
+                  onPressed: _showUpdateStatusDialog,
+                  icon: const Icon(Icons.update, size: 22),
+                  label: const Text('تحديث الحالة', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+                ))),
+                const SizedBox(width: 10),
+                Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
+                  onPressed: () => _openWhatsApp(phone, customerName),
+                  icon: const Icon(Icons.chat_rounded, size: 22),
+                  label: const Text('واتساب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
+                ))),
+                if (hasReadyItems) ...[
+                  const SizedBox(width: 10),
+                  Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
+                    onPressed: _dispatchLoading ? null : () async {
+                      setState(() => _dispatchLoading = true);
+                      final messenger = ScaffoldMessenger.of(context);
+                      try {
+                        await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
+                          'status': 'dispatched',
+                          'version': _order?['version'],
+                        });
+                        await _loadOrder();
+                        if (!mounted) return;
+                        messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
+                      } catch (e) {
+                        if (!mounted) return;
+                        messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
+                      } finally {
+                        if (mounted) setState(() => _dispatchLoading = false);
+                      }
+                    },
+                    icon: _dispatchLoading
+                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Icon(Icons.local_shipping, size: 22),
+                    label: const Text('إرسال للتوصيل', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+                  ))),
+                ],
+              ]),
             ]),
-          ]),
-        ),
-      ],
+          ),
+        ],
+      ),
     );
   }
 }
