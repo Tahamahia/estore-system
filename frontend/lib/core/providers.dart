@@ -185,21 +185,21 @@ class CustomersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
   }
 }
 
-// ─── Shipments Provider ────────────────────────────────────
-final shipmentsProvider = StateNotifierProvider<ShipmentsNotifier, AsyncValue<List<Map<String, dynamic>>>>((ref) {
-  return ShipmentsNotifier(ref);
+// ─── External Shipments Provider ──────────────────────────
+final externalShipmentsProvider = StateNotifierProvider<ExternalShipmentsNotifier, AsyncValue<List<Map<String, dynamic>>>>((ref) {
+  return ExternalShipmentsNotifier(ref);
 });
 
-class ShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>>> {
+class ExternalShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>>> {
   final Ref _ref;
-  ShipmentsNotifier(this._ref) : super(const AsyncValue.loading());
+  ExternalShipmentsNotifier(this._ref) : super(const AsyncValue.loading());
 
   Dio get _dio => _ref.read(dioProvider);
 
   Future<void> fetchShipments({int page = 1}) async {
     state = const AsyncValue.loading();
     try {
-      final response = await _dio.get('/shipments', queryParameters: {'page': page, 'limit': 50});
+      final response = await _dio.get('/external-shipments', queryParameters: {'page': page, 'limit': 50});
       final data = response.data as Map<String, dynamic>;
       state = AsyncValue.data(List<Map<String, dynamic>>.from(data['data'] ?? []));
     } catch (e, st) {
@@ -207,16 +207,92 @@ class ShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
     }
   }
 
-  Future<Map<String, dynamic>> createShipment(Map<String, dynamic> shipmentData) async {
-    final response = await _dio.post('/shipments', data: shipmentData);
+  Future<void> createShipment(Map<String, dynamic> shipmentData) async {
+    await _dio.post('/external-shipments', data: shipmentData);
     await fetchShipments();
+  }
+
+  Future<Map<String, dynamic>> getShipment(String id) async {
+    final response = await _dio.get('/external-shipments/$id');
     return response.data as Map<String, dynamic>;
   }
 
-  Future<Map<String, dynamic>> createMasterShipment(Map<String, dynamic> masterData) async {
-    final response = await _dio.post('/shipments/master', data: masterData);
-    await fetchShipments();
+  Future<void> updateShipment(String id, Map<String, dynamic> data) async {
+    await _dio.patch('/external-shipments/$id', data: data);
+  }
+
+  Future<Map<String, dynamic>> syncTracking(String id) async {
+    final response = await _dio.post('/external-shipments/$id/sync');
     return response.data as Map<String, dynamic>;
+  }
+
+  Future<List<Map<String, dynamic>>> fetchAvailableItems() async {
+    final response = await _dio.get('/external-shipments/available-items');
+    final data = response.data as Map<String, dynamic>;
+    return List<Map<String, dynamic>>.from(data['data'] ?? []);
+  }
+
+  Future<void> attachItems(String shipmentId, List<String> itemIds) async {
+    await _dio.post('/external-shipments/$shipmentId/attach', data: {'item_ids': itemIds});
+  }
+
+  Future<void> deleteShipment(String id) async {
+    await _dio.delete('/external-shipments/$id');
+    await fetchShipments();
+  }
+}
+
+// ─── Internal Shipments Provider ──────────────────────────
+final internalShipmentsProvider = StateNotifierProvider<InternalShipmentsNotifier, AsyncValue<List<Map<String, dynamic>>>>((ref) {
+  return InternalShipmentsNotifier(ref);
+});
+
+class InternalShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>>> {
+  final Ref _ref;
+  InternalShipmentsNotifier(this._ref) : super(const AsyncValue.loading());
+
+  Dio get _dio => _ref.read(dioProvider);
+
+  Future<void> fetchShipments({int page = 1}) async {
+    state = const AsyncValue.loading();
+    try {
+      final response = await _dio.get('/internal-shipments', queryParameters: {'page': page, 'limit': 50});
+      final data = response.data as Map<String, dynamic>;
+      state = AsyncValue.data(List<Map<String, dynamic>>.from(data['data'] ?? []));
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  Future<void> createShipment(Map<String, dynamic> shipmentData) async {
+    await _dio.post('/internal-shipments', data: shipmentData);
+    await fetchShipments();
+  }
+
+  Future<Map<String, dynamic>> getShipment(String id) async {
+    final response = await _dio.get('/internal-shipments/$id');
+    return response.data as Map<String, dynamic>;
+  }
+
+  Future<void> updateShipment(String id, Map<String, dynamic> data) async {
+    await _dio.patch('/internal-shipments/$id', data: data);
+    await fetchShipments();
+  }
+
+  Future<List<Map<String, dynamic>>> fetchAvailableOrders() async {
+    final response = await _dio.get('/internal-shipments/available-orders');
+    final data = response.data as Map<String, dynamic>;
+    return List<Map<String, dynamic>>.from(data['data'] ?? []);
+  }
+
+  Future<void> attachOrders(String shipmentId, List<String> orderIds) async {
+    await _dio.post('/internal-shipments/$shipmentId/attach', data: {'order_ids': orderIds});
+    await fetchShipments();
+  }
+
+  Future<void> deleteShipment(String id) async {
+    await _dio.delete('/internal-shipments/$id');
+    await fetchShipments();
   }
 }
 

@@ -20,11 +20,12 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     final location = GoRouterState.of(context).uri.toString();
     if (location.startsWith('/orders')) return 1;
     if (location.startsWith('/warehouse')) return 2;
-    if (location.startsWith('/shipments')) return 3;
-    if (location.startsWith('/customers')) return 4;
-    if (location.startsWith('/settlements')) return 5;
-    if (location.startsWith('/settings')) return 6;
-    if (location.startsWith('/browser')) return 7;
+    if (location.startsWith('/external-shipments')) return 3;
+    if (location.startsWith('/internal-shipments')) return 4;
+    if (location.startsWith('/customers')) return 5;
+    if (location.startsWith('/settlements')) return 6;
+    if (location.startsWith('/settings')) return 7;
+    if (location.startsWith('/browser')) return 8;
     return 0;
   }
 
@@ -32,7 +33,8 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     _NavItem(icon: Icons.dashboard_rounded, label: 'Overview', path: '/'),
     _NavItem(icon: Icons.receipt_long_rounded, label: 'Orders', path: '/orders'),
     _NavItem(icon: Icons.qr_code_scanner_rounded, label: 'Warehouse', path: '/warehouse'),
-    _NavItem(icon: Icons.local_shipping_rounded, label: 'Shipments', path: '/shipments'),
+    _NavItem(icon: Icons.flight_land_rounded, label: 'الشحنات الخارجية', path: '/external-shipments'),
+    _NavItem(icon: Icons.local_shipping_rounded, label: 'الشحنات الداخلية', path: '/internal-shipments'),
     _NavItem(icon: Icons.people_rounded, label: 'Customers', path: '/customers'),
     _NavItem(icon: Icons.account_balance_wallet_rounded, label: 'التسويات', path: '/settlements'),
     _NavItem(icon: Icons.settings_rounded, label: 'الضبط', path: '/settings'),

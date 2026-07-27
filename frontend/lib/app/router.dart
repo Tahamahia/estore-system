@@ -7,7 +7,8 @@ import '../features/dashboard/presentation/overview_screen.dart';
 import '../features/orders/presentation/orders_screen.dart';
 import '../features/orders/presentation/order_detail_screen.dart';
 import '../features/warehouse/presentation/scanning_screen.dart';
-import '../features/shipments/presentation/shipments_screen.dart';
+import '../features/logistics/presentation/external_shipments_screen.dart';
+import '../features/logistics/presentation/internal_shipments_screen.dart';
 import '../features/customers/presentation/customers_screen.dart';
 import '../features/browser/in_app_browser_screen.dart';
 import '../features/settlements/presentation/settlements_screen.dart';
@@ -62,9 +63,14 @@ final routerProvider = Provider<GoRouter>((ref) {
             builder: (context, state) => const ScanningScreen(),
           ),
           GoRoute(
-            path: '/shipments',
-            name: 'shipments',
-            builder: (context, state) => const ShipmentsScreen(),
+            path: '/external-shipments',
+            name: 'externalShipments',
+            builder: (context, state) => const ExternalShipmentsScreen(),
+          ),
+          GoRoute(
+            path: '/internal-shipments',
+            name: 'internalShipments',
+            builder: (context, state) => const InternalShipmentsScreen(),
           ),
           GoRoute(
             path: '/customers',
