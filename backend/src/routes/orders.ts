@@ -574,15 +574,31 @@ orderRoutes.patch('/:id', async (c) => {
   setClauses.push(`version = version + 1`);
   setClauses.push(`updated_at = datetime('now')`);
 
-  const result = await c.env.DB.prepare(
-    `UPDATE orders SET ${setClauses.join(', ')} 
-     WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
-  ).bind(...values, orderId, tenantId, version).run();
+  const stmts: D1PreparedStatement[] = [
+    c.env.DB.prepare(
+      `UPDATE orders SET ${setClauses.join(', ')}
+       WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
+    ).bind(...values, orderId, tenantId, version),
+  ];
 
-  if (result.meta.changes === 0) {
-    return c.json({ 
-      error: 'Conflict', 
-      message: 'Order was modified by another request (version mismatch) or not found' 
+  // Cascade the new status to all non-cancelled items so the order and its
+  // items never get out of sync (e.g. order advances to arrived_warehouse while
+  // items are still stuck in pending).
+  if (updates.status) {
+    stmts.push(
+      c.env.DB.prepare(
+        `UPDATE order_items SET status = ?, updated_at = datetime('now'), version = version + 1
+         WHERE order_id = ? AND tenant_id = ? AND status != 'cancelled' AND is_deleted = 0`
+      ).bind(updates.status, orderId, tenantId)
+    );
+  }
+
+  const results = await c.env.DB.batch(stmts);
+
+  if ((results[0].meta.changes ?? 0) === 0) {
+    return c.json({
+      error: 'Conflict',
+      message: 'Order was modified by another request (version mismatch) or not found'
     }, 409);
   }
 
