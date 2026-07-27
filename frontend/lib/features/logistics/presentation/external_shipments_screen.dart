@@ -126,11 +126,18 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
       final result = await notifier.syncTracking(widget.shipment['id'] as String);
       if (!context.mounted) return;
       final tracking = result['tracking'] as Map<String, dynamic>? ?? {};
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('${tracking['courier'] ?? ''} — ${tracking['lastEvent'] ?? ''}'),
-        backgroundColor: AppTheme.success,
-      ));
+      final rawEvents = result['tracking_events'] as List<dynamic>? ?? [];
+      final events = rawEvents.map((e) => e as Map<String, dynamic>).toList();
       widget.onRefresh();
+      showDialog(
+        context: context,
+        builder: (_) => _TrackingTimelineDialog(
+          courier: tracking['courier'] as String? ?? '',
+          trackingNumber: widget.shipment['tracking_number'] as String? ?? '',
+          engine: tracking['engine'] as String? ?? '',
+          events: events,
+        ),
+      );
     } catch (e) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -140,6 +147,59 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
     } finally {
       if (mounted) setState(() => _syncing = false);
     }
+  }
+
+  Future<void> _delete(BuildContext context) async {
+    final notifier = ProviderScope.containerOf(context).read(externalShipmentsProvider.notifier);
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('حذف الشحنة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: const Text(
+          'هل أنت متأكد من الحذف؟ سيتم فك ارتباط جميع المنتجات المرتبطة وإعادة حالتها إلى "مشتري".',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.error),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (confirm != true) return;
+    try {
+      await notifier.deleteShipment(widget.shipment['id'] as String);
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('تم حذف الشحنة'),
+          backgroundColor: AppTheme.error,
+        ));
+      }
+      widget.onRefresh();
+    } catch (e) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      }
+    }
+  }
+
+  void _editTracking(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (_) => _EditTrackingDialog(
+        shipmentId: widget.shipment['id'] as String,
+        currentTracking: widget.shipment['tracking_number'] as String? ?? '',
+        onSaved: widget.onRefresh,
+      ),
+    );
   }
 
   void _showDetail(BuildContext context) {
@@ -221,7 +281,21 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
             const SizedBox(width: 6),
             Text('$itemCount منتج', style: const TextStyle(color: Colors.white54, fontSize: 13)),
             const Spacer(),
-            // Sync button
+            // Delete button
+            IconButton(
+              onPressed: () => _delete(context),
+              icon: const Icon(Icons.delete_outline, size: 18),
+              color: AppTheme.error,
+              tooltip: 'حذف الشحنة',
+            ),
+            // Edit tracking number button
+            IconButton(
+              onPressed: () => _editTracking(context),
+              icon: const Icon(Icons.edit_outlined, size: 18),
+              color: Colors.white54,
+              tooltip: 'تعديل رقم التتبع',
+            ),
+            // Sync / Track button
             TextButton.icon(
               onPressed: _syncing ? null : () => _sync(context),
               icon: _syncing
@@ -612,6 +686,194 @@ class _AttachItemsDialogState extends ConsumerState<_AttachItemsDialog> {
                   : Text('ربط ${_selected.length} منتج'),
               )),
             ],
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Edit Tracking Number Dialog ───────────────────────────
+class _EditTrackingDialog extends ConsumerStatefulWidget {
+  final String shipmentId;
+  final String currentTracking;
+  final VoidCallback onSaved;
+  const _EditTrackingDialog({required this.shipmentId, required this.currentTracking, required this.onSaved});
+  @override
+  ConsumerState<_EditTrackingDialog> createState() => _EditTrackingDialogState();
+}
+
+class _EditTrackingDialogState extends ConsumerState<_EditTrackingDialog> {
+  late final TextEditingController _ctrl;
+  bool _loading = false;
+  String? _error;
+
+  @override
+  void initState() { super.initState(); _ctrl = TextEditingController(text: widget.currentTracking); }
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  Future<void> _save() async {
+    final value = _ctrl.text.trim();
+    if (value.isEmpty) { setState(() => _error = 'رقم التتبع مطلوب'); return; }
+    setState(() { _loading = true; _error = null; });
+    try {
+      await ref.read(externalShipmentsProvider.notifier).updateShipment(
+        widget.shipmentId,
+        {'tracking_number': value},
+      );
+      widget.onSaved();
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      setState(() { _loading = false; _error = '$e'; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 400),
+        child: Padding(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Text('تعديل رقم التتبع', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w600, color: Colors.white)),
+            const SizedBox(height: 20),
+            if (_error != null) Container(
+              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 12),
+              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+              child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+            ),
+            TextField(
+              controller: _ctrl,
+              autofocus: true,
+              style: const TextStyle(color: Colors.white, fontFamily: 'monospace'),
+              decoration: const InputDecoration(labelText: 'رقم التتبع', prefixIcon: Icon(Icons.qr_code_rounded)),
+            ),
+            const SizedBox(height: 20),
+            Row(children: [
+              Expanded(child: TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('إلغاء', style: TextStyle(color: Colors.white54)),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: ElevatedButton(
+                onPressed: _loading ? null : _save,
+                child: _loading
+                  ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('حفظ'),
+              )),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Tracking Timeline Dialog ───────────────────────────────
+class _TrackingTimelineDialog extends StatelessWidget {
+  final String courier;
+  final String trackingNumber;
+  final String engine;
+  final List<Map<String, dynamic>> events;
+  const _TrackingTimelineDialog({
+    required this.courier,
+    required this.trackingNumber,
+    required this.engine,
+    required this.events,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 580),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Row(children: [
+              const Icon(Icons.radar_rounded, color: AppTheme.accent, size: 22),
+              const SizedBox(width: 10),
+              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('مسار الشحنة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16)),
+                if (courier.isNotEmpty)
+                  Text(courier, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+              ])),
+              IconButton(
+                icon: const Icon(Icons.close, color: Colors.white54),
+                onPressed: () => Navigator.of(context).pop(),
+              ),
+            ]),
+            if (trackingNumber.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(trackingNumber, style: const TextStyle(color: Colors.white38, fontSize: 12, fontFamily: 'monospace')),
+            ],
+            if (engine.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              Text(engine, style: const TextStyle(color: Colors.white24, fontSize: 11)),
+            ],
+            const SizedBox(height: 16),
+            const Divider(color: AppTheme.darkBorder),
+            const SizedBox(height: 8),
+            Expanded(
+              child: events.isEmpty
+                ? const Center(child: Text(
+                    'لا توجد تفاصيل دقيقة متاحة حالياً',
+                    style: TextStyle(color: Colors.white38, fontSize: 14),
+                    textAlign: TextAlign.center,
+                  ))
+                : ListView.builder(
+                    itemCount: events.length,
+                    itemBuilder: (_, i) {
+                      final e = events[i];
+                      final isFirst = i == 0;
+                      final date = e['date'] as String? ?? '';
+                      final desc = e['description'] as String? ?? '';
+                      final loc = e['location'] as String?;
+                      return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                        Column(children: [
+                          Container(
+                            width: 12, height: 12,
+                            decoration: BoxDecoration(
+                              color: isFirst ? AppTheme.accent : AppTheme.darkCard,
+                              shape: BoxShape.circle,
+                              border: Border.all(color: isFirst ? AppTheme.accent : AppTheme.darkBorder, width: 2),
+                            ),
+                          ),
+                          if (i < events.length - 1)
+                            Container(width: 2, height: 52, color: AppTheme.darkBorder),
+                        ]),
+                        const SizedBox(width: 12),
+                        Expanded(child: Padding(
+                          padding: const EdgeInsets.only(bottom: 16),
+                          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                            Text(desc, style: TextStyle(
+                              color: isFirst ? Colors.white : Colors.white70,
+                              fontSize: 13,
+                              fontWeight: isFirst ? FontWeight.w600 : FontWeight.w400,
+                            )),
+                            if (loc != null && loc.isNotEmpty) ...[
+                              const SizedBox(height: 2),
+                              Row(children: [
+                                const Icon(Icons.location_on_outlined, size: 12, color: Colors.white38),
+                                const SizedBox(width: 4),
+                                Flexible(child: Text(loc, style: const TextStyle(color: Colors.white38, fontSize: 11))),
+                              ]),
+                            ],
+                            const SizedBox(height: 2),
+                            Text(date, style: const TextStyle(color: Colors.white24, fontSize: 11)),
+                          ]),
+                        )),
+                      ]);
+                    },
+                  ),
+            ),
           ]),
         ),
       ),

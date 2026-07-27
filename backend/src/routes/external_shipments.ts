@@ -4,7 +4,13 @@ import { requireRole } from '../middleware/tenant';
 
 export const externalShipmentRoutes = new Hono<AppEnv>();
 
-// ─── Tracking Result Type ──────────────────────────────────
+// ─── Types ─────────────────────────────────────────────────
+type TrackingEvent = {
+  date: string;
+  description: string;
+  location?: string;
+};
+
 type TrackingResult = {
   courier: string;
   /** Normalized to our enum: 'in_transit' | 'at_local_forwarder' | 'arrived_at_warehouse' */
@@ -12,10 +18,10 @@ type TrackingResult = {
   lastEvent: string;
   lastLocation: string;
   engine: string;
+  tracking_events: TrackingEvent[];
 };
 
 // ─── Status Normalizer ─────────────────────────────────────
-// Maps any external raw status string to our three DB-safe values.
 function normalizeStatus(raw: string): string {
   const s = raw.toLowerCase().replace(/[\s_\-]/g, '');
   if (
@@ -30,8 +36,6 @@ function normalizeStatus(raw: string): string {
 }
 
 // ─── Engine C: Prefix/Regex (always succeeds) ─────────────
-// Identifies carrier name from tracking number format and returns
-// a simulated in_transit status so the user is never blocked.
 function resolveByPrefix(trackingNumber: string): TrackingResult {
   const tn = trackingNumber.toUpperCase();
   let courier = 'Unknown Courier';
@@ -46,13 +50,9 @@ function resolveByPrefix(trackingNumber: string): TrackingResult {
   else if (tn.startsWith('TY') || tn.startsWith('TRY'))         courier = 'Trendyol Express';
   else if (tn.startsWith('CA') || tn.startsWith('CN'))          courier = 'Cainiao';
   else if (tn.startsWith('1Z'))                                  courier = 'UPS';
-  // USPS uses 22-digit numeric IMpb barcodes
   else if (/^[0-9]{22}$/.test(tn))                              courier = 'USPS';
-  // Royal Mail / EMS use format AA000000000AA
   else if (/^[A-Z]{2}[0-9]{9}[A-Z]{2}$/.test(tn))             courier = 'EMS / Royal Mail';
-  // DHL Express: 10-digit numeric
   else if (/^[0-9]{10}$/.test(tn))                              courier = 'DHL Express';
-  // FedEx: 12 or 15-digit numeric
   else if (/^[0-9]{12}$/.test(tn) || /^[0-9]{15}$/.test(tn))  courier = 'FedEx';
   else if (tn.startsWith('SH') || tn.startsWith('SG'))          courier = 'Shein Logistics';
 
@@ -72,12 +72,18 @@ function resolveByPrefix(trackingNumber: string): TrackingResult {
     lastEvent: stage.event,
     lastLocation: stage.location,
     engine: 'Engine C (Prefix)',
+    tracking_events: [{
+      date: new Date().toISOString(),
+      description: 'Tracking initiated (Details unavailable in fallback mode)',
+      location: stage.location,
+    }],
   };
 }
 
 // ─── Engine A: Cainiao Global Public API ──────────────────
-// Uses Cainiao's web-tracker JSON endpoint (no key required).
-// Covers the vast majority of Shein, AliExpress, and JD parcels.
+// Verified response shape (curl test 2025-07-27):
+//   body.module = Array<{ mailNo, mailNoSource, detailList: Array<{ status, section, latestTrace }> }>
+//   body.success = boolean
 async function fetchCainiao(trackingNumber: string): Promise<TrackingResult | null> {
   const url = `https://global.cainiao.com/global/detail.json?mailNos=${encodeURIComponent(trackingNumber)}`;
   const res = await fetch(url, {
@@ -95,8 +101,16 @@ async function fetchCainiao(trackingNumber: string): Promise<TrackingResult | nu
   const body = await res.json() as Record<string, any>;
   if (!body.success) return null;
 
-  const detailList = body.module?.detailList as unknown[];
-  if (!Array.isArray(detailList) || detailList.length === 0) return null;
+  // body.module is an Array (confirmed by live curl test), not an object
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const moduleArr: Record<string, any>[] = Array.isArray(body.module) ? body.module : [];
+  if (moduleArr.length === 0) return null;
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const detailList: Record<string, any>[] = Array.isArray(moduleArr[0].detailList)
+    ? moduleArr[0].detailList
+    : [];
+  if (detailList.length === 0) return null;
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const detail = detailList[0] as Record<string, any>;
@@ -104,8 +118,14 @@ async function fetchCainiao(trackingNumber: string): Promise<TrackingResult | nu
   const section: Record<string, any>[] = Array.isArray(detail.section) ? detail.section : [];
   if (section.length === 0) return null;
 
-  const latest = detail.latestTrace ?? section[0];
   const rawStatus: string = (detail.status as string | undefined) ?? 'in_transit';
+  const latest = detail.latestTrace ?? section[0];
+
+  const tracking_events: TrackingEvent[] = section.map((s) => ({
+    date: (s.time as string | undefined) ?? new Date().toISOString(),
+    description: (s.desc as string | undefined) ?? (s.standerdDesc as string | undefined) ?? 'In transit',
+    location: (s.location as string | undefined) ?? undefined,
+  }));
 
   return {
     courier: (detail.routeName as string | undefined) ?? 'Cainiao',
@@ -113,12 +133,13 @@ async function fetchCainiao(trackingNumber: string): Promise<TrackingResult | nu
     lastEvent: (latest?.desc as string | undefined) ?? (latest?.standerdDesc as string | undefined) ?? 'In transit',
     lastLocation: (latest?.location as string | undefined) ?? 'Unknown',
     engine: 'Engine A (Cainiao)',
+    tracking_events,
   };
 }
 
-// ─── Engine B: ParcelsApp Public Frontend API ─────────────
-// Spoofs a mobile browser request to bypass basic bot protection.
-// Covers USPS, UPS, FedEx, Royal Mail, and many others globally.
+// ─── Engine B: ParcelsApp Frontend API ────────────────────
+// Spoofs mobile UA. Requires no key for the /api/v3 endpoint in some regions.
+// Falls through gracefully if a key is required or rate-limited.
 async function fetchParcelsApp(trackingNumber: string): Promise<TrackingResult | null> {
   const BASE = 'https://parcelsapp.com';
   const url = `${BASE}/api/v3/shipments/tracking?trackingId=${encodeURIComponent(trackingNumber)}&language=en`;
@@ -137,8 +158,9 @@ async function fetchParcelsApp(trackingNumber: string): Promise<TrackingResult |
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const body = await res.json() as Record<string, any>;
+  // Explicit API-key error — treat as "not found" and fall through
+  if (body.error) return null;
 
-  // ParcelsApp returns { shipment: {...}, states: [...] }
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const shipment = body.shipment as Record<string, any> | undefined;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -151,33 +173,34 @@ async function fetchParcelsApp(trackingNumber: string): Promise<TrackingResult |
     ?? (shipment?.status as string | undefined)
     ?? 'in_transit';
 
+  const tracking_events: TrackingEvent[] = states.map((s) => ({
+    date: (s.time as string | undefined) ?? (s.date as string | undefined) ?? new Date().toISOString(),
+    description: (s.description as string | undefined) ?? (s.title as string | undefined) ?? 'In transit',
+    location: (s.location as string | undefined) ?? (s.address as string | undefined) ?? undefined,
+  }));
+
   return {
-    courier: (shipment?.carrier as string | undefined)
-      ?? (shipment?.courierName as string | undefined)
-      ?? 'Unknown',
+    courier: (shipment?.carrier as string | undefined) ?? (shipment?.courierName as string | undefined) ?? 'Unknown',
     status: normalizeStatus(rawStatus),
-    lastEvent: (latest.description as string | undefined)
-      ?? (latest.title as string | undefined)
-      ?? 'In transit',
-    lastLocation: (latest.location as string | undefined)
-      ?? (latest.address as string | undefined)
-      ?? 'Unknown',
+    lastEvent: (latest.description as string | undefined) ?? (latest.title as string | undefined) ?? 'In transit',
+    lastLocation: (latest.location as string | undefined) ?? (latest.address as string | undefined) ?? 'Unknown',
     engine: 'Engine B (ParcelsApp)',
+    tracking_events,
   };
 }
 
 // ─── Universal Tracking Orchestrator ──────────────────────
-// Tries Engine A → B → C in order. C is guaranteed to return.
+// A → B → C. Engine C is guaranteed to return a valid result.
 async function syncUniversalTracking(trackingNumber: string): Promise<TrackingResult> {
   try {
     const result = await fetchCainiao(trackingNumber);
     if (result) return result;
-  } catch (_) { /* fall through to Engine B */ }
+  } catch (_) { /* fall through */ }
 
   try {
     const result = await fetchParcelsApp(trackingNumber);
     if (result) return result;
-  } catch (_) { /* fall through to Engine C */ }
+  } catch (_) { /* fall through */ }
 
   return resolveByPrefix(trackingNumber);
 }
@@ -276,10 +299,11 @@ externalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager',
 
   const setClauses: string[] = [`updated_at = datetime('now')`];
   const values: unknown[] = [];
-  if (body.manual_status !== undefined) { setClauses.push('manual_status = ?'); values.push(body.manual_status); }
-  if (body.courier_code  !== undefined) { setClauses.push('courier_code = ?');  values.push(body.courier_code); }
-  if (body.notes         !== undefined) { setClauses.push('notes = ?');         values.push(body.notes); }
-  if (body.api_status    !== undefined) { setClauses.push('api_status = ?');    values.push(body.api_status); }
+  if (body.tracking_number !== undefined) { setClauses.push('tracking_number = ?'); values.push(body.tracking_number); }
+  if (body.manual_status   !== undefined) { setClauses.push('manual_status = ?');   values.push(body.manual_status); }
+  if (body.courier_code    !== undefined) { setClauses.push('courier_code = ?');     values.push(body.courier_code); }
+  if (body.notes           !== undefined) { setClauses.push('notes = ?');            values.push(body.notes); }
+  if (body.api_status      !== undefined) { setClauses.push('api_status = ?');       values.push(body.api_status); }
 
   if (setClauses.length === 1) return c.json({ error: 'No fields to update' }, 400);
 
@@ -324,7 +348,7 @@ externalShipmentRoutes.post('/:id/sync', async (c) => {
      WHERE id = ? AND tenant_id = ?`
   ).bind(tracking.status, tracking.courier, id, tenantId).run();
 
-  return c.json({ message: 'Tracking synced', tracking });
+  return c.json({ message: 'Tracking synced', tracking, tracking_events: tracking.tracking_events });
 });
 
 // POST /external-shipments/:id/attach — link order items, advance status to 'shipped'
