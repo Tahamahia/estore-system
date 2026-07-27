@@ -345,6 +345,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     final status = (order['status'] ?? 'pending') as String;
     final customerName = order['customer_name'] as String? ?? 'غير معروف';
     final phone = order['customer_phone'] as String? ?? order['phone'] as String?;
+    final phone2 = order['customer_phone2'] as String?;
+    final city = order['customer_city'] as String?;
+    final area = order['customer_area'] as String?;
+    final street = order['customer_street'] as String?;
+    final locationUrl = order['customer_location_url'] as String?;
     final platform = order['platform'] as String? ?? 'Manual';
     final createdAt = order['created_at'] as String? ?? '';
     final items = order['items'] as List<dynamic>? ?? [];
@@ -413,6 +418,55 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                               const SizedBox(width: 6),
                               Text(phone, style: const TextStyle(color: AppTheme.secondary, fontSize: 14, fontWeight: FontWeight.w500, decoration: TextDecoration.underline)),
                             ]),
+                          ),
+                        if (phone2 != null && phone2.isNotEmpty) ...[
+                          const SizedBox(height: 3),
+                          GestureDetector(
+                            onTap: () => _callPhone(phone2),
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              const Icon(Icons.phone_outlined, color: AppTheme.secondary, size: 15),
+                              const SizedBox(width: 6),
+                              Text(phone2, style: const TextStyle(color: AppTheme.secondary, fontSize: 13, decoration: TextDecoration.underline)),
+                            ]),
+                          ),
+                        ],
+                        Builder(builder: (_) {
+                          final parts = [city, area, street].where((p) => p != null && p.isNotEmpty).toList();
+                          if (parts.isEmpty) return const SizedBox.shrink();
+                          return Padding(
+                            padding: const EdgeInsets.only(top: 5),
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              const Icon(Icons.location_on_outlined, color: Colors.white38, size: 15),
+                              const SizedBox(width: 5),
+                              Flexible(child: Text(parts.join(' - '), style: const TextStyle(color: Colors.white54, fontSize: 12))),
+                              if (locationUrl != null && locationUrl.isNotEmpty)
+                                Padding(
+                                  padding: const EdgeInsets.only(left: 6),
+                                  child: InkWell(
+                                    onTap: () async {
+                                      final uri = Uri.tryParse(locationUrl);
+                                      if (uri != null && await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+                                    },
+                                    child: const Icon(Icons.open_in_new, color: AppTheme.primary, size: 15),
+                                  ),
+                                ),
+                            ]),
+                          );
+                        }),
+                        if ((city == null || city.isEmpty) && (area == null || area.isEmpty) && (street == null || street.isEmpty) && locationUrl != null && locationUrl.isNotEmpty)
+                          Padding(
+                            padding: const EdgeInsets.only(top: 5),
+                            child: InkWell(
+                              onTap: () async {
+                                final uri = Uri.tryParse(locationUrl);
+                                if (uri != null && await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+                              },
+                              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                                Icon(Icons.location_on, color: AppTheme.primary, size: 15),
+                                SizedBox(width: 4),
+                                Text('عرض اللوكيشن', style: TextStyle(color: AppTheme.primary, fontSize: 12, decoration: TextDecoration.underline)),
+                              ]),
+                            ),
                           ),
                       ])),
                       Container(

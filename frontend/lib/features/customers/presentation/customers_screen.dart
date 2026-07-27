@@ -342,21 +342,36 @@ class _AddCustomerDialog extends ConsumerStatefulWidget {
 }
 
 class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
-  final _nameCtrl = TextEditingController();
-  final _phoneCtrl = TextEditingController();
-  final _cityCtrl = TextEditingController();
+  final _nameCtrl        = TextEditingController();
+  final _phoneCtrl       = TextEditingController();
+  final _phone2Ctrl      = TextEditingController();
+  final _cityCtrl        = TextEditingController();
+  final _areaCtrl        = TextEditingController();
+  final _streetCtrl      = TextEditingController();
+  final _locationUrlCtrl = TextEditingController();
   bool _loading = false;
   String? _error;
 
   @override
-  void dispose() { _nameCtrl.dispose(); _phoneCtrl.dispose(); _cityCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _nameCtrl.dispose(); _phoneCtrl.dispose(); _phone2Ctrl.dispose();
+    _cityCtrl.dispose(); _areaCtrl.dispose(); _streetCtrl.dispose();
+    _locationUrlCtrl.dispose(); super.dispose();
+  }
 
   Future<void> _create() async {
-    if (_nameCtrl.text.isEmpty) { setState(() => _error = 'Name is required'); return; }
+    if (_nameCtrl.text.isEmpty) { setState(() => _error = 'الاسم مطلوب'); return; }
     setState(() { _loading = true; _error = null; });
     try {
       await ref.read(customersProvider.notifier).createCustomer({
-        'id': const Uuid().v4(), 'full_name': _nameCtrl.text, 'phone': _phoneCtrl.text, 'city': _cityCtrl.text,
+        'id': const Uuid().v4(),
+        'full_name': _nameCtrl.text.trim(),
+        'phone': _phoneCtrl.text.trim(),
+        if (_phone2Ctrl.text.trim().isNotEmpty) 'phone2': _phone2Ctrl.text.trim(),
+        if (_cityCtrl.text.trim().isNotEmpty) 'city': _cityCtrl.text.trim(),
+        if (_areaCtrl.text.trim().isNotEmpty) 'area': _areaCtrl.text.trim(),
+        if (_streetCtrl.text.trim().isNotEmpty) 'street': _streetCtrl.text.trim(),
+        if (_locationUrlCtrl.text.trim().isNotEmpty) 'location_url': _locationUrlCtrl.text.trim(),
       });
       widget.onCreated();
       if (mounted) Navigator.of(context).pop();
@@ -370,11 +385,11 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Padding(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            const Text('Add Customer', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
+            const Text('إضافة عميل', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
             const SizedBox(height: 24),
             if (_error != null) Container(
               padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 16),
@@ -382,17 +397,36 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
               child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
             ),
             TextField(controller: _nameCtrl, style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'Full Name', prefixIcon: Icon(Icons.person))),
+              decoration: const InputDecoration(labelText: 'الاسم الكامل *', prefixIcon: Icon(Icons.person))),
             const SizedBox(height: 12),
-            TextField(controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'Phone', prefixIcon: Icon(Icons.phone))),
+            Row(children: [
+              Expanded(child: TextField(controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'رقم الهاتف', prefixIcon: Icon(Icons.phone), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+              const SizedBox(width: 10),
+              Expanded(child: TextField(controller: _phone2Ctrl, style: const TextStyle(color: Colors.white),
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'رقم ثاني', prefixIcon: Icon(Icons.phone_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+            ]),
             const SizedBox(height: 12),
-            TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'City', prefixIcon: Icon(Icons.location_city))),
+            Row(children: [
+              Expanded(child: TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'المدينة', prefixIcon: Icon(Icons.location_city), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+              const SizedBox(width: 10),
+              Expanded(child: TextField(controller: _areaCtrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'المنطقة', prefixIcon: Icon(Icons.map_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+            ]),
+            const SizedBox(height: 12),
+            TextField(controller: _streetCtrl, style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'الشارع أو العنوان', prefixIcon: Icon(Icons.home_outlined))),
+            const SizedBox(height: 12),
+            TextField(controller: _locationUrlCtrl, style: const TextStyle(color: Colors.white),
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(labelText: 'رابط اللوكيشن', hintText: 'https://maps.google.com/...', hintStyle: TextStyle(color: Colors.white24), prefixIcon: Icon(Icons.location_on_outlined))),
             const SizedBox(height: 24),
             SizedBox(height: 48, child: ElevatedButton(
               onPressed: _loading ? null : _create,
-              child: _loading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('Add Customer'),
+              child: _loading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Text('إضافة العميل'),
             )),
           ]),
         ),
@@ -413,32 +447,47 @@ class _EditCustomerDialog extends ConsumerStatefulWidget {
 class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _phoneCtrl;
+  late final TextEditingController _phone2Ctrl;
   late final TextEditingController _cityCtrl;
+  late final TextEditingController _areaCtrl;
+  late final TextEditingController _streetCtrl;
+  late final TextEditingController _locationUrlCtrl;
   bool _loading = false;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _nameCtrl = TextEditingController(text: widget.customer['full_name'] as String? ?? '');
-    _phoneCtrl = TextEditingController(text: widget.customer['phone'] as String? ?? '');
-    _cityCtrl = TextEditingController(text: widget.customer['city'] as String? ?? '');
+    _nameCtrl        = TextEditingController(text: widget.customer['full_name'] as String? ?? '');
+    _phoneCtrl       = TextEditingController(text: widget.customer['phone'] as String? ?? '');
+    _phone2Ctrl      = TextEditingController(text: widget.customer['phone2'] as String? ?? '');
+    _cityCtrl        = TextEditingController(text: widget.customer['city'] as String? ?? '');
+    _areaCtrl        = TextEditingController(text: widget.customer['area'] as String? ?? '');
+    _streetCtrl      = TextEditingController(text: widget.customer['street'] as String? ?? '');
+    _locationUrlCtrl = TextEditingController(text: widget.customer['location_url'] as String? ?? '');
   }
 
   @override
-  void dispose() { _nameCtrl.dispose(); _phoneCtrl.dispose(); _cityCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _nameCtrl.dispose(); _phoneCtrl.dispose(); _phone2Ctrl.dispose();
+    _cityCtrl.dispose(); _areaCtrl.dispose(); _streetCtrl.dispose();
+    _locationUrlCtrl.dispose(); super.dispose();
+  }
 
   Future<void> _save() async {
-    if (_nameCtrl.text.isEmpty) { setState(() => _error = 'Name is required'); return; }
+    if (_nameCtrl.text.isEmpty) { setState(() => _error = 'الاسم مطلوب'); return; }
     setState(() { _loading = true; _error = null; });
     try {
       final id = widget.customer['id'] as String;
       final updates = <String, dynamic>{
         'full_name': _nameCtrl.text.trim(),
         'phone': _phoneCtrl.text.trim(),
+        'phone2': _phone2Ctrl.text.trim(),
         'city': _cityCtrl.text.trim(),
+        'area': _areaCtrl.text.trim(),
+        'street': _streetCtrl.text.trim(),
+        'location_url': _locationUrlCtrl.text.trim(),
       };
-      // Include version for optimistic concurrency if available
       if (widget.customer['version'] != null) {
         updates['version'] = widget.customer['version'];
       }
@@ -446,7 +495,7 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
       widget.onUpdated();
       if (mounted) {
         Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('✅ Customer updated'), backgroundColor: AppTheme.success));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تحديث بيانات العميل'), backgroundColor: AppTheme.success));
       }
     } catch (e) { setState(() => _error = e.toString()); }
     finally { if (mounted) setState(() => _loading = false); }
@@ -458,8 +507,8 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Padding(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(children: [
@@ -469,7 +518,7 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
                 child: const Icon(Icons.edit, color: AppTheme.primary, size: 22),
               ),
               const SizedBox(width: 12),
-              const Text('Edit Customer', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
+              const Text('تعديل بيانات العميل', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
             ]),
             const SizedBox(height: 24),
             if (_error != null) Container(
@@ -478,18 +527,37 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
               child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
             ),
             TextField(controller: _nameCtrl, style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'Full Name *', prefixIcon: Icon(Icons.person))),
+              decoration: const InputDecoration(labelText: 'الاسم الكامل *', prefixIcon: Icon(Icons.person))),
             const SizedBox(height: 12),
-            TextField(controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'Phone', prefixIcon: Icon(Icons.phone))),
+            Row(children: [
+              Expanded(child: TextField(controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'رقم الهاتف', prefixIcon: Icon(Icons.phone), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+              const SizedBox(width: 10),
+              Expanded(child: TextField(controller: _phone2Ctrl, style: const TextStyle(color: Colors.white),
+                keyboardType: TextInputType.phone,
+                decoration: const InputDecoration(labelText: 'رقم ثاني', prefixIcon: Icon(Icons.phone_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+            ]),
             const SizedBox(height: 12),
-            TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'City', prefixIcon: Icon(Icons.location_city))),
+            Row(children: [
+              Expanded(child: TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'المدينة', prefixIcon: Icon(Icons.location_city), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+              const SizedBox(width: 10),
+              Expanded(child: TextField(controller: _areaCtrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'المنطقة', prefixIcon: Icon(Icons.map_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+            ]),
+            const SizedBox(height: 12),
+            TextField(controller: _streetCtrl, style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'الشارع أو العنوان', prefixIcon: Icon(Icons.home_outlined))),
+            const SizedBox(height: 12),
+            TextField(controller: _locationUrlCtrl, style: const TextStyle(color: Colors.white),
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(labelText: 'رابط اللوكيشن', hintText: 'https://maps.google.com/...', hintStyle: TextStyle(color: Colors.white24), prefixIcon: Icon(Icons.location_on_outlined))),
             const SizedBox(height: 24),
             SizedBox(height: 52, child: ElevatedButton.icon(
               onPressed: _loading ? null : _save,
               icon: _loading ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)) : const Icon(Icons.save, size: 20),
-              label: Text(_loading ? 'Saving...' : 'Save Changes', style: const TextStyle(fontSize: 15)),
+              label: Text(_loading ? 'جاري الحفظ...' : 'حفظ التعديلات', style: const TextStyle(fontSize: 15)),
               style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
             )),
           ]),

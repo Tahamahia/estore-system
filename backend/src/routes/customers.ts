@@ -92,9 +92,15 @@ customerRoutes.post('/', async (c) => {
 
   // New customer — insert
   await c.env.DB.prepare(
-    `INSERT INTO customers (id, tenant_id, full_name, phone, address, city, notes, created_at, updated_at, version)
-     VALUES (?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 1)`
-  ).bind(body.id, tenantId, body.full_name, normalizedPhone, body.address || null, body.city || null, body.notes || null).run();
+    `INSERT INTO customers (id, tenant_id, full_name, phone, phone2, address, city, area, street, location_url, notes, created_at, updated_at, version)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 1)`
+  ).bind(
+    body.id, tenantId, body.full_name, normalizedPhone,
+    normalizePhone(body.phone2),
+    body.address || null, body.city || null,
+    body.area || null, body.street || null, body.location_url || null,
+    body.notes || null
+  ).run();
 
   return c.json({ message: 'Customer created', id: body.id, is_existing: false }, 201);
 });
@@ -115,7 +121,7 @@ customerRoutes.patch('/:id', async (c) => {
   // Build dynamic SET clause from allowed fields
   const setClauses: string[] = [];
   const values: any[] = [];
-  const allowedFields = ['full_name', 'phone', 'phone2', 'address', 'city', 'notes'];
+  const allowedFields = ['full_name', 'phone', 'phone2', 'address', 'city', 'area', 'street', 'location_url', 'notes'];
 
   for (const field of allowedFields) {
     if (updates[field] !== undefined) {

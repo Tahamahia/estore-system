@@ -525,7 +525,10 @@ orderRoutes.get('/:id', async (c) => {
   const orderId = c.req.param('id');
 
   const order = await c.env.DB.prepare(
-    `SELECT o.*, c.full_name as customer_name, c.phone as customer_phone
+    `SELECT o.*, c.full_name as customer_name, c.phone as customer_phone,
+            c.phone2 as customer_phone2, c.city as customer_city,
+            c.area as customer_area, c.street as customer_street,
+            c.location_url as customer_location_url
      FROM orders o
      LEFT JOIN customers c ON o.customer_id = c.id
      WHERE o.id = ? AND o.tenant_id = ? AND o.is_deleted = 0`

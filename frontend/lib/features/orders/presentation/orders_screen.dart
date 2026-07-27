@@ -431,9 +431,14 @@ class _ItemEntry {
 }
 
 class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
-  final _phoneCtrl = TextEditingController();
-  final _nameCtrl = TextEditingController();
-  final _platformCtrl = TextEditingController(text: 'manual');
+  final _phoneCtrl       = TextEditingController();
+  final _nameCtrl        = TextEditingController();
+  final _phone2Ctrl      = TextEditingController();
+  final _cityCtrl        = TextEditingController();
+  final _areaCtrl        = TextEditingController();
+  final _streetCtrl      = TextEditingController();
+  final _locationUrlCtrl = TextEditingController();
+  final _platformCtrl    = TextEditingController(text: 'manual');
   final List<_ItemEntry> _items = [_ItemEntry()];
   bool _isLoading = false;
   String? _error;
@@ -456,9 +461,9 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
   @override
   void dispose() {
     _debounce?.cancel();
-    _phoneCtrl.dispose();
-    _nameCtrl.dispose();
-    _platformCtrl.dispose();
+    _phoneCtrl.dispose(); _nameCtrl.dispose(); _phone2Ctrl.dispose();
+    _cityCtrl.dispose(); _areaCtrl.dispose(); _streetCtrl.dispose();
+    _locationUrlCtrl.dispose(); _platformCtrl.dispose();
     for (final item in _items) { item.dispose(); }
     super.dispose();
   }
@@ -543,6 +548,11 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
           'id': const Uuid().v4(),
           'full_name': _nameCtrl.text.trim(),
           'phone': _phoneCtrl.text.trim(),
+          if (_phone2Ctrl.text.trim().isNotEmpty) 'phone2': _phone2Ctrl.text.trim(),
+          if (_cityCtrl.text.trim().isNotEmpty) 'city': _cityCtrl.text.trim(),
+          if (_areaCtrl.text.trim().isNotEmpty) 'area': _areaCtrl.text.trim(),
+          if (_streetCtrl.text.trim().isNotEmpty) 'street': _streetCtrl.text.trim(),
+          if (_locationUrlCtrl.text.trim().isNotEmpty) 'location_url': _locationUrlCtrl.text.trim(),
         });
         customerId = custResult['id'] as String;
       }
@@ -650,6 +660,30 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
                 filled: _isExisting, fillColor: _isExisting ? AppTheme.darkCard.withValues(alpha: 0.5) : null,
               ),
             ),
+            // Extra address fields shown only for new customers
+            if (!_isExisting && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp) ...[
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(child: TextField(controller: _phone2Ctrl, style: const TextStyle(color: Colors.white, fontSize: 13),
+                  keyboardType: TextInputType.phone,
+                  decoration: const InputDecoration(labelText: 'رقم ثاني', prefixIcon: Icon(Icons.phone_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
+                const SizedBox(width: 8),
+                Expanded(child: TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: const InputDecoration(labelText: 'المدينة', prefixIcon: Icon(Icons.location_city, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
+              ]),
+              const SizedBox(height: 8),
+              Row(children: [
+                Expanded(child: TextField(controller: _areaCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: const InputDecoration(labelText: 'المنطقة', prefixIcon: Icon(Icons.map_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
+                const SizedBox(width: 8),
+                Expanded(child: TextField(controller: _streetCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
+                  decoration: const InputDecoration(labelText: 'الشارع', prefixIcon: Icon(Icons.home_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
+              ]),
+              const SizedBox(height: 8),
+              TextField(controller: _locationUrlCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(labelText: 'رابط اللوكيشن', prefixIcon: Icon(Icons.location_on_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
+            ],
             const SizedBox(height: 16),
 
             // Items section header
