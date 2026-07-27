@@ -82,5 +82,5 @@ jobs:
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          command: pages deploy ./build/web --project-name=estore-web --commit-dirty=true
+          command: pages deploy ./build/web --project-name=estore-web --branch=main --commit-dirty=true
           workingDirectory: frontend

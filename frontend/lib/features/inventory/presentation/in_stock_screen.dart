@@ -266,7 +266,7 @@ class _ReassignItemDialogState extends ConsumerState<_ReassignItemDialog> {
               const Text('اختر طلبية', style: TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w600)),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _selectedOrderId,
+                initialValue: _selectedOrderId,
                 dropdownColor: AppTheme.darkCard,
                 decoration: InputDecoration(
                   filled: true, fillColor: AppTheme.darkCard,
