@@ -268,6 +268,46 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     );
   }
 
+  Future<void> _orphanItems() async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('إلغاء وتحويل للفوري', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: const Text(
+          'سيتم إلغاء هذه الطلبية وتحويل منتجاتها إلى مخزون البضاعة الفورية.\nتكاليف الشراء تُسجَّل كخسارة في التسوية.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.warning),
+            child: const Text('تحويل للفوري'),
+          ),
+        ],
+      ),
+    );
+    if (!mounted) return;
+    if (confirm != true) return;
+    try {
+      await ref.read(ordersProvider.notifier).orphanOrderItems(widget.orderId);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('تم إلغاء الطلبية وتحويل المنتجات للفوري'),
+        backgroundColor: AppTheme.success,
+      ));
+      await _loadOrder();
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('خطأ: $e'), backgroundColor: AppTheme.error));
+    }
+  }
+
   void _showUpdateStatusDialog() {
     String selectedStatus = (_order?['status'] as String?) ?? 'pending_payment';
     showDialog(context: context, builder: (ctx) => Dialog(
@@ -549,41 +589,52 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
             color: AppTheme.darkSurface,
             border: Border(top: BorderSide(color: AppTheme.darkBorder)),
           ),
-          child: Row(children: [
-            Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-              onPressed: _showUpdateStatusDialog,
-              icon: const Icon(Icons.update, size: 22),
-              label: const Text('تحديث الحالة', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-            ))),
-            const SizedBox(width: 12),
-            Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-              onPressed: () => _openWhatsApp(phone, customerName),
-              icon: const Icon(Icons.chat_rounded, size: 22),
-              label: const Text('واتساب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-              style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
-            ))),
-            if (hasReadyItems) ...[
+          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            if (!const ['pending_payment', 'delivered', 'cancelled', 'auto_cancelled', 'refunded'].contains(status)) ...[
+              SizedBox(height: 44, child: OutlinedButton.icon(
+                onPressed: _orphanItems,
+                icon: const Icon(Icons.inventory_2_outlined, size: 18),
+                label: const Text('إلغاء وتحويل لفوري', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                style: OutlinedButton.styleFrom(foregroundColor: AppTheme.warning, side: BorderSide(color: AppTheme.warning.withValues(alpha: 0.5))),
+              )),
+              const SizedBox(height: 8),
+            ],
+            Row(children: [
+              Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
+                onPressed: _showUpdateStatusDialog,
+                icon: const Icon(Icons.update, size: 22),
+                label: const Text('تحديث الحالة', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+              ))),
               const SizedBox(width: 12),
               Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                onPressed: () async {
-                  final messenger = ScaffoldMessenger.of(context);
-                  try {
-                    await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
-                      'status': 'dispatched',
-                      'version': _order?['version'],
-                    });
-                    await _loadOrder();
-                    if (mounted) messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
-                  } catch (e) {
-                    if (mounted) messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
-                  }
-                },
-                icon: const Icon(Icons.local_shipping, size: 22),
-                label: const Text('إرسال للتوصيل', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+                onPressed: () => _openWhatsApp(phone, customerName),
+                icon: const Icon(Icons.chat_rounded, size: 22),
+                label: const Text('واتساب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(backgroundColor: const Color(0xFF25D366)),
               ))),
-            ],
+              if (hasReadyItems) ...[
+                const SizedBox(width: 12),
+                Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
+                  onPressed: () async {
+                    final messenger = ScaffoldMessenger.of(context);
+                    try {
+                      await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
+                        'status': 'dispatched',
+                        'version': _order?['version'],
+                      });
+                      await _loadOrder();
+                      if (mounted) messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
+                    } catch (e) {
+                      if (mounted) messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
+                    }
+                  },
+                  icon: const Icon(Icons.local_shipping, size: 22),
+                  label: const Text('إرسال للتوصيل', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+                ))),
+              ],
+            ]),
           ]),
         ),
       ],

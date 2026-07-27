@@ -13,6 +13,7 @@ import '../features/customers/presentation/customers_screen.dart';
 import '../features/browser/in_app_browser_screen.dart';
 import '../features/settlements/presentation/settlements_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
+import '../features/inventory/presentation/in_stock_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   // Watch auth state for redirects
@@ -91,6 +92,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/settings',
             name: 'settings',
             builder: (context, state) => const SettingsScreen(),
+          ),
+          GoRoute(
+            path: '/in-stock',
+            name: 'inStock',
+            builder: (context, state) => const InStockScreen(),
           ),
         ],
       ),

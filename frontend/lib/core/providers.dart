@@ -76,6 +76,10 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
     await _dio.patch('/orders/$orderId/items/$itemId', data: data);
   }
 
+  Future<void> orphanOrderItems(String orderId) async {
+    await _dio.post('/orders/$orderId/orphan-items');
+  }
+
   /// Bulk update item status/shipment for night purchasing workflow.
   /// Pass [itemIds] when you have resolved item primary keys, or [orderIds]
   /// when you only have order IDs (the backend resolves items server-side).
@@ -414,5 +418,44 @@ class SettlementsNotifier extends StateNotifier<AsyncValue<List<Map<String, dyna
       'order_ids': orderIds,
     });
     await fetchSettlements();
+  }
+}
+
+// ─── In-Stock Inventory Provider ──────────────────────────
+final inStockProvider = StateNotifierProvider<InStockNotifier, AsyncValue<List<Map<String, dynamic>>>>((ref) {
+  return InStockNotifier(ref);
+});
+
+class InStockNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>>> {
+  final Ref _ref;
+  InStockNotifier(this._ref) : super(const AsyncValue.loading());
+
+  Dio get _dio => _ref.read(dioProvider);
+
+  Future<void> fetchInStockItems() async {
+    state = const AsyncValue.loading();
+    try {
+      final response = await _dio.get('/inventory/in-stock');
+      final data = response.data as Map<String, dynamic>;
+      state = AsyncValue.data(List<Map<String, dynamic>>.from(data['data'] ?? []));
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  Future<void> reassignItem(String itemId, String orderId, double newSellingPrice) async {
+    await _dio.patch('/inventory/in-stock/$itemId/reassign', data: {
+      'order_id': orderId,
+      'new_selling_price': newSellingPrice,
+    });
+    await fetchInStockItems();
+  }
+
+  Future<List<Map<String, dynamic>>> fetchActiveOrders() async {
+    final response = await _dio.get('/orders', queryParameters: {'limit': 100, 'page': 1});
+    final data = response.data as Map<String, dynamic>;
+    final orders = List<Map<String, dynamic>>.from(data['data'] ?? []);
+    const terminal = ['cancelled', 'auto_cancelled', 'refunded', 'delivered'];
+    return orders.where((o) => !terminal.contains(o['status'] as String? ?? '')).toList();
   }
 }

@@ -627,3 +627,42 @@ orderRoutes.delete('/:id', requireRole('super_admin', 'store_manager'), async (c
 
   return c.json({ message: 'Order soft-deleted', id: orderId });
 });
+
+/**
+ * POST /orders/:id/orphan-items — Cancel order and move all purchased items to in-stock inventory.
+ * Costs (purchase_price, shipping_cost_foreign) are preserved as sunk costs for settlement.
+ */
+orderRoutes.post('/:id/orphan-items', requireRole('super_admin', 'store_manager'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const orderId = c.req.param('id');
+
+  const order = await c.env.DB.prepare(
+    `SELECT id, status FROM orders WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(orderId, tenantId).first();
+  if (!order) return c.json({ error: 'Order not found' }, 404);
+
+  const terminalStatuses = ['cancelled', 'auto_cancelled', 'refunded', 'delivered'];
+  if (terminalStatuses.includes((order as Record<string, unknown>).status as string)) {
+    return c.json({ error: `Cannot orphan items from a ${(order as Record<string, unknown>).status as string} order` }, 400);
+  }
+
+  await c.env.DB.batch([
+    // Cancel the parent order
+    c.env.DB.prepare(
+      `UPDATE orders SET status = 'cancelled', updated_at = datetime('now'), version = version + 1
+       WHERE id = ? AND tenant_id = ?`
+    ).bind(orderId, tenantId),
+    // Detach items and move to in-stock; costs are intentionally preserved as sunk costs
+    c.env.DB.prepare(`
+      UPDATE order_items
+      SET order_id  = NULL,
+          status    = 'in_stock',
+          updated_at = datetime('now'),
+          version   = version + 1
+      WHERE order_id = ? AND tenant_id = ? AND is_deleted = 0
+        AND status NOT IN ('cancelled', 'refunded', 'delivered')
+    `).bind(orderId, tenantId),
+  ]);
+
+  return c.json({ message: 'Order cancelled and items moved to in-stock', order_id: orderId });
+});
