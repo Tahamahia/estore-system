@@ -458,11 +458,11 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
     }
   }
 
-  void _showAttachItems() {
+  void _showAttachOrders() {
     Navigator.of(context).pop();
     showDialog(
       context: context,
-      builder: (_) => _AttachItemsDialog(
+      builder: (_) => _AttachOrdersDialog(
         shipmentId: widget.shipmentId,
         onAttached: widget.onRefresh,
       ),
@@ -528,9 +528,9 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
                     const Text('المنتجات المرتبطة', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
                     const Spacer(),
                     TextButton.icon(
-                      onPressed: _showAttachItems,
+                      onPressed: _showAttachOrders,
                       icon: const Icon(Icons.attach_file, size: 16),
-                      label: const Text('ربط منتجات'),
+                      label: const Text('ربط طلبيات'),
                       style: TextButton.styleFrom(foregroundColor: AppTheme.secondary),
                     ),
                   ]),
@@ -545,9 +545,9 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
                           const Text('لا توجد منتجات مرتبطة', style: TextStyle(color: Colors.white38, fontSize: 13)),
                           const SizedBox(height: 12),
                           TextButton.icon(
-                            onPressed: _showAttachItems,
+                            onPressed: _showAttachOrders,
                             icon: const Icon(Icons.add, size: 18),
-                            label: const Text('ربط منتجات الآن'),
+                            label: const Text('ربط طلبيات الآن'),
                           ),
                         ]));
                       }
@@ -582,30 +582,30 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
   }
 }
 
-// ─── Attach Items Dialog ────────────────────────────────────
-class _AttachItemsDialog extends ConsumerStatefulWidget {
+// ─── Attach Orders Dialog ───────────────────────────────────
+class _AttachOrdersDialog extends ConsumerStatefulWidget {
   final String shipmentId;
   final VoidCallback onAttached;
-  const _AttachItemsDialog({required this.shipmentId, required this.onAttached});
+  const _AttachOrdersDialog({required this.shipmentId, required this.onAttached});
   @override
-  ConsumerState<_AttachItemsDialog> createState() => _AttachItemsDialogState();
+  ConsumerState<_AttachOrdersDialog> createState() => _AttachOrdersDialogState();
 }
 
-class _AttachItemsDialogState extends ConsumerState<_AttachItemsDialog> {
-  List<Map<String, dynamic>>? _items;
+class _AttachOrdersDialogState extends ConsumerState<_AttachOrdersDialog> {
+  List<Map<String, dynamic>>? _orders;
   final Set<String> _selected = {};
   bool _loading = true;
   bool _submitting = false;
   String? _error;
 
   @override
-  void initState() { super.initState(); _loadItems(); }
+  void initState() { super.initState(); _loadOrders(); }
 
-  Future<void> _loadItems() async {
+  Future<void> _loadOrders() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final items = await ref.read(externalShipmentsProvider.notifier).fetchAvailableItems();
-      if (mounted) setState(() { _items = items; _loading = false; });
+      final orders = await ref.read(externalShipmentsProvider.notifier).fetchAvailableOrders();
+      if (mounted) setState(() { _orders = orders; _loading = false; });
     } catch (e) {
       if (mounted) setState(() { _loading = false; _error = '$e'; });
     }
@@ -615,18 +615,20 @@ class _AttachItemsDialogState extends ConsumerState<_AttachItemsDialog> {
     if (_selected.isEmpty) return;
     setState(() => _submitting = true);
     try {
-      await ref.read(externalShipmentsProvider.notifier).attachItems(
+      await ref.read(externalShipmentsProvider.notifier).attachOrders(
         widget.shipmentId,
         _selected.toList(),
       );
       widget.onAttached();
-      if (mounted) {
-        Navigator.of(context).pop();
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('تم ربط ${_selected.length} منتج بالشحنة'),
-          backgroundColor: AppTheme.success,
-        ));
-      }
+      if (!mounted) return;
+      // Capture messenger before pop so the snackbar still shows
+      final messenger = ScaffoldMessenger.of(context);
+      final count = _selected.length;
+      Navigator.of(context).pop();
+      messenger.showSnackBar(SnackBar(
+        content: Text('تم ربط $count طلبية بالشحنة'),
+        backgroundColor: AppTheme.success,
+      ));
     } catch (e) {
       if (mounted) setState(() { _submitting = false; _error = '$e'; });
     }
@@ -638,18 +640,18 @@ class _AttachItemsDialogState extends ConsumerState<_AttachItemsDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 600),
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 620),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(children: [
-              const Icon(Icons.attach_file_rounded, color: AppTheme.secondary, size: 22),
+              const Icon(Icons.receipt_long_rounded, color: AppTheme.secondary, size: 22),
               const SizedBox(width: 10),
-              const Expanded(child: Text('ربط منتجات بالشحنة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white))),
+              const Expanded(child: Text('ربط طلبيات بالشحنة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white))),
               IconButton(icon: const Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.of(context).pop()),
             ]),
             const SizedBox(height: 8),
-            const Text('المنتجات المشتراة وغير المربوطة بشحنة', style: TextStyle(color: Colors.white38, fontSize: 12)),
+            const Text('الطلبيات التي تحتوي على منتجات مشتراة وغير مربوطة بشحنة', style: TextStyle(color: Colors.white38, fontSize: 12)),
             const SizedBox(height: 16),
             if (_error != null) Container(
               padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 12),
@@ -659,22 +661,33 @@ class _AttachItemsDialogState extends ConsumerState<_AttachItemsDialog> {
             Expanded(
               child: _loading
                 ? const Center(child: CircularProgressIndicator())
-                : (_items?.isEmpty ?? true)
-                  ? const Center(child: Text('لا توجد منتجات متاحة (تأكد من أن حالتها "purchased")', style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center))
+                : (_orders?.isEmpty ?? true)
+                  ? const Center(child: Text(
+                      'لا توجد طلبيات متاحة\n(تأكد من وجود منتجات بحالة "purchased")',
+                      style: TextStyle(color: Colors.white38, fontSize: 13),
+                      textAlign: TextAlign.center,
+                    ))
                   : ListView.builder(
-                      itemCount: _items!.length,
+                      itemCount: _orders!.length,
                       itemBuilder: (ctx, i) {
-                        final item = _items![i];
-                        final id = item['id'] as String;
-                        final isChecked = _selected.contains(id);
+                        final order = _orders![i];
+                        final orderId = order['id'] as String;
+                        final shortId = orderId.length > 8 ? orderId.substring(0, 8) : orderId;
+                        final customerName = order['customer_name'] as String? ?? '—';
+                        final phone = order['customer_phone'] as String? ?? '';
+                        final itemCount = (order['purchased_item_count'] as num?)?.toInt() ?? 0;
+                        final isChecked = _selected.contains(orderId);
                         return CheckboxListTile(
                           value: isChecked,
-                          onChanged: (v) => setState(() => v! ? _selected.add(id) : _selected.remove(id)),
+                          onChanged: (v) => setState(() => v! ? _selected.add(orderId) : _selected.remove(orderId)),
                           activeColor: AppTheme.primary,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
-                          title: Text(item['product_name'] as String? ?? '—', style: const TextStyle(color: Colors.white, fontSize: 13)),
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                          title: Text(
+                            'طلبية #$shortId — $customerName',
+                            style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500),
+                          ),
                           subtitle: Text(
-                            '${item['customer_name'] ?? ''} · ${item['sku'] ?? ''}'.trim().replaceAll(RegExp(r' · $|^ · '), ''),
+                            [if (phone.isNotEmpty) phone, '$itemCount منتج مشترى'].join(' · '),
                             style: const TextStyle(color: Colors.white38, fontSize: 12),
                           ),
                         );
@@ -687,7 +700,7 @@ class _AttachItemsDialogState extends ConsumerState<_AttachItemsDialog> {
                 onPressed: _submitting ? null : _attach,
                 child: _submitting
                   ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : Text('ربط ${_selected.length} منتج'),
+                  : Text('ربط ${_selected.length} طلبية'),
               )),
             ],
           ]),

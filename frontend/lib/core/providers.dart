@@ -226,14 +226,14 @@ class ExternalShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String
     return response.data as Map<String, dynamic>;
   }
 
-  Future<List<Map<String, dynamic>>> fetchAvailableItems() async {
-    final response = await _dio.get('/external-shipments/available-items');
+  Future<List<Map<String, dynamic>>> fetchAvailableOrders() async {
+    final response = await _dio.get('/external-shipments/available-orders');
     final data = response.data as Map<String, dynamic>;
     return List<Map<String, dynamic>>.from(data['data'] ?? []);
   }
 
-  Future<void> attachItems(String shipmentId, List<String> itemIds) async {
-    await _dio.post('/external-shipments/$shipmentId/attach', data: {'item_ids': itemIds});
+  Future<void> attachOrders(String shipmentId, List<String> orderIds) async {
+    await _dio.post('/external-shipments/$shipmentId/attach', data: {'order_ids': orderIds});
   }
 
   Future<void> deleteShipment(String id) async {

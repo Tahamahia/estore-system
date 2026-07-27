@@ -227,23 +227,26 @@ externalShipmentRoutes.get('/', async (c) => {
   return c.json({ data: results.results, page, limit });
 });
 
-// GET /external-shipments/available-items — items eligible for attachment
-// (status = 'purchased', not yet linked to any external shipment)
-externalShipmentRoutes.get('/available-items', async (c) => {
+// GET /external-shipments/available-orders — orders that have ≥1 purchased item
+// not yet linked to any external shipment
+externalShipmentRoutes.get('/available-orders', async (c) => {
   const tenantId = c.get('tenant_id') as string;
 
   const results = await c.env.DB.prepare(`
-    SELECT oi.id, oi.product_name, oi.sku, oi.item_uid, oi.status,
-           oi.quantity, oi.order_id,
-           c.full_name AS customer_name
-    FROM order_items oi
-    JOIN orders o ON oi.order_id = o.id
+    SELECT o.id, o.created_at,
+           c.full_name AS customer_name,
+           c.phone     AS customer_phone,
+           COUNT(oi.id) AS purchased_item_count
+    FROM orders o
+    JOIN order_items oi
+      ON oi.order_id = o.id
+     AND oi.tenant_id = ?
+     AND oi.status = 'purchased'
+     AND oi.external_shipment_id IS NULL
+     AND oi.is_deleted = 0
     LEFT JOIN customers c ON o.customer_id = c.id
-    WHERE oi.tenant_id = ?
-      AND oi.status = 'purchased'
-      AND oi.external_shipment_id IS NULL
-      AND oi.is_deleted = 0
-    ORDER BY oi.created_at DESC
+    GROUP BY o.id
+    ORDER BY o.created_at DESC
   `).bind(tenantId).all();
 
   return c.json({ data: results.results });
@@ -351,29 +354,35 @@ externalShipmentRoutes.post('/:id/sync', async (c) => {
   return c.json({ message: 'Tracking synced', tracking, tracking_events: tracking.tracking_events });
 });
 
-// POST /external-shipments/:id/attach — link order items, advance status to 'shipped'
+// POST /external-shipments/:id/attach — attach all purchased items from given orders
 externalShipmentRoutes.post('/:id/attach', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
-  const { item_ids } = await c.req.json<{ item_ids: string[] }>();
-  if (!item_ids?.length) return c.json({ error: 'item_ids required' }, 400);
+  const { order_ids } = await c.req.json<{ order_ids: string[] }>();
+  if (!order_ids?.length) return c.json({ error: 'order_ids required' }, 400);
 
   const shipment = await c.env.DB.prepare(
     `SELECT id FROM external_shipments WHERE id = ? AND tenant_id = ?`
   ).bind(id, tenantId).first();
   if (!shipment) return c.json({ error: 'Not Found' }, 404);
 
-  const stmts = item_ids.map((itemId) =>
-    c.env.DB.prepare(`
-      UPDATE order_items
-      SET external_shipment_id = ?, status = 'shipped',
-          updated_at = datetime('now'), version = version + 1
-      WHERE id = ? AND tenant_id = ? AND is_deleted = 0
-    `).bind(id, itemId, tenantId)
-  );
+  // Use json_each to match all purchased items belonging to the selected orders
+  const result = await c.env.DB.prepare(`
+    UPDATE order_items
+    SET external_shipment_id = ?, status = 'shipped',
+        updated_at = datetime('now'), version = version + 1
+    WHERE order_id IN (SELECT value FROM json_each(?))
+      AND tenant_id = ?
+      AND status = 'purchased'
+      AND external_shipment_id IS NULL
+      AND is_deleted = 0
+  `).bind(id, JSON.stringify(order_ids), tenantId).run();
 
-  await c.env.DB.batch(stmts);
-  return c.json({ message: `${item_ids.length} items attached to shipment`, shipment_id: id });
+  return c.json({
+    message: `Orders attached to shipment`,
+    shipment_id: id,
+    rows_updated: result.meta?.changes ?? 0,
+  });
 });
 
 // DELETE /external-shipments/:id — detach items (reset to purchased) then delete
