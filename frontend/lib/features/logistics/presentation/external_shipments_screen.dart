@@ -174,20 +174,24 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
         ],
       ),
     );
+    // Guard: dialog close is async; widget may have been disposed
+    if (!context.mounted) return;
     if (confirm != true) return;
     try {
       await notifier.deleteShipment(widget.shipment['id'] as String);
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('تم حذف الشحنة'),
-          backgroundColor: AppTheme.error,
-        ));
-      }
-      widget.onRefresh();
+      // deleteShipment internally calls fetchShipments() which rebuilds the list
+      // and may dispose this card — guard before any further context use
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('تم حذف الشحنة'),
+        backgroundColor: AppTheme.error,
+      ));
     } catch (e) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
-      }
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('خطأ في الحذف: $e'),
+        backgroundColor: AppTheme.error,
+      ));
     }
   }
 

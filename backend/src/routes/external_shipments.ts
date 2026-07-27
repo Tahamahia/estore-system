@@ -381,16 +381,25 @@ externalShipmentRoutes.delete('/:id', requireRole('super_admin', 'store_manager'
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
 
-  await c.env.DB.batch([
-    c.env.DB.prepare(`
-      UPDATE order_items
-      SET external_shipment_id = NULL, status = 'purchased', updated_at = datetime('now')
-      WHERE external_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
-    `).bind(id, tenantId),
-    c.env.DB.prepare(
-      `DELETE FROM external_shipments WHERE id = ? AND tenant_id = ?`
-    ).bind(id, tenantId),
-  ]);
+  const existing = await c.env.DB.prepare(
+    `SELECT id FROM external_shipments WHERE id = ? AND tenant_id = ?`
+  ).bind(id, tenantId).first();
+  if (!existing) return c.json({ error: 'Not Found' }, 404);
 
-  return c.json({ message: 'External shipment deleted', id });
+  try {
+    await c.env.DB.batch([
+      c.env.DB.prepare(`
+        UPDATE order_items
+        SET external_shipment_id = NULL, status = 'purchased', updated_at = datetime('now')
+        WHERE external_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
+      `).bind(id, tenantId),
+      c.env.DB.prepare(
+        `DELETE FROM external_shipments WHERE id = ? AND tenant_id = ?`
+      ).bind(id, tenantId),
+    ]);
+    return c.json({ message: 'External shipment deleted', id });
+  } catch (err) {
+    console.error('DELETE /external-shipments/:id failed:', err);
+    return c.json({ error: 'Failed to delete shipment', detail: String(err) }, 500);
+  }
 });
