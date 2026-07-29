@@ -80,6 +80,19 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
     await _dio.post('/orders/$orderId/orphan-items');
   }
 
+  /// Calls the backend Shein cart scraper and returns the parsed payload.
+  /// Returns `{ items: [...], partial: bool, strategy: string }`.
+  /// Throws [DioException] on network failure so callers can catch and show
+  /// an appropriate error message.
+  Future<Map<String, dynamic>> parseSheinCart(String url) async {
+    final response = await _dio.post(
+      '/tools/parse-shein-cart',
+      data: {'url': url},
+      options: Options(receiveTimeout: const Duration(seconds: 25)),
+    );
+    return response.data as Map<String, dynamic>;
+  }
+
   /// Bulk update item status/shipment for night purchasing workflow.
   /// Pass [itemIds] when you have resolved item primary keys, or [orderIds]
   /// when you only have order IDs (the backend resolves items server-side).

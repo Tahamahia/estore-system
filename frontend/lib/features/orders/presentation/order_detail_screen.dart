@@ -857,7 +857,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                 ),
                 const SizedBox(height: 10),
                 DropdownButtonFormField<String>(
-                  initialValue: _selectedCategory,
+                  value: _selectedCategory,
                   dropdownColor: AppTheme.darkCard,
                   style: const TextStyle(color: Colors.white),
                   decoration: const InputDecoration(
@@ -943,7 +943,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                 const SizedBox(height: 10),
                 // Source dropdown
                 DropdownButtonFormField<String?>(
-                  initialValue: _selectedSourceName,
+                  value: _selectedSourceName,
                   dropdownColor: AppTheme.darkSurface,
                   style: const TextStyle(color: Colors.white),
                   decoration: const InputDecoration(

@@ -407,6 +407,7 @@ class _NewOrderDialog extends ConsumerStatefulWidget {
 class _ItemEntry {
   final TextEditingController productCtrl;
   final TextEditingController urlCtrl;
+  final TextEditingController skuCtrl;
   final TextEditingController priceCtrl;
   final TextEditingController sizeCtrl;
   final TextEditingController colorCtrl;
@@ -415,6 +416,7 @@ class _ItemEntry {
   _ItemEntry()
     : productCtrl = TextEditingController(),
       urlCtrl = TextEditingController(),
+      skuCtrl = TextEditingController(),
       priceCtrl = TextEditingController(),
       sizeCtrl = TextEditingController(),
       colorCtrl = TextEditingController(),
@@ -423,6 +425,7 @@ class _ItemEntry {
   void dispose() {
     productCtrl.dispose();
     urlCtrl.dispose();
+    skuCtrl.dispose();
     priceCtrl.dispose();
     sizeCtrl.dispose();
     colorCtrl.dispose();
@@ -450,12 +453,17 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
   bool _lookupError = false;
   Timer? _debounce;
 
+  // Shein cart import
+  final _sheinUrlCtrl = TextEditingController();
+  bool _sheinFetching = false;
+
   @override
   void initState() {
     super.initState();
     _phoneCtrl.addListener(_onPhoneChanged);
-    // Rebuild on name change so _canSubmit is re-evaluated
+    // Rebuild on name/shein-url change so _canSubmit is re-evaluated
     _nameCtrl.addListener(() => setState(() {}));
+    _sheinUrlCtrl.addListener(() => setState(() {}));
   }
 
   @override
@@ -463,7 +471,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
     _debounce?.cancel();
     _phoneCtrl.dispose(); _nameCtrl.dispose(); _phone2Ctrl.dispose();
     _cityCtrl.dispose(); _areaCtrl.dispose(); _streetCtrl.dispose();
-    _locationUrlCtrl.dispose(); _platformCtrl.dispose();
+    _locationUrlCtrl.dispose(); _platformCtrl.dispose(); _sheinUrlCtrl.dispose();
     for (final item in _items) { item.dispose(); }
     super.dispose();
   }
@@ -508,10 +516,65 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
     });
   }
 
+  Future<void> _fetchSheinCart() async {
+    final url = _sheinUrlCtrl.text.trim();
+    if (url.isEmpty) return;
+    setState(() => _sheinFetching = true);
+    try {
+      final data = await ref.read(ordersProvider.notifier).parseSheinCart(url);
+      final rawItems = (data['items'] as List<dynamic>?) ?? [];
+      final partial  = (data['partial'] as bool?) ?? false;
+
+      if (!mounted) return;
+
+      if (rawItems.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('فشل جلب البيانات — يرجى الإدخال اليدوي'),
+          backgroundColor: AppTheme.error,
+        ));
+        return;
+      }
+
+      // Replace all current items with the fetched Shein items
+      for (final e in _items) e.dispose();
+      _items.clear();
+      for (final raw in rawItems) {
+        final m     = raw as Map<String, dynamic>;
+        final entry = _ItemEntry();
+        entry.productCtrl.text = (m['name']        as String?) ?? '';
+        entry.urlCtrl.text     = (m['product_url'] as String?) ?? '';
+        entry.skuCtrl.text     = (m['sku']         as String?) ?? '';
+        entry.priceCtrl.text   = ((m['price'] as num?)?.toStringAsFixed(2)) ?? '';
+        entry.qtyCtrl.text     = ((m['qty']   as num?)?.toInt().toString()) ?? '1';
+        entry.sizeCtrl.text    = (m['size']   as String?) ?? '';
+        entry.colorCtrl.text   = (m['color']  as String?) ?? '';
+        _items.add(entry);
+      }
+      _platformCtrl.text = 'shein';
+      setState(() {});
+
+      if (partial) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('تم جلب بيانات جزئية — يرجى مراجعة وإكمال التفاصيل'),
+          backgroundColor: AppTheme.warning,
+          duration: Duration(seconds: 5),
+        ));
+      }
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('فشل جلب البيانات — $e'),
+        backgroundColor: AppTheme.error,
+      ));
+    } finally {
+      if (mounted) setState(() => _sheinFetching = false);
+    }
+  }
+
   // Submit requires: phone resolved (no error, not looking up), name filled,
-  // at least one item, and ALL named items must have a product_url.
+  // at least one item, ALL named items must have a product_url, and no active fetch.
   bool get _canSubmit {
-    if (_isLoading || _isLookingUp || _lookupError) return false;
+    if (_isLoading || _isLookingUp || _lookupError || _sheinFetching) return false;
     if (_phoneCtrl.text.trim().length < 5) return false;
     if (_nameCtrl.text.trim().isEmpty) return false;
     final filledItems = _items.where((item) => item.productCtrl.text.trim().isNotEmpty).toList();
@@ -566,8 +629,9 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
           if (item.urlCtrl.text.trim().isNotEmpty) 'product_url': item.urlCtrl.text.trim(),
           'unit_price_foreign': double.tryParse(item.priceCtrl.text) ?? 0,
           'quantity': int.tryParse(item.qtyCtrl.text) ?? 1,
-          if (item.sizeCtrl.text.trim().isNotEmpty) 'size': item.sizeCtrl.text.trim(),
+          if (item.sizeCtrl.text.trim().isNotEmpty)  'size':  item.sizeCtrl.text.trim(),
           if (item.colorCtrl.text.trim().isNotEmpty) 'color': item.colorCtrl.text.trim(),
+          if (item.skuCtrl.text.trim().isNotEmpty)   'sku':   item.skuCtrl.text.trim(),
         }).toList();
 
       await ref.read(ordersProvider.notifier).createOrder({
@@ -588,7 +652,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 700),
+        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 860),
         child: Padding(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -684,7 +748,62 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
                 keyboardType: TextInputType.url,
                 decoration: const InputDecoration(labelText: 'رابط اللوكيشن', prefixIcon: Icon(Icons.location_on_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
             ],
-            const SizedBox(height: 16),
+            const SizedBox(height: 12),
+
+            // ── Shein Cart Import ────────────────────────────────
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: AppTheme.primary.withValues(alpha: 0.06),
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.25)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Row(children: [
+                  Icon(Icons.shopping_bag_outlined, color: AppTheme.primary, size: 14),
+                  SizedBox(width: 6),
+                  Text('استيراد سلة شي إن', style: TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w700)),
+                  SizedBox(width: 6),
+                  Expanded(child: Text('الصق رابط المشاركة لملء المنتجات تلقائياً', style: TextStyle(color: Colors.white38, fontSize: 11), overflow: TextOverflow.ellipsis)),
+                ]),
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _sheinUrlCtrl,
+                      style: const TextStyle(color: Colors.white, fontSize: 12),
+                      keyboardType: TextInputType.url,
+                      decoration: const InputDecoration(
+                        hintText: 'https://shein.top/...',
+                        hintStyle: TextStyle(color: Colors.white24, fontSize: 12),
+                        prefixIcon: Icon(Icons.link, size: 16),
+                        isDense: true,
+                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  SizedBox(
+                    height: 38,
+                    child: ElevatedButton(
+                      onPressed: (_sheinFetching || _sheinUrlCtrl.text.trim().isEmpty)
+                          ? null
+                          : _fetchSheinCart,
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppTheme.primary,
+                        disabledBackgroundColor: AppTheme.primary.withValues(alpha: 0.3),
+                        padding: const EdgeInsets.symmetric(horizontal: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: _sheinFetching
+                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                        : const Text('جلب ✨', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+                    ),
+                  ),
+                ]),
+              ]),
+            ),
+            const SizedBox(height: 12),
 
             // Items section header
             Row(children: [
@@ -734,6 +853,9 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
                         keyboardType: TextInputType.url,
                         onChanged: (_) => setState(() {}),
                         decoration: const InputDecoration(labelText: 'رابط المنتج *', prefixIcon: Icon(Icons.link, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
+                      const SizedBox(height: 8),
+                      TextField(controller: item.skuCtrl, style: const TextStyle(color: Colors.white, fontSize: 12),
+                        decoration: const InputDecoration(labelText: 'SKU / الرقم التسلسلي', prefixIcon: Icon(Icons.qr_code, size: 16), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8))),
                       const SizedBox(height: 8),
                       Row(children: [
                         Expanded(child: TextField(controller: item.priceCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white, fontSize: 13),
