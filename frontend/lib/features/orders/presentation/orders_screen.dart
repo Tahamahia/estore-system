@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:estore_app/app/theme.dart';
@@ -453,17 +455,15 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
   bool _lookupError = false;
   Timer? _debounce;
 
-  // Shein cart import
-  final _sheinUrlCtrl = TextEditingController();
-  bool _sheinFetching = false;
+  // Shein cart import (clipboard-based)
+  bool _sheinPasting = false;
 
   @override
   void initState() {
     super.initState();
     _phoneCtrl.addListener(_onPhoneChanged);
-    // Rebuild on name/shein-url change so _canSubmit is re-evaluated
+    // Rebuild on name change so _canSubmit is re-evaluated
     _nameCtrl.addListener(() => setState(() {}));
-    _sheinUrlCtrl.addListener(() => setState(() {}));
   }
 
   @override
@@ -471,7 +471,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
     _debounce?.cancel();
     _phoneCtrl.dispose(); _nameCtrl.dispose(); _phone2Ctrl.dispose();
     _cityCtrl.dispose(); _areaCtrl.dispose(); _streetCtrl.dispose();
-    _locationUrlCtrl.dispose(); _platformCtrl.dispose(); _sheinUrlCtrl.dispose();
+    _locationUrlCtrl.dispose(); _platformCtrl.dispose();
     for (final item in _items) { item.dispose(); }
     super.dispose();
   }
@@ -516,34 +516,31 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
     });
   }
 
-  Future<void> _fetchSheinCart() async {
-    final url = _sheinUrlCtrl.text.trim();
-    if (url.isEmpty) return;
-    setState(() => _sheinFetching = true);
+  Future<void> _pasteSheinCart() async {
+    setState(() => _sheinPasting = true);
     try {
-      final data = await ref.read(ordersProvider.notifier).parseSheinCart(url);
-      final rawItems = (data['items'] as List<dynamic>?) ?? [];
-      final partial  = (data['partial'] as bool?) ?? false;
-
+      final data = await Clipboard.getData(Clipboard.kTextPlain);
       if (!mounted) return;
-
-      if (rawItems.isEmpty) {
+      final text = data?.text?.trim() ?? '';
+      if (text.isEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('فشل جلب البيانات — يرجى الإدخال اليدوي'),
+          content: Text('الحافظة فارغة — انسخ بيانات السلة باستخدام زر المتصفح أولاً'),
           backgroundColor: AppTheme.error,
         ));
         return;
       }
-
-      // Replace all current items with the fetched Shein items
+      final decoded = jsonDecode(text);
+      if (decoded is! List || decoded.isEmpty) {
+        throw const FormatException('not a JSON array');
+      }
       for (final e in _items) e.dispose();
       _items.clear();
-      for (final raw in rawItems) {
+      for (final raw in decoded) {
         final m     = raw as Map<String, dynamic>;
         final entry = _ItemEntry();
-        entry.productCtrl.text = (m['name']        as String?) ?? '';
-        entry.urlCtrl.text     = (m['product_url'] as String?) ?? '';
-        entry.skuCtrl.text     = (m['sku']         as String?) ?? '';
+        entry.productCtrl.text = (m['name']  as String?) ?? '';
+        entry.urlCtrl.text     = (m['url']   as String?) ?? '';
+        entry.skuCtrl.text     = (m['sku']   as String?) ?? '';
         entry.priceCtrl.text   = ((m['price'] as num?)?.toStringAsFixed(2)) ?? '';
         entry.qtyCtrl.text     = ((m['qty']   as num?)?.toInt().toString()) ?? '1';
         entry.sizeCtrl.text    = (m['size']   as String?) ?? '';
@@ -552,29 +549,21 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
       }
       _platformCtrl.text = 'shein';
       setState(() {});
-
-      if (partial) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('تم جلب بيانات جزئية — يرجى مراجعة وإكمال التفاصيل'),
-          backgroundColor: AppTheme.warning,
-          duration: Duration(seconds: 5),
-        ));
-      }
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('فشل جلب البيانات — $e'),
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('بيانات الحافظة غير صالحة — الرجاء نسخ السلة باستخدام زر المتصفح'),
         backgroundColor: AppTheme.error,
+        duration: Duration(seconds: 5),
       ));
     } finally {
-      if (mounted) setState(() => _sheinFetching = false);
+      if (mounted) setState(() => _sheinPasting = false);
     }
   }
 
-  // Submit requires: phone resolved (no error, not looking up), name filled,
-  // at least one item, ALL named items must have a product_url, and no active fetch.
+  // Submit requires: phone resolved, name filled, at least one item with URL.
   bool get _canSubmit {
-    if (_isLoading || _isLookingUp || _lookupError || _sheinFetching) return false;
+    if (_isLoading || _isLookingUp || _lookupError || _sheinPasting) return false;
     if (_phoneCtrl.text.trim().length < 5) return false;
     if (_nameCtrl.text.trim().isEmpty) return false;
     final filledItems = _items.where((item) => item.productCtrl.text.trim().isNotEmpty).toList();
@@ -750,60 +739,25 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
             ],
             const SizedBox(height: 12),
 
-            // ── Shein Cart Import ────────────────────────────────
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-              decoration: BoxDecoration(
-                color: AppTheme.primary.withValues(alpha: 0.06),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: AppTheme.primary.withValues(alpha: 0.25)),
+            // ── Shein Cart Paste ─────────────────────────────────
+            SizedBox(
+              height: 46,
+              child: ElevatedButton.icon(
+                onPressed: _sheinPasting ? null : _pasteSheinCart,
+                icon: _sheinPasting
+                  ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                  : const Icon(Icons.content_paste_rounded, size: 18),
+                label: const Text('لصق بيانات السلة (من الحافظة)', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
+                  foregroundColor: AppTheme.primary,
+                  disabledForegroundColor: AppTheme.primary.withValues(alpha: 0.4),
+                  side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.35)),
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                ),
               ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                const Row(children: [
-                  Icon(Icons.shopping_bag_outlined, color: AppTheme.primary, size: 14),
-                  SizedBox(width: 6),
-                  Text('استيراد سلة شي إن', style: TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w700)),
-                  SizedBox(width: 6),
-                  Expanded(child: Text('الصق رابط المشاركة لملء المنتجات تلقائياً', style: TextStyle(color: Colors.white38, fontSize: 11), overflow: TextOverflow.ellipsis)),
-                ]),
-                const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _sheinUrlCtrl,
-                      style: const TextStyle(color: Colors.white, fontSize: 12),
-                      keyboardType: TextInputType.url,
-                      decoration: const InputDecoration(
-                        hintText: 'https://shein.top/...',
-                        hintStyle: TextStyle(color: Colors.white24, fontSize: 12),
-                        prefixIcon: Icon(Icons.link, size: 16),
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  SizedBox(
-                    height: 38,
-                    child: ElevatedButton(
-                      onPressed: (_sheinFetching || _sheinUrlCtrl.text.trim().isEmpty)
-                          ? null
-                          : _fetchSheinCart,
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: AppTheme.primary,
-                        disabledBackgroundColor: AppTheme.primary.withValues(alpha: 0.3),
-                        padding: const EdgeInsets.symmetric(horizontal: 14),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-                      ),
-                      child: _sheinFetching
-                        ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                        : const Text('جلب ✨', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
-                    ),
-                  ),
-                ]),
-              ]),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
 
             // Items section header
             Row(children: [
