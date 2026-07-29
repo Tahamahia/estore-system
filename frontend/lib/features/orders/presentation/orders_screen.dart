@@ -578,7 +578,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
       });
       widget.onCreated();
       if (mounted) Navigator.of(context).pop();
-    } catch (e) { setState(() => _error = e.toString()); }
+    } catch (e) { if (mounted) setState(() => _error = e.toString()); }
     finally { if (mounted) setState(() => _isLoading = false); }
   }
 

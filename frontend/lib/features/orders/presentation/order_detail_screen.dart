@@ -781,7 +781,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
       widget.onAdded();
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      setState(() => _error = e.toString());
+      if (mounted) setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
