@@ -284,7 +284,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   Future<void> _orphanItems() async {
     final confirm = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
+      builder: (orphanCtx) => AlertDialog(
         backgroundColor: AppTheme.darkSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
         title: const Text('إلغاء وتحويل للفوري', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
@@ -294,11 +294,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
+            onPressed: () => Navigator.of(orphanCtx).pop(false),
             child: const Text('إلغاء', style: TextStyle(color: Colors.white54)),
           ),
           TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
+            onPressed: () => Navigator.of(orphanCtx).pop(true),
             style: TextButton.styleFrom(foregroundColor: AppTheme.warning),
             child: const Text('تحويل للفوري'),
           ),
@@ -328,108 +328,142 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
 
   void _showUpdateStatusDialog() {
     String selectedStatus = (_order?['status'] as String?) ?? 'pending_purchase';
-    showDialog(context: context, builder: (ctx) => Dialog(
-      backgroundColor: AppTheme.darkSurface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
-        child: Padding(
-          padding: const EdgeInsets.all(28),
-          child: StatefulBuilder(builder: (_, setDialogState) {
-            return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              const Text('تحديث الحالة', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
-              const SizedBox(height: 8),
-              const Text('اختر الحالة الجديدة للطلب', style: TextStyle(color: Colors.white54, fontSize: 14)),
-              const SizedBox(height: 20),
-              Wrap(spacing: 8, runSpacing: 8, children: [
-                for (final s in [
-                  'pending_purchase', 'purchased', 'at_overseas_warehouse',
-                  'arrived_in_libya', 'received_and_priced', 'out_for_delivery',
-                  'delivered', 'returned_in_stock', 'out_of_stock',
-                ])
-                  ChoiceChip(
-                    label: Text(_translateStatus(s)),
-                    selected: selectedStatus == s,
-                    onSelected: (v) => setDialogState(() => selectedStatus = s),
-                    selectedColor: _statusColor(s),
-                    backgroundColor: AppTheme.darkCard,
-                    labelStyle: TextStyle(color: selectedStatus == s ? Colors.white : Colors.white70, fontSize: 13),
-                  ),
-              ]),
-              const SizedBox(height: 24),
-              SizedBox(height: 52, child: ElevatedButton.icon(
-                onPressed: () async {
-                  Navigator.pop(ctx);
-                  final messenger = ScaffoldMessenger.of(context);
-                  try {
-                    await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
-                      'status': selectedStatus,
-                      'version': _order?['version'],
-                    });
-                    await _loadOrder();
+    showDialog(
+      context: context,
+      builder: (statusCtx) => Dialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: StatefulBuilder(builder: (_, setDialogState) {
+              return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                const Text('تحديث الحالة', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
+                const SizedBox(height: 8),
+                const Text('اختر الحالة الجديدة للطلب', style: TextStyle(color: Colors.white54, fontSize: 14)),
+                const SizedBox(height: 20),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  for (final s in [
+                    'pending_purchase', 'purchased', 'at_overseas_warehouse',
+                    'arrived_in_libya', 'received_and_priced', 'out_for_delivery',
+                    'delivered', 'returned_in_stock', 'out_of_stock',
+                  ])
+                    ChoiceChip(
+                      label: Text(_translateStatus(s)),
+                      selected: selectedStatus == s,
+                      onSelected: (v) => setDialogState(() => selectedStatus = s),
+                      selectedColor: _statusColor(s),
+                      backgroundColor: AppTheme.darkCard,
+                      labelStyle: TextStyle(color: selectedStatus == s ? Colors.white : Colors.white70, fontSize: 13),
+                    ),
+                ]),
+                const SizedBox(height: 24),
+                SizedBox(height: 52, child: ElevatedButton.icon(
+                  onPressed: () async {
+                    // Always pop using the dialog's own context — never the page context
+                    Navigator.of(statusCtx).pop();
                     if (!mounted) return;
-                    messenger.showSnackBar(SnackBar(
-                      content: Text('✅ تم تحديث الحالة إلى ${_translateStatus(selectedStatus)}'),
-                      backgroundColor: AppTheme.success,
-                    ));
-                    // Cascade: ask if all items should be updated too
-                    final allItems = _order?['items'] as List<dynamic>? ?? [];
-                    final updatable = allItems.where((r) => (r as Map<String, dynamic>)['status'] != 'cancelled').toList();
-                    if (updatable.isEmpty || !mounted) return;
-                    final cascade = await showDialog<bool>(
-                      context: context,
-                      builder: (_) => AlertDialog(
-                        backgroundColor: AppTheme.darkSurface,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                        title: const Text('تحديث المنتجات', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                        content: Text(
-                          'هل تريد تحديث حالة جميع المنتجات (${updatable.length}) إلى "${_translateStatus(selectedStatus)}"؟',
-                          style: const TextStyle(color: Colors.white70),
+                    // Capture messenger now while Scaffold is guaranteed in the tree
+                    final messenger = ScaffoldMessenger.of(context);
+                    try {
+                      await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
+                        'status': selectedStatus,
+                        'version': _order?['version'],
+                      });
+                      if (!mounted) return;
+                      // Optimistic in-place update — no loading wipe, no Scaffold loss
+                      setState(() {
+                        if (_order == null) return;
+                        final updated = Map<String, dynamic>.from(_order!);
+                        updated['status'] = selectedStatus;
+                        updated['version'] = (updated['version'] as int? ?? 0) + 1;
+                        _order = updated;
+                      });
+                      messenger.showSnackBar(SnackBar(
+                        content: Text('✅ تم تحديث الحالة إلى ${_translateStatus(selectedStatus)}'),
+                        backgroundColor: AppTheme.success,
+                      ));
+                      // Cascade: offer to propagate status to all non-cancelled items
+                      final allItems = _order?['items'] as List<dynamic>? ?? [];
+                      final updatable = allItems
+                          .where((r) => (r as Map<String, dynamic>)['status'] != 'cancelled')
+                          .toList();
+                      if (updatable.isEmpty || !mounted) return;
+                      // Cascade confirmation — dialog pops itself via cascadeCtx
+                      final cascade = await showDialog<bool>(
+                        context: context,
+                        builder: (cascadeCtx) => AlertDialog(
+                          backgroundColor: AppTheme.darkSurface,
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                          title: const Text('تحديث المنتجات', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                          content: Text(
+                            'هل تريد تحديث حالة جميع المنتجات (${updatable.length}) إلى "${_translateStatus(selectedStatus)}"؟',
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                          actions: [
+                            TextButton(
+                              onPressed: () => Navigator.of(cascadeCtx).pop(false),
+                              child: const Text('لا، فقط الطلب', style: TextStyle(color: Colors.white54)),
+                            ),
+                            TextButton(
+                              onPressed: () => Navigator.of(cascadeCtx).pop(true),
+                              style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
+                              child: const Text('نعم، تحديث الكل'),
+                            ),
+                          ],
                         ),
-                        actions: [
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(false),
-                            child: const Text('لا، فقط الطلب', style: TextStyle(color: Colors.white54)),
-                          ),
-                          TextButton(
-                            onPressed: () => Navigator.of(context).pop(true),
-                            style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
-                            child: const Text('نعم، تحديث الكل'),
-                          ),
-                        ],
-                      ),
-                    );
-                    if (cascade == true && mounted) {
+                      );
+                      if (cascade != true || !mounted) return;
+                      // Patch each item; track which ones succeeded
+                      final successIds = <String>{};
                       for (final raw in updatable) {
                         final item = raw as Map<String, dynamic>;
                         try {
                           await ref.read(ordersProvider.notifier).updateOrderItem(
                             widget.orderId, item['id'] as String,
-                            { 'status': selectedStatus, 'version': item['version'] },
+                            {'status': selectedStatus, 'version': item['version']},
                           );
+                          successIds.add(item['id'] as String);
                         } catch (_) {}
                       }
-                      await _loadOrder();
-                      if (mounted) {
-                        messenger.showSnackBar(SnackBar(
-                          content: Text('✅ تم تحديث ${updatable.length} منتج'),
-                          backgroundColor: AppTheme.success,
-                        ));
-                      }
+                      if (!mounted || successIds.isEmpty) return;
+                      // In-place items update — never call _loadOrder() here
+                      setState(() {
+                        if (_order == null) return;
+                        final o = Map<String, dynamic>.from(_order!);
+                        o['items'] = (o['items'] as List<dynamic>).map((raw) {
+                          final itm = Map<String, dynamic>.from(raw as Map<String, dynamic>);
+                          if (successIds.contains(itm['id'] as String?)) {
+                            itm['status'] = selectedStatus;
+                            itm['version'] = (itm['version'] as int? ?? 0) + 1;
+                          }
+                          return itm;
+                        }).toList();
+                        _order = o;
+                      });
+                      messenger.showSnackBar(SnackBar(
+                        content: Text('✅ تم تحديث ${successIds.length} منتج'),
+                        backgroundColor: AppTheme.success,
+                      ));
+                    } catch (e) {
+                      if (!mounted) return;
+                      messenger.showSnackBar(SnackBar(
+                        content: Text('فشل: $e'),
+                        backgroundColor: AppTheme.error,
+                      ));
                     }
-                  } catch (e) {
-                    if (mounted) messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
-                  }
-                },
-                icon: const Icon(Icons.check, size: 22),
-                label: const Text('تحديث', style: TextStyle(fontSize: 16)),
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
-              )),
-            ]);
-          }),
+                  },
+                  icon: const Icon(Icons.check, size: 22),
+                  label: const Text('تحديث', style: TextStyle(fontSize: 16)),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+                )),
+              ]);
+            }),
+          ),
         ),
       ),
-    ));
+    );
   }
 
   @override
