@@ -70,40 +70,44 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
 
   String _translateStatus(String status) {
     switch (status) {
-      case 'pending_purchase': return 'في انتظار الشراء';
-      case 'purchased': return 'تم الشراء';
+      // ── DB CHECK constraint enum values (authoritative) ──────────────────
+      case 'pending':                  return 'في انتظار الشراء';
+      case 'purchased':                return 'تم الشراء';
+      case 'shipped':                  return 'تم الشحن';
+      case 'arrived_warehouse':        return 'وصل المخزن';
+      case 'sorted':                   return 'تم الفرز';
+      case 'ready_dispatch':           return 'جاهز للتوصيل';
+      case 'dispatched':               return 'في الطريق';
+      case 'delivered':                return 'تم التوصيل';
+      case 'cancelled':                return 'ملغي';
+      case 'refunded':                 return 'مُسترد';
+      case 'transferred_to_inventory': return 'محوّل للمخزون';
+      case 'in_stock':                 return 'فوري';
+      // ── Legacy values — display only, never sent to backend ──────────────
+      case 'pending_purchase':    return 'في انتظار الشراء';
       case 'at_overseas_warehouse': return 'في المخزن الخارجي';
-      case 'arrived_in_libya': return 'وصل ليبيا';
+      case 'arrived_in_libya':    return 'وصل ليبيا';
       case 'received_and_priced': return 'استُلم وسُعِّر';
-      case 'out_for_delivery': return 'خرج للتوصيل';
-      case 'delivered': return 'تم التوصيل';
-      case 'returned_in_stock': return 'مُرجَّع في المخزون';
-      case 'out_of_stock': return 'نفذت الكمية';
-      case 'pending_payment': return 'في انتظار الدفع';
-      case 'paid': return 'تم الدفع';
-      case 'purchasing': return 'جاري الشراء';
-      case 'shipped': return 'تم الشحن';
-      case 'arrived_warehouse': return 'وصل المخزن';
-      case 'sorted': return 'تم الفرز';
-      case 'ready_dispatch': return 'جاهز للتوصيل';
-      case 'dispatched': return 'في الطريق';
-      case 'cancelled': return 'ملغي';
-      case 'auto_cancelled': return 'ملغي تلقائياً';
-      case 'refunded': return 'مُسترد';
-      case 'in_stock': return 'فوري';
+      case 'out_for_delivery':    return 'خرج للتوصيل';
+      case 'returned_in_stock':   return 'مُرجَّع في المخزون';
+      case 'out_of_stock':        return 'نفذت الكمية';
+      case 'pending_payment':     return 'في انتظار الدفع';
+      case 'paid':                return 'تم الدفع';
+      case 'purchasing':          return 'جاري الشراء';
+      case 'auto_cancelled':      return 'ملغي تلقائياً';
       default: return status.replaceAll('_', ' ');
     }
   }
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'pending_purchase': case 'pending_payment': return AppTheme.warning;
+      case 'pending': case 'pending_purchase': case 'pending_payment': return AppTheme.warning;
       case 'purchased': case 'at_overseas_warehouse': case 'paid': case 'purchasing': case 'shipped': case 'in_stock': return AppTheme.secondary;
       case 'arrived_in_libya': case 'arrived_warehouse': case 'sorted': return AppTheme.accent;
       case 'received_and_priced': case 'ready_dispatch': return AppTheme.success;
       case 'out_for_delivery': case 'dispatched': return const Color(0xFF3B82F6);
       case 'delivered': return AppTheme.success;
-      case 'returned_in_stock': case 'refunded': return AppTheme.warning;
+      case 'returned_in_stock': case 'refunded': case 'transferred_to_inventory': return AppTheme.warning;
       case 'out_of_stock': case 'cancelled': case 'auto_cancelled': return AppTheme.error;
       default: return AppTheme.accent;
     }
@@ -340,14 +344,16 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   }
 
   void _showUpdateStatusDialog() {
-    // Normalize: only accept known backend enum values — reject Arabic or legacy strings
+    // Only the 10 admin-settable values from the DB CHECK constraint.
+    // transferred_to_inventory and in_stock are system-set (orphan flow / instant items)
+    // and are intentionally excluded from manual status updates.
     const validOrderStatuses = [
-      'pending_purchase', 'purchased', 'at_overseas_warehouse',
-      'arrived_in_libya', 'received_and_priced', 'out_for_delivery',
-      'delivered', 'returned_in_stock', 'out_of_stock',
+      'pending', 'purchased', 'shipped', 'arrived_warehouse',
+      'sorted', 'ready_dispatch', 'dispatched', 'delivered',
+      'cancelled', 'refunded',
     ];
     final rawStatus = (_order?['status'] as String?) ?? '';
-    String selectedStatus = validOrderStatuses.contains(rawStatus) ? rawStatus : 'pending_purchase';
+    String selectedStatus = validOrderStatuses.contains(rawStatus) ? rawStatus : 'pending';
     showDialog(
       context: context,
       builder: (statusCtx) => Dialog(
@@ -364,11 +370,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 const Text('اختر الحالة الجديدة للطلب', style: TextStyle(color: Colors.white54, fontSize: 14)),
                 const SizedBox(height: 20),
                 Wrap(spacing: 8, runSpacing: 8, children: [
-                  for (final s in [
-                    'pending_purchase', 'purchased', 'at_overseas_warehouse',
-                    'arrived_in_libya', 'received_and_priced', 'out_for_delivery',
-                    'delivered', 'returned_in_stock', 'out_of_stock',
-                  ])
+                  for (final s in validOrderStatuses)
                     ChoiceChip(
                       label: Text(_translateStatus(s)),
                       selected: selectedStatus == s,
@@ -783,7 +785,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
             border: Border(top: BorderSide(color: AppTheme.darkBorder)),
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            if (!const ['pending_payment', 'delivered', 'cancelled', 'auto_cancelled', 'refunded'].contains(status)) ...[
+            if (!const ['delivered', 'cancelled', 'refunded', 'transferred_to_inventory', 'in_stock'].contains(status)) ...[
               SizedBox(
                 height: 46,
                 child: OutlinedButton.icon(
