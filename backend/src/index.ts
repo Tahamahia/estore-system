@@ -20,6 +20,7 @@ import { walletRoutes } from './routes/wallets';
 import { syncRoutes } from './routes/sync';
 import { settlementRoutes } from './routes/settlements';
 import { settingsRoutes } from './routes/settings';
+import { toolRoutes } from './routes/tools';
 import { cronHandler } from './cron';
 import { createSentryClient } from './lib/sentry';
 import type { AppEnv } from './types';
@@ -118,6 +119,7 @@ protectedApp.route('/wallets', walletRoutes);
 protectedApp.route('/sync', syncRoutes);
 protectedApp.route('/settlements', settlementRoutes);
 protectedApp.route('/settings', settingsRoutes);
+protectedApp.route('/tools', toolRoutes);
 
 app.route('/api/v1', protectedApp);
 
