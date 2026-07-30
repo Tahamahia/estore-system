@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -629,8 +630,12 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
       });
       widget.onCreated();
       if (mounted) Navigator.of(context).pop();
+    } on DioException catch (e) {
+      final msg = e.message ?? 'خطأ في الاتصال بالخادم';
+      if (mounted) setState(() => _error = msg);
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      final raw = e.toString();
+      if (mounted) setState(() => _error = raw.startsWith('Exception: ') ? raw.substring(11) : raw);
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }

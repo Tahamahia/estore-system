@@ -185,7 +185,12 @@ orderRoutes.post('/', async (c) => {
     );
   }
 
-  await c.env.DB.batch(stmts);
+  try {
+    await c.env.DB.batch(stmts);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: 'Database Error', message: msg }, 400);
+  }
 
   return c.json({ message: 'Order created', id }, 201);
 });

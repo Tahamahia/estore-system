@@ -46,6 +46,22 @@ final dioProvider = Provider<Dio>((ref) {
         SharedPreferences.getInstance()
             .then((prefs) => prefs.remove(_kTokenKey));
       }
+      // Extract the server's human-readable message from the response body so
+      // all callers receive DioException.message = the actual error text rather
+      // than the generic "status code of 4xx/5xx" Dio default.
+      final body = error.response?.data;
+      if (body is Map<String, dynamic>) {
+        final serverMsg = body['message'] as String? ?? body['error'] as String?;
+        if (serverMsg != null && serverMsg.isNotEmpty) {
+          return handler.reject(DioException(
+            requestOptions: error.requestOptions,
+            response: error.response,
+            type: error.type,
+            error: error.error,
+            message: serverMsg,
+          ));
+        }
+      }
       handler.next(error);
     },
   ));
