@@ -515,7 +515,7 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
   const body = await c.req.json();
   const { version, ...updates } = body;
 
-  if (!version) {
+  if (version === undefined || version === null) {
     return c.json({ error: 'Bad Request', message: 'version required for OCC' }, 400);
   }
 
@@ -595,7 +595,7 @@ orderRoutes.patch('/:id', async (c) => {
   const body = await c.req.json();
   const { version, ...updates } = body;
 
-  if (!version) {
+  if (version === undefined || version === null) {
     return c.json({ error: 'Bad Request', message: 'version field required for OCC' }, 400);
   }
 

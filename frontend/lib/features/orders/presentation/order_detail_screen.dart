@@ -11,6 +11,18 @@ import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/invoice_generator.dart';
 import 'package:printing/printing.dart';
 
+/// Extracts the clean human-readable message from a DioException.
+/// Reads e.response?.data directly — never falls back to e.message or
+/// e.toString() which both contain the verbose "DioException [bad response]:"
+/// prefix injected by Dio 5.x.
+String _dioMsg(DioException e) {
+  final data = e.response?.data;
+  if (data is Map<String, dynamic>) {
+    return data['message'] as String? ?? data['error'] as String? ?? 'حدث خطأ غير معروف';
+  }
+  return data?.toString() ?? 'فشل الاتصال بالخادم';
+}
+
 /// Order Detail Screen — shows full order info, items, and action buttons.
 class OrderDetailScreen extends ConsumerStatefulWidget {
   final String orderId;
@@ -328,7 +340,14 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   }
 
   void _showUpdateStatusDialog() {
-    String selectedStatus = (_order?['status'] as String?) ?? 'pending_purchase';
+    // Normalize: only accept known backend enum values — reject Arabic or legacy strings
+    const validOrderStatuses = [
+      'pending_purchase', 'purchased', 'at_overseas_warehouse',
+      'arrived_in_libya', 'received_and_priced', 'out_for_delivery',
+      'delivered', 'returned_in_stock', 'out_of_stock',
+    ];
+    final rawStatus = (_order?['status'] as String?) ?? '';
+    String selectedStatus = validOrderStatuses.contains(rawStatus) ? rawStatus : 'pending_purchase';
     showDialog(
       context: context,
       builder: (statusCtx) => Dialog(
@@ -379,7 +398,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                         if (_order == null) return;
                         final updated = Map<String, dynamic>.from(_order!);
                         updated['status'] = selectedStatus;
-                        updated['version'] = (updated['version'] as int? ?? 0) + 1;
+                        updated['version'] = ((updated['version'] as num?)?.toInt() ?? 0) + 1;
                         _order = updated;
                       });
                       messenger.showSnackBar(SnackBar(
@@ -438,7 +457,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                           final itm = Map<String, dynamic>.from(raw as Map<String, dynamic>);
                           if (successIds.contains(itm['id'] as String?)) {
                             itm['status'] = selectedStatus;
-                            itm['version'] = (itm['version'] as int? ?? 0) + 1;
+                            itm['version'] = ((itm['version'] as num?)?.toInt() ?? 0) + 1;
                           }
                           return itm;
                         }).toList();
@@ -450,14 +469,9 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                       ));
                     } on DioException catch (e) {
                       if (!mounted) return;
-                      // Rollback the optimistic state so the UI reflects reality
                       setState(() => _order = previousOrder);
-                      final data = e.response?.data;
-                      final errorMsg = data is Map<String, dynamic>
-                          ? (data['message'] as String? ?? data['error'] as String? ?? 'حدث خطأ غير معروف')
-                          : (data?.toString() ?? 'فشل الاتصال بالخادم');
                       messenger.showSnackBar(SnackBar(
-                        content: Text('فشل: $errorMsg'),
+                        content: Text('فشل: ${_dioMsg(e)}'),
                         backgroundColor: AppTheme.error,
                       ));
                     } catch (e) {
@@ -806,17 +820,29 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                   onPressed: _dispatchLoading ? null : () async {
                     setState(() => _dispatchLoading = true);
                     final messenger = ScaffoldMessenger.of(context);
+                    final previousOrder = _order;
                     try {
                       await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
                         'status': 'dispatched',
                         'version': _order?['version'],
                       });
-                      await _loadOrder();
                       if (!mounted) return;
+                      setState(() {
+                        if (_order == null) return;
+                        final updated = Map<String, dynamic>.from(_order!);
+                        updated['status'] = 'dispatched';
+                        updated['version'] = ((updated['version'] as num?)?.toInt() ?? 0) + 1;
+                        _order = updated;
+                      });
                       messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
+                    } on DioException catch (e) {
+                      if (!mounted) return;
+                      setState(() => _order = previousOrder);
+                      messenger.showSnackBar(SnackBar(content: Text('فشل: ${_dioMsg(e)}'), backgroundColor: AppTheme.error));
                     } catch (e) {
                       if (!mounted) return;
-                      messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
+                      setState(() => _order = previousOrder);
+                      messenger.showSnackBar(SnackBar(content: Text('فشل: ${e.toString()}'), backgroundColor: AppTheme.error));
                     } finally {
                       if (mounted) setState(() => _dispatchLoading = false);
                     }
@@ -916,7 +942,11 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
       widget.onAdded();
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      if (mounted) setState(() => _error = e.toString());
+      if (mounted) setState(() {
+        _error = e is DioException
+            ? _dioMsg(e)
+            : e.toString();
+      });
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -1430,7 +1460,10 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                   await widget.onSave(updates);
                   if (mounted) nav.pop();
                 } catch (e) {
-                  if (mounted) setState(() { _saving = false; _error = e.toString(); });
+                  if (mounted) setState(() {
+                    _saving = false;
+                    _error = e is DioException ? _dioMsg(e) : e.toString();
+                  });
                 }
               },
               icon: _saving
@@ -1723,7 +1756,10 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
       await widget.onSaved();
       if (mounted) Navigator.of(context).pop();
     } catch (e) {
-      if (mounted) setState(() { _saving = false; _error = e.toString(); });
+      if (mounted) setState(() {
+        _saving = false;
+        _error = e is DioException ? _dioMsg(e) : e.toString();
+      });
     }
   }
 
