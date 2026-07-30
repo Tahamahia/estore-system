@@ -108,18 +108,31 @@ orderRoutes.post('/', async (c) => {
   const body = await c.req.json();
 
   const {
-    id,            // Client-generated UUID v4
+    id,
     customer_id,
     platform,
     platform_order_id,
     pegged_exchange_rate,
     currency,
     notes,
-    items,         // Array of order items
+    // New ERP fields
+    cart_link,
+    order_type = 'individual_items',
+    total_sale_price_lyd,
+    total_cost_usd,
+    items = [],
   } = body;
 
-  if (!id || !customer_id || !items?.length) {
-    return c.json({ error: 'Bad Request', message: 'id, customer_id, and items are required' }, 400);
+  if (!id || !customer_id) {
+    return c.json({ error: 'Bad Request', message: 'id and customer_id are required' }, 400);
+  }
+
+  if (!cart_link?.trim()) {
+    return c.json({ error: 'Bad Request', message: 'cart_link is required' }, 400);
+  }
+
+  if (order_type === 'individual_items' && !items?.length) {
+    return c.json({ error: 'Bad Request', message: 'items are required for individual_items orders' }, 400);
   }
 
   // Start a batch transaction
@@ -128,29 +141,46 @@ orderRoutes.post('/', async (c) => {
   // Insert order
   stmts.push(
     c.env.DB.prepare(
-      `INSERT INTO orders (id, tenant_id, customer_id, platform, platform_order_id, 
-       pegged_exchange_rate, currency, status, notes, created_by, created_at, updated_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'pending_payment', ?, ?, datetime('now'), datetime('now'), 1)`
-    ).bind(id, tenantId, customer_id, platform || null, platform_order_id || null,
-           pegged_exchange_rate || null, currency || 'USD', notes || null, userId)
+      `INSERT INTO orders (id, tenant_id, customer_id, platform, platform_order_id,
+       pegged_exchange_rate, currency, cart_link, order_type, total_sale_price_lyd, total_cost_usd,
+       status, notes, created_by, created_at, updated_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_purchase', ?, ?, datetime('now'), datetime('now'), 1)`
+    ).bind(
+      id, tenantId, customer_id, platform || null, platform_order_id || null,
+      pegged_exchange_rate || null, currency || 'USD',
+      cart_link.trim(), order_type,
+      total_sale_price_lyd ?? null, total_cost_usd ?? null,
+      notes || null, userId
+    )
   );
 
-  // Insert each item with unique Item_UID
+  // Insert items (individual_items orders only)
   for (const item of items) {
     if (!item.id) {
       return c.json({ error: 'Bad Request', message: 'Each item must have a client-generated id' }, 400);
     }
     stmts.push(
       c.env.DB.prepare(
-        `INSERT INTO order_items (id, tenant_id, order_id, product_name, product_url, 
-         product_image_url, quantity, unit_price_foreign, unit_price_local, color, size, sku,
-         notes, status, created_at, updated_at, version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
+        `INSERT INTO order_items (id, tenant_id, order_id, product_name, product_url,
+         product_image_url, quantity, unit_price_foreign, unit_price_local,
+         color, size, sku, category, attributes, sale_price_lyd, cost_usd,
+         item_category, notes, status, created_at, updated_at, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
       ).bind(
-        item.id, tenantId, id, item.product_name, item.product_url || null,
-        item.product_image_url || null, item.quantity || 1,
-        item.unit_price_foreign || 0, item.unit_price_local || 0,
-        item.color || null, item.size || null, item.sku || null, item.notes || null
+        item.id, tenantId, id,
+        item.product_name || item.name,
+        item.product_url || null,
+        item.product_image_url || null,
+        item.quantity || 1,
+        item.unit_price_foreign || 0,
+        item.unit_price_local || item.sale_price_lyd || 0,
+        item.color || null, item.size || null, item.sku || null,
+        item.category || null,
+        item.attributes ? (typeof item.attributes === 'string' ? item.attributes : JSON.stringify(item.attributes)) : null,
+        item.sale_price_lyd ?? null,
+        item.cost_usd ?? null,
+        item.category || item.item_category || null,
+        item.notes || null
       )
     );
   }
@@ -484,7 +514,7 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
     return c.json({ error: 'Bad Request', message: 'version required for OCC' }, 400);
   }
 
-  const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'unit_price_local', 'shipping_cost_foreign', 'quantity', 'size', 'color', 'sku', 'status', 'item_category', 'weight', 'brand', 'source_name', 'shipping_rate_per_kg'];
+  const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'unit_price_local', 'shipping_cost_foreign', 'quantity', 'size', 'color', 'sku', 'status', 'item_category', 'weight', 'brand', 'source_name', 'shipping_rate_per_kg', 'category', 'attributes', 'sale_price_lyd', 'cost_usd'];
   const setClauses: string[] = [];
   const values: any[] = [];
 
@@ -561,7 +591,7 @@ orderRoutes.patch('/:id', async (c) => {
   // Build dynamic SET clause
   const setClauses: string[] = [];
   const values: any[] = [];
-  const allowedFields = ['status', 'notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign', 'shipping_rate_per_kg'];
+  const allowedFields = ['status', 'notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign', 'shipping_rate_per_kg', 'cart_link', 'order_type', 'total_sale_price_lyd', 'total_cost_usd'];
 
   for (const field of allowedFields) {
     if (updates[field] !== undefined) {

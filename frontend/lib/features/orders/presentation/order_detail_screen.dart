@@ -56,16 +56,23 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
 
   String _translateStatus(String status) {
     switch (status) {
+      case 'pending_purchase': return 'في انتظار الشراء';
+      case 'purchased': return 'تم الشراء';
+      case 'at_overseas_warehouse': return 'في المخزن الخارجي';
+      case 'arrived_in_libya': return 'وصل ليبيا';
+      case 'received_and_priced': return 'استُلم وسُعِّر';
+      case 'out_for_delivery': return 'خرج للتوصيل';
+      case 'delivered': return 'تم التوصيل';
+      case 'returned_in_stock': return 'مُرجَّع في المخزون';
+      case 'out_of_stock': return 'نفذت الكمية';
       case 'pending_payment': return 'في انتظار الدفع';
       case 'paid': return 'تم الدفع';
       case 'purchasing': return 'جاري الشراء';
-      case 'purchased': return 'تم الشراء';
       case 'shipped': return 'تم الشحن';
       case 'arrived_warehouse': return 'وصل المخزن';
       case 'sorted': return 'تم الفرز';
       case 'ready_dispatch': return 'جاهز للتوصيل';
       case 'dispatched': return 'في الطريق';
-      case 'delivered': return 'تم التوصيل';
       case 'cancelled': return 'ملغي';
       case 'auto_cancelled': return 'ملغي تلقائياً';
       case 'refunded': return 'مُسترد';
@@ -76,16 +83,14 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'pending_payment': return AppTheme.warning;
-      case 'paid': case 'purchasing': return AppTheme.primary;
-      case 'purchased': case 'shipped': return AppTheme.secondary;
-      case 'arrived_warehouse': case 'sorted': return AppTheme.accent;
-      case 'ready_dispatch': return AppTheme.success;
-      case 'dispatched': return const Color(0xFF3B82F6);
+      case 'pending_purchase': case 'pending_payment': return AppTheme.warning;
+      case 'purchased': case 'at_overseas_warehouse': case 'paid': case 'purchasing': case 'shipped': case 'in_stock': return AppTheme.secondary;
+      case 'arrived_in_libya': case 'arrived_warehouse': case 'sorted': return AppTheme.accent;
+      case 'received_and_priced': case 'ready_dispatch': return AppTheme.success;
+      case 'out_for_delivery': case 'dispatched': return const Color(0xFF3B82F6);
       case 'delivered': return AppTheme.success;
-      case 'cancelled': case 'auto_cancelled': return AppTheme.error;
-      case 'refunded': return AppTheme.warning;
-      case 'in_stock': return AppTheme.secondary;
+      case 'returned_in_stock': case 'refunded': return AppTheme.warning;
+      case 'out_of_stock': case 'cancelled': case 'auto_cancelled': return AppTheme.error;
       default: return AppTheme.accent;
     }
   }
@@ -321,7 +326,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   }
 
   void _showUpdateStatusDialog() {
-    String selectedStatus = (_order?['status'] as String?) ?? 'pending_payment';
+    String selectedStatus = (_order?['status'] as String?) ?? 'pending_purchase';
     showDialog(context: context, builder: (ctx) => Dialog(
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
@@ -336,7 +341,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
               const Text('اختر الحالة الجديدة للطلب', style: TextStyle(color: Colors.white54, fontSize: 14)),
               const SizedBox(height: 20),
               Wrap(spacing: 8, runSpacing: 8, children: [
-                for (final s in ['pending_payment', 'purchased', 'shipped', 'arrived_warehouse', 'sorted', 'ready_dispatch', 'dispatched', 'delivered'])
+                for (final s in [
+                  'pending_purchase', 'purchased', 'at_overseas_warehouse',
+                  'arrived_in_libya', 'received_and_priced', 'out_for_delivery',
+                  'delivered', 'returned_in_stock', 'out_of_stock',
+                ])
                   ChoiceChip(
                     label: Text(_translateStatus(s)),
                     selected: selectedStatus == s,
@@ -357,11 +366,55 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                       'version': _order?['version'],
                     });
                     await _loadOrder();
-                    if (mounted) {
-                      messenger.showSnackBar(SnackBar(
-                        content: Text('✅ تم تحديث الحالة إلى ${_translateStatus(selectedStatus)}'),
-                        backgroundColor: AppTheme.success,
-                      ));
+                    if (!mounted) return;
+                    messenger.showSnackBar(SnackBar(
+                      content: Text('✅ تم تحديث الحالة إلى ${_translateStatus(selectedStatus)}'),
+                      backgroundColor: AppTheme.success,
+                    ));
+                    // Cascade: ask if all items should be updated too
+                    final allItems = _order?['items'] as List<dynamic>? ?? [];
+                    final updatable = allItems.where((r) => (r as Map<String, dynamic>)['status'] != 'cancelled').toList();
+                    if (updatable.isEmpty || !mounted) return;
+                    final cascade = await showDialog<bool>(
+                      context: context,
+                      builder: (_) => AlertDialog(
+                        backgroundColor: AppTheme.darkSurface,
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                        title: const Text('تحديث المنتجات', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+                        content: Text(
+                          'هل تريد تحديث حالة جميع المنتجات (${updatable.length}) إلى "${_translateStatus(selectedStatus)}"؟',
+                          style: const TextStyle(color: Colors.white70),
+                        ),
+                        actions: [
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(false),
+                            child: const Text('لا، فقط الطلب', style: TextStyle(color: Colors.white54)),
+                          ),
+                          TextButton(
+                            onPressed: () => Navigator.of(context).pop(true),
+                            style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
+                            child: const Text('نعم، تحديث الكل'),
+                          ),
+                        ],
+                      ),
+                    );
+                    if (cascade == true && mounted) {
+                      for (final raw in updatable) {
+                        final item = raw as Map<String, dynamic>;
+                        try {
+                          await ref.read(ordersProvider.notifier).updateOrderItem(
+                            widget.orderId, item['id'] as String,
+                            { 'status': selectedStatus, 'version': item['version'] },
+                          );
+                        } catch (_) {}
+                      }
+                      await _loadOrder();
+                      if (mounted) {
+                        messenger.showSnackBar(SnackBar(
+                          content: Text('✅ تم تحديث ${updatable.length} منتج'),
+                          backgroundColor: AppTheme.success,
+                        ));
+                      }
                     }
                   } catch (e) {
                     if (mounted) messenger.showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
@@ -405,6 +458,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     final platform = order['platform'] as String? ?? 'Manual';
     final createdAt = order['created_at'] as String? ?? '';
     final items = order['items'] as List<dynamic>? ?? [];
+    final cartLink = order['cart_link'] as String?;
     final hasReadyItems = items.any((item) {
       final s = (item as Map<String, dynamic>)['status'] as String? ?? '';
       return s == 'sorted' || s == 'ready_dispatch';
@@ -560,6 +614,37 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                           label: '${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))} عنصر',
                         ),
                       ]),
+                      if (cartLink != null && cartLink.isNotEmpty) ...[
+                        const SizedBox(height: 10),
+                        GestureDetector(
+                          onTap: () async {
+                            final uri = Uri.tryParse(cartLink);
+                            if (uri != null && await canLaunchUrl(uri)) {
+                              await launchUrl(uri, mode: LaunchMode.externalApplication);
+                            }
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: AppTheme.primary.withValues(alpha: 0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+                            ),
+                            child: Row(mainAxisSize: MainAxisSize.min, children: [
+                              const Icon(Icons.shopping_cart_outlined, color: AppTheme.primary, size: 14),
+                              const SizedBox(width: 6),
+                              Flexible(child: Text(
+                                cartLink,
+                                style: const TextStyle(color: AppTheme.primary, fontSize: 12, decoration: TextDecoration.underline),
+                                overflow: TextOverflow.ellipsis,
+                                maxLines: 1,
+                              )),
+                              const SizedBox(width: 4),
+                              const Icon(Icons.open_in_new, color: AppTheme.primary, size: 12),
+                            ]),
+                          ),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -1187,6 +1272,9 @@ class _EditOrderDialog extends StatefulWidget {
 
 class _EditOrderDialogState extends State<_EditOrderDialog> {
   late final TextEditingController _notesCtrl;
+  late final TextEditingController _cartLinkCtrl;
+  late final TextEditingController _totalCostUsdCtrl;
+  late final TextEditingController _totalSalePriceLydCtrl;
   bool _saving = false;
   String? _error;
 
@@ -1194,11 +1282,19 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
   void initState() {
     super.initState();
     _notesCtrl = TextEditingController(text: widget.order['notes'] as String? ?? '');
+    _cartLinkCtrl = TextEditingController(text: widget.order['cart_link'] as String? ?? '');
+    final costUsd = (widget.order['total_cost_usd'] as num?)?.toDouble();
+    _totalCostUsdCtrl = TextEditingController(text: costUsd != null && costUsd > 0 ? costUsd.toString() : '');
+    final saleLyd = (widget.order['total_sale_price_lyd'] as num?)?.toDouble();
+    _totalSalePriceLydCtrl = TextEditingController(text: saleLyd != null && saleLyd > 0 ? saleLyd.toStringAsFixed(0) : '');
   }
 
   @override
   void dispose() {
     _notesCtrl.dispose();
+    _cartLinkCtrl.dispose();
+    _totalCostUsdCtrl.dispose();
+    _totalSalePriceLydCtrl.dispose();
     super.dispose();
   }
 
@@ -1220,6 +1316,44 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
               child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
             ),
             TextField(
+              controller: _cartLinkCtrl,
+              style: const TextStyle(color: Colors.white),
+              keyboardType: TextInputType.url,
+              decoration: const InputDecoration(
+                labelText: 'رابط السلة',
+                prefixIcon: Icon(Icons.shopping_cart_outlined),
+                hintText: 'https://...',
+                hintStyle: TextStyle(color: Colors.white24),
+              ),
+            ),
+            const SizedBox(height: 14),
+            Row(children: [
+              Expanded(child: TextField(
+                controller: _totalCostUsdCtrl,
+                style: const TextStyle(color: Colors.white),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'إجمالي التكلفة (\$)',
+                  prefixIcon: Icon(Icons.attach_money, size: 18),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: TextField(
+                controller: _totalSalePriceLydCtrl,
+                style: const TextStyle(color: Colors.white),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'إجمالي سعر البيع (د.ل)',
+                  prefixIcon: Icon(Icons.sell_outlined, size: 18),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+            ]),
+            const SizedBox(height: 14),
+            TextField(
               controller: _notesCtrl,
               style: const TextStyle(color: Colors.white),
               maxLines: 3,
@@ -1234,8 +1368,13 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
               onPressed: _saving ? null : () async {
                 setState(() { _saving = true; _error = null; });
                 final updates = <String, dynamic>{'version': widget.order['version']};
-                final notes = _notesCtrl.text.trim();
-                updates['notes'] = notes;
+                updates['notes'] = _notesCtrl.text.trim();
+                final link = _cartLinkCtrl.text.trim();
+                if (link.isNotEmpty) updates['cart_link'] = link;
+                final costUsd = double.tryParse(_totalCostUsdCtrl.text.trim());
+                if (costUsd != null) updates['total_cost_usd'] = costUsd;
+                final saleLyd = double.tryParse(_totalSalePriceLydCtrl.text.trim());
+                if (saleLyd != null) updates['total_sale_price_lyd'] = saleLyd;
                 try {
                   final nav = Navigator.of(context);
                   await widget.onSave(updates);
@@ -1269,6 +1408,7 @@ class _FinancialSummaryCard extends StatelessWidget {
     double itemsCostUsd = 0;
     double shippingUsd = 0;
     double totalLocal = 0;
+    double itemsCostUsdActual = 0;
     for (final raw in items) {
       final item = raw as Map<String, dynamic>;
       if ((item['status'] as String?) == 'cancelled') continue;
@@ -1276,8 +1416,14 @@ class _FinancialSummaryCard extends StatelessWidget {
       final itemRate = (item['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
       itemsCostUsd += ((item['unit_price_foreign'] as num?)?.toDouble() ?? 0) * qty;
       shippingUsd += ((item['weight'] as num?)?.toDouble() ?? 0) * itemRate * qty;
-      totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? 0) * qty;
+      totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? (item['sale_price_lyd'] as num?)?.toDouble() ?? 0) * qty;
+      itemsCostUsdActual += ((item['cost_usd'] as num?)?.toDouble() ?? 0) * qty;
     }
+
+    final orderTotalCostUsd = (order['total_cost_usd'] as num?)?.toDouble();
+    final orderTotalSaleLyd = (order['total_sale_price_lyd'] as num?)?.toDouble();
+    final displayCostUsd = orderTotalCostUsd ?? (itemsCostUsdActual > 0 ? itemsCostUsdActual : null);
+    final displaySaleLyd = orderTotalSaleLyd ?? (totalLocal > 0 ? totalLocal : null);
 
     return Container(
       padding: const EdgeInsets.all(16),
@@ -1293,16 +1439,23 @@ class _FinancialSummaryCard extends StatelessWidget {
           const Text('الملخص المالي', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
         ]),
         const SizedBox(height: 12),
-        _FinancialRow(label: 'تكلفة البضاعة (دولار)', value: '\$${itemsCostUsd.toStringAsFixed(2)}'),
+        _FinancialRow(label: 'تكلفة الشراء المبدئية (\$)', value: '\$${itemsCostUsd.toStringAsFixed(2)}'),
         const SizedBox(height: 6),
-        _FinancialRow(label: 'تكلفة الشحن (دولار)', value: '\$${shippingUsd.toStringAsFixed(2)}'),
-        const Divider(height: 20, color: AppTheme.darkBorder),
-        if (totalLocal == 0)
+        if (shippingUsd > 0) ...[
+          _FinancialRow(label: 'تكلفة الشحن (\$)', value: '\$${shippingUsd.toStringAsFixed(2)}'),
+          const SizedBox(height: 6),
+        ],
+        if (displayCostUsd != null) ...[
+          _FinancialRow(label: 'التكلفة الفعلية (\$)', value: '\$${displayCostUsd.toStringAsFixed(2)}', highlight: true),
+          const SizedBox(height: 6),
+        ],
+        const Divider(height: 16, color: AppTheme.darkBorder),
+        if (displaySaleLyd == null)
           const Center(
             child: Text('في انتظار تحديد سعر البيع', style: TextStyle(color: Colors.white38, fontSize: 13)),
           )
         else
-          _FinancialRow(label: 'سعر البيع (دينار)', value: '${totalLocal.toStringAsFixed(0)} د.ل', bold: true),
+          _FinancialRow(label: 'سعر البيع (د.ل)', value: '${displaySaleLyd.toStringAsFixed(0)} د.ل', bold: true),
       ]),
     );
   }
@@ -1312,15 +1465,16 @@ class _FinancialRow extends StatelessWidget {
   final String label;
   final String value;
   final bool bold;
-  const _FinancialRow({required this.label, required this.value, this.bold = false});
+  final bool highlight;
+  const _FinancialRow({required this.label, required this.value, this.bold = false, this.highlight = false});
 
   @override
   Widget build(BuildContext context) {
     return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
       Text(label, style: const TextStyle(color: Colors.white54, fontSize: 13)),
       Text(value, style: TextStyle(
-        color: Colors.white70,
-        fontWeight: bold ? FontWeight.w700 : FontWeight.w500,
+        color: highlight ? AppTheme.accent : Colors.white70,
+        fontWeight: bold || highlight ? FontWeight.w700 : FontWeight.w500,
         fontSize: bold ? 15 : 14,
       )),
     ]);
@@ -1345,6 +1499,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
   late final TextEditingController _skuCtrl;
   late final TextEditingController _urlCtrl;
   late final TextEditingController _priceCtrl;
+  late final TextEditingController _costUsdCtrl;
   late final TextEditingController _weightCtrl;
   late final TextEditingController _localPriceCtrl;
   late final TextEditingController _qtyCtrl;
@@ -1380,6 +1535,8 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     _urlCtrl   = TextEditingController(text: widget.item['product_url']  as String? ?? '');
     final price = (widget.item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
     _priceCtrl = TextEditingController(text: price > 0 ? price.toString() : '');
+    final costUsd = (widget.item['cost_usd'] as num?)?.toDouble() ?? 0;
+    _costUsdCtrl = TextEditingController(text: costUsd > 0 ? costUsd.toString() : '');
     final weight = (widget.item['weight'] as num?)?.toDouble() ?? 0;
     _weightCtrl = TextEditingController(text: weight > 0 ? weight.toString() : '');
     final localPrice = (widget.item['unit_price_local'] as num?)?.toDouble() ?? 0;
@@ -1407,6 +1564,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     _skuCtrl.dispose();
     _urlCtrl.dispose();
     _priceCtrl.dispose();
+    _costUsdCtrl.dispose();
     _weightCtrl.dispose();
     _localPriceCtrl.dispose();
     _qtyCtrl.dispose();
@@ -1432,6 +1590,8 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
           'sku':          _skuCtrl.text.trim(),
           'product_url':  _urlCtrl.text.trim(),
           'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
+          if (_costUsdCtrl.text.trim().isNotEmpty)
+            'cost_usd': double.tryParse(_costUsdCtrl.text.trim()) ?? 0,
           'weight':       double.tryParse(_weightCtrl.text.trim()) ?? 0,
           'shipping_rate_per_kg': _currentShippingRate,
           if (_selectedSourceName != null) 'source_name': _selectedSourceName,
@@ -1597,6 +1757,19 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
                 decoration: const InputDecoration(labelText: 'الكمية', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
               )),
             ]),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _costUsdCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'التكلفة الفعلية (\$)',
+                hintText: 'بعد الشراء الفعلي',
+                hintStyle: TextStyle(color: Colors.white24),
+                prefixIcon: Icon(Icons.receipt_long_outlined, size: 18),
+                isDense: true,
+                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              ),
+            ),
             const SizedBox(height: 12),
             // Source dropdown
             Container(

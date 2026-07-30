@@ -21,6 +21,7 @@ import { syncRoutes } from './routes/sync';
 import { settlementRoutes } from './routes/settlements';
 import { settingsRoutes } from './routes/settings';
 import { toolRoutes } from './routes/tools';
+import { shipmentRoutes } from './routes/shipments';
 import { cronHandler } from './cron';
 import { createSentryClient } from './lib/sentry';
 import type { AppEnv } from './types';
@@ -120,6 +121,7 @@ protectedApp.route('/sync', syncRoutes);
 protectedApp.route('/settlements', settlementRoutes);
 protectedApp.route('/settings', settingsRoutes);
 protectedApp.route('/tools', toolRoutes);
+protectedApp.route('/shipments', shipmentRoutes);
 
 app.route('/api/v1', protectedApp);
 

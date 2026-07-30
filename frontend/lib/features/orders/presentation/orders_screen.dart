@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -396,7 +397,7 @@ class _OrderTile extends StatelessWidget {
   }
 }
 
-// ─── New Order Dialog (Phone-First Identity + Multi-Item) ──
+// ─── New Order Dialog — Manual ERP Entry ──────────────────
 class _NewOrderDialog extends ConsumerStatefulWidget {
   final VoidCallback onCreated;
   const _NewOrderDialog({required this.onCreated});
@@ -404,36 +405,72 @@ class _NewOrderDialog extends ConsumerStatefulWidget {
   ConsumerState<_NewOrderDialog> createState() => _NewOrderDialogState();
 }
 
+// Per-item entry for individual_items orders.
+// Two generic attribute slots whose labels adapt to the selected category.
 class _ItemEntry {
-  final TextEditingController productCtrl;
-  final TextEditingController urlCtrl;
-  final TextEditingController skuCtrl;
-  final TextEditingController priceCtrl;
-  final TextEditingController sizeCtrl;
-  final TextEditingController colorCtrl;
-  final TextEditingController qtyCtrl;
+  final TextEditingController nameCtrl;
+  final TextEditingController salePriceCtrl;
+  final TextEditingController attr1Ctrl; // size / version / shade / details
+  final TextEditingController attr2Ctrl; // color / capacity / volume
+  String? category; // 'clothing'|'electronics'|'cosmetics'|'general'
 
   _ItemEntry()
-    : productCtrl = TextEditingController(),
-      urlCtrl = TextEditingController(),
-      skuCtrl = TextEditingController(),
-      priceCtrl = TextEditingController(),
-      sizeCtrl = TextEditingController(),
-      colorCtrl = TextEditingController(),
-      qtyCtrl = TextEditingController(text: '1');
+      : nameCtrl = TextEditingController(),
+        salePriceCtrl = TextEditingController(),
+        attr1Ctrl = TextEditingController(),
+        attr2Ctrl = TextEditingController();
+
+  String get attr1Label {
+    switch (category) {
+      case 'clothing':    return 'المقاس';
+      case 'electronics': return 'الإصدار';
+      case 'cosmetics':   return 'التظليل';
+      default:            return 'تفاصيل';
+    }
+  }
+
+  String get attr2Label {
+    switch (category) {
+      case 'clothing':    return 'اللون';
+      case 'electronics': return 'السعة';
+      case 'cosmetics':   return 'الحجم';
+      default:            return '';
+    }
+  }
+
+  bool get showAttr1 => category != null;
+  bool get showAttr2 => category != null && category != 'general';
+
+  Map<String, dynamic> toAttributes() {
+    final map = <String, dynamic>{};
+    final v1 = attr1Ctrl.text.trim();
+    final v2 = attr2Ctrl.text.trim();
+    switch (category) {
+      case 'clothing':
+        if (v1.isNotEmpty) map['size'] = v1;
+        if (v2.isNotEmpty) map['color'] = v2;
+      case 'electronics':
+        if (v1.isNotEmpty) map['version'] = v1;
+        if (v2.isNotEmpty) map['capacity'] = v2;
+      case 'cosmetics':
+        if (v1.isNotEmpty) map['shade'] = v1;
+        if (v2.isNotEmpty) map['volume'] = v2;
+      case 'general':
+        if (v1.isNotEmpty) map['details'] = v1;
+    }
+    return map;
+  }
 
   void dispose() {
-    productCtrl.dispose();
-    urlCtrl.dispose();
-    skuCtrl.dispose();
-    priceCtrl.dispose();
-    sizeCtrl.dispose();
-    colorCtrl.dispose();
-    qtyCtrl.dispose();
+    nameCtrl.dispose();
+    salePriceCtrl.dispose();
+    attr1Ctrl.dispose();
+    attr2Ctrl.dispose();
   }
 }
 
 class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
+  // ── Customer ─────────────────────────────────────────────
   final _phoneCtrl       = TextEditingController();
   final _nameCtrl        = TextEditingController();
   final _phone2Ctrl      = TextEditingController();
@@ -441,28 +478,50 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
   final _areaCtrl        = TextEditingController();
   final _streetCtrl      = TextEditingController();
   final _locationUrlCtrl = TextEditingController();
-  final _platformCtrl    = TextEditingController(text: 'manual');
-  final _sheinUrlCtrl    = TextEditingController();
+
+  // ── Order ─────────────────────────────────────────────────
+  final _cartLinkCtrl       = TextEditingController();
+  String _orderType         = 'individual_items';
+  final _totalSalePriceCtrl = TextEditingController();
   final List<_ItemEntry> _items = [_ItemEntry()];
+
+  // ── UI state ──────────────────────────────────────────────
   bool _isLoading = false;
   String? _error;
 
-  // Phone-first state
+  // Phone-first lookup
   String? _existingCustomerId;
   bool _isLookingUp = false;
-  bool _isExisting = false;
+  bool _isExisting  = false;
   bool _lookupError = false;
   Timer? _debounce;
 
-  // Shein cart import (API-based)
-  bool _sheinFetching = false;
+  // Category display labels
+  static const _categoryOptions = [
+    ('clothing',    'ملابس'),
+    ('electronics', 'إلكترونيات'),
+    ('cosmetics',   'مستحضرات تجميل'),
+    ('general',     'عام'),
+  ];
+
+  bool get _canSubmit {
+    if (_isLoading || _isLookingUp || _lookupError) return false;
+    if (_phoneCtrl.text.trim().length < 5) return false;
+    if (_nameCtrl.text.trim().isEmpty) return false;
+    if (_cartLinkCtrl.text.trim().isEmpty) return false;
+    if (_orderType == 'individual_items') {
+      final filled = _items.where((i) => i.nameCtrl.text.trim().isNotEmpty).toList();
+      if (filled.isEmpty) return false;
+    }
+    return true;
+  }
 
   @override
   void initState() {
     super.initState();
     _phoneCtrl.addListener(_onPhoneChanged);
-    // Rebuild on name change so _canSubmit is re-evaluated
     _nameCtrl.addListener(() => setState(() {}));
+    _cartLinkCtrl.addListener(() => setState(() {}));
   }
 
   @override
@@ -470,7 +529,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
     _debounce?.cancel();
     _phoneCtrl.dispose(); _nameCtrl.dispose(); _phone2Ctrl.dispose();
     _cityCtrl.dispose(); _areaCtrl.dispose(); _streetCtrl.dispose();
-    _locationUrlCtrl.dispose(); _platformCtrl.dispose(); _sheinUrlCtrl.dispose();
+    _locationUrlCtrl.dispose(); _cartLinkCtrl.dispose(); _totalSalePriceCtrl.dispose();
     for (final item in _items) { item.dispose(); }
     super.dispose();
   }
@@ -488,114 +547,40 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
         final result = await ref.read(customersProvider.notifier).lookupByPhone(phone);
         if (!mounted) return;
         setState(() {
-          _isLookingUp = false;
-          _lookupError = false;
+          _isLookingUp = false; _lookupError = false;
           if (result != null) {
             _isExisting = true;
             _existingCustomerId = result['id'] as String?;
             _nameCtrl.text = result['full_name'] as String? ?? '';
           } else {
-            _isExisting = false;
-            _existingCustomerId = null;
+            _isExisting = false; _existingCustomerId = null;
           }
         });
       } on PhoneLookupException catch (e) {
         if (!mounted) return;
         setState(() { _isLookingUp = false; _lookupError = true; _isExisting = false; _existingCustomerId = null; });
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(e.toString()),
-          backgroundColor: AppTheme.error,
-          action: SnackBarAction(
-            label: 'إعادة المحاولة',
-            textColor: Colors.white,
-            onPressed: _onPhoneChanged,
-          ),
+          content: Text(e.toString()), backgroundColor: AppTheme.error,
+          action: SnackBarAction(label: 'إعادة المحاولة', textColor: Colors.white, onPressed: _onPhoneChanged),
         ));
       }
     });
   }
 
-  Future<void> _fetchSheinCart() async {
-    final url = _sheinUrlCtrl.text.trim();
-    if (url.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('الرجاء إدخال رابط سلة شي إن المشتركة'),
-        backgroundColor: AppTheme.error,
-      ));
-      return;
-    }
-    setState(() => _sheinFetching = true);
-    try {
-      final items = await ref.read(ordersProvider.notifier).parseSheinCart(url);
-      if (!mounted) return;
-      if (items.isEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('لم يتم العثور على منتجات في هذا الرابط'),
-          backgroundColor: AppTheme.error,
-        ));
-        return;
-      }
-      for (final e in _items) e.dispose();
-      _items.clear();
-      for (final m in items) {
-        final entry = _ItemEntry();
-        entry.productCtrl.text = (m['name']  as String?) ?? '';
-        entry.urlCtrl.text     = (m['url']   as String?) ?? '';
-        entry.skuCtrl.text     = (m['sku']   as String?) ?? '';
-        entry.priceCtrl.text   = ((m['price'] as num?)?.toStringAsFixed(2)) ?? '';
-        entry.qtyCtrl.text     = ((m['qty']   as num?)?.toInt().toString()) ?? '1';
-        entry.sizeCtrl.text    = (m['size']   as String?) ?? '';
-        entry.colorCtrl.text   = (m['color']  as String?) ?? '';
-        _items.add(entry);
-      }
-      _platformCtrl.text = 'shein';
-      setState(() {});
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('✅ تم استيراد ${items.length} منتج من شي إن'),
-        backgroundColor: AppTheme.success,
-      ));
-    } catch (e) {
-      if (!mounted) return;
-      final msg = e.toString().replaceFirst('Exception: ', '');
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-        content: Text('فشل جلب السلة: $msg'),
-        backgroundColor: AppTheme.error,
-        duration: const Duration(seconds: 6),
-      ));
-    } finally {
-      if (mounted) setState(() => _sheinFetching = false);
-    }
-  }
-
-  // Submit requires: phone resolved, name filled, at least one item with URL.
-  bool get _canSubmit {
-    if (_isLoading || _isLookingUp || _lookupError || _sheinFetching) return false;
-    if (_phoneCtrl.text.trim().length < 5) return false;
-    if (_nameCtrl.text.trim().isEmpty) return false;
-    final filledItems = _items.where((item) => item.productCtrl.text.trim().isNotEmpty).toList();
-    if (filledItems.isEmpty) return false;
-    return filledItems.every((item) => item.urlCtrl.text.trim().isNotEmpty);
-  }
-
-  void _addItem() {
-    setState(() => _items.add(_ItemEntry()));
-  }
-
-  void _removeItem(int index) {
+  void _addItem()       => setState(() => _items.add(_ItemEntry()));
+  void _removeItem(int i) {
     if (_items.length <= 1) return;
-    setState(() {
-      _items[index].dispose();
-      _items.removeAt(index);
-    });
+    setState(() { _items[i].dispose(); _items.removeAt(i); });
   }
 
   Future<void> _createOrder() async {
     if (_phoneCtrl.text.trim().isEmpty) { setState(() => _error = 'رقم الهاتف مطلوب'); return; }
-    if (_nameCtrl.text.trim().isEmpty) { setState(() => _error = 'اسم العميل مطلوب'); return; }
-    final filledItems = _items.where((item) => item.productCtrl.text.trim().isNotEmpty).toList();
-    if (filledItems.isEmpty) { setState(() => _error = 'يجب إدخال اسم منتج واحد على الأقل'); return; }
-    final missingUrl = filledItems.any((item) => item.urlCtrl.text.trim().isEmpty);
-    if (missingUrl) { setState(() => _error = 'رابط المنتج مطلوب لجميع العناصر'); return; }
+    if (_nameCtrl.text.trim().isEmpty)  { setState(() => _error = 'اسم العميل مطلوب'); return; }
+    if (_cartLinkCtrl.text.trim().isEmpty) { setState(() => _error = 'رابط السلة مطلوب'); return; }
+    if (_orderType == 'individual_items') {
+      final filled = _items.where((i) => i.nameCtrl.text.trim().isNotEmpty).toList();
+      if (filled.isEmpty) { setState(() => _error = 'يجب إدخال اسم منتج واحد على الأقل'); return; }
+    }
     setState(() { _isLoading = true; _error = null; });
     try {
       String customerId;
@@ -606,39 +591,49 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
           'id': const Uuid().v4(),
           'full_name': _nameCtrl.text.trim(),
           'phone': _phoneCtrl.text.trim(),
-          if (_phone2Ctrl.text.trim().isNotEmpty) 'phone2': _phone2Ctrl.text.trim(),
-          if (_cityCtrl.text.trim().isNotEmpty) 'city': _cityCtrl.text.trim(),
-          if (_areaCtrl.text.trim().isNotEmpty) 'area': _areaCtrl.text.trim(),
-          if (_streetCtrl.text.trim().isNotEmpty) 'street': _streetCtrl.text.trim(),
+          if (_phone2Ctrl.text.trim().isNotEmpty)      'phone2':       _phone2Ctrl.text.trim(),
+          if (_cityCtrl.text.trim().isNotEmpty)        'city':         _cityCtrl.text.trim(),
+          if (_areaCtrl.text.trim().isNotEmpty)        'area':         _areaCtrl.text.trim(),
+          if (_streetCtrl.text.trim().isNotEmpty)      'street':       _streetCtrl.text.trim(),
           if (_locationUrlCtrl.text.trim().isNotEmpty) 'location_url': _locationUrlCtrl.text.trim(),
         });
         customerId = custResult['id'] as String;
       }
 
       final orderId = const Uuid().v4();
-      final orderItems = _items
-        .where((item) => item.productCtrl.text.trim().isNotEmpty)
-        .map((item) => {
-          'id': const Uuid().v4(),
-          'product_name': item.productCtrl.text.trim(),
-          if (item.urlCtrl.text.trim().isNotEmpty) 'product_url': item.urlCtrl.text.trim(),
-          'unit_price_foreign': double.tryParse(item.priceCtrl.text) ?? 0,
-          'quantity': int.tryParse(item.qtyCtrl.text) ?? 1,
-          if (item.sizeCtrl.text.trim().isNotEmpty)  'size':  item.sizeCtrl.text.trim(),
-          if (item.colorCtrl.text.trim().isNotEmpty) 'color': item.colorCtrl.text.trim(),
-          if (item.skuCtrl.text.trim().isNotEmpty)   'sku':   item.skuCtrl.text.trim(),
-        }).toList();
+      final orderItems = _orderType == 'individual_items'
+        ? _items.where((i) => i.nameCtrl.text.trim().isNotEmpty).map((i) {
+            final attrs = i.toAttributes();
+            return {
+              'id':            const Uuid().v4(),
+              'product_name':  i.nameCtrl.text.trim(),
+              'name':          i.nameCtrl.text.trim(),
+              'sale_price_lyd': double.tryParse(i.salePriceCtrl.text.trim()),
+              'unit_price_local': double.tryParse(i.salePriceCtrl.text.trim()) ?? 0,
+              if (i.category != null) 'category':      i.category,
+              if (i.category != null) 'item_category': i.category,
+              if (attrs.isNotEmpty) 'attributes': jsonEncode(attrs),
+            };
+          }).toList()
+        : <Map<String, dynamic>>[];
 
       await ref.read(ordersProvider.notifier).createOrder({
-        'id': orderId,
+        'id':          orderId,
         'customer_id': customerId,
-        'platform': _platformCtrl.text,
+        'cart_link':   _cartLinkCtrl.text.trim(),
+        'order_type':  _orderType,
+        'platform':    'manual',
+        if (_orderType == 'full_cart' && _totalSalePriceCtrl.text.trim().isNotEmpty)
+          'total_sale_price_lyd': double.tryParse(_totalSalePriceCtrl.text.trim()),
         'items': orderItems,
       });
       widget.onCreated();
       if (mounted) Navigator.of(context).pop();
-    } catch (e) { if (mounted) setState(() => _error = e.toString()); }
-    finally { if (mounted) setState(() => _isLoading = false); }
+    } catch (e) {
+      if (mounted) setState(() => _error = e.toString());
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
   }
 
   @override
@@ -647,245 +642,311 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 860),
+        constraints: const BoxConstraints(maxWidth: 540, maxHeight: 900),
         child: Padding(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            const Text('Create New Order', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white)),
+            // ── Header ───────────────────────────────────────────
+            Row(children: [
+              const Icon(Icons.receipt_long_outlined, color: AppTheme.primary, size: 22),
+              const SizedBox(width: 10),
+              const Expanded(child: Text('طلب جديد', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white))),
+              IconButton(icon: const Icon(Icons.close, color: Colors.white38), onPressed: () => Navigator.of(context).pop(), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+            ]),
             const SizedBox(height: 20),
+
             if (_error != null) Container(
-              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 16),
+              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 14),
               decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
               child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
             ),
-            // PHONE FIRST
-            TextField(
-              controller: _phoneCtrl,
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'Phone Number *',
-                prefixIcon: const Icon(Icons.phone),
-                suffixIcon: _isLookingUp
-                  ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
-                  : _lookupError
-                    ? const Icon(Icons.wifi_off, color: AppTheme.error)
-                    : _isExisting
-                      ? const Icon(Icons.check_circle, color: AppTheme.success)
-                      : _phoneCtrl.text.length >= 5
-                        ? const Icon(Icons.person_add, color: AppTheme.accent)
-                        : null,
-              ),
-            ),
-            if (_lookupError) Container(
-              margin: const EdgeInsets.only(top: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
-              child: Row(children: [
-                const Icon(Icons.wifi_off, color: AppTheme.error, size: 16), const SizedBox(width: 6),
-                const Expanded(child: Text('تعذر البحث — تحقق من الاتصال ثم أعد المحاولة', style: TextStyle(color: AppTheme.error, fontSize: 12))),
-                TextButton(
-                  onPressed: _onPhoneChanged,
-                  style: TextButton.styleFrom(foregroundColor: AppTheme.error, padding: EdgeInsets.zero, minimumSize: const Size(50, 28)),
-                  child: const Text('إعادة', style: TextStyle(fontSize: 12)),
+
+            Flexible(child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              // ── 1. Phone-first ──────────────────────────────────
+              const _SectionHeader(icon: Icons.person_outline, label: 'بيانات العميل'),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
+                keyboardType: TextInputType.phone,
+                decoration: InputDecoration(
+                  labelText: 'رقم الهاتف *',
+                  prefixIcon: const Icon(Icons.phone),
+                  suffixIcon: _isLookingUp
+                    ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+                    : _lookupError  ? const Icon(Icons.wifi_off, color: AppTheme.error)
+                    : _isExisting   ? const Icon(Icons.check_circle, color: AppTheme.success)
+                    : _phoneCtrl.text.length >= 5 ? const Icon(Icons.person_add, color: AppTheme.accent)
+                    : null,
                 ),
-              ]),
-            ),
-            if (_isExisting && !_lookupError) Container(
-              margin: const EdgeInsets.only(top: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(color: AppTheme.success.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
-              child: const Row(children: [
-                Icon(Icons.check_circle_outline, color: AppTheme.success, size: 16), SizedBox(width: 6),
-                Text('✅ Existing Customer', style: TextStyle(color: AppTheme.success, fontSize: 12, fontWeight: FontWeight.w600)),
-              ]),
-            ),
-            if (!_isExisting && !_lookupError && _phoneCtrl.text.length >= 5 && !_isLookingUp) Container(
-              margin: const EdgeInsets.only(top: 6),
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(color: AppTheme.accent.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
-              child: const Row(children: [
-                Icon(Icons.person_add_alt_1, color: AppTheme.accent, size: 16), SizedBox(width: 6),
-                Text('🆕 New Customer', style: TextStyle(color: AppTheme.accent, fontSize: 12, fontWeight: FontWeight.w600)),
-              ]),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _nameCtrl,
-              style: const TextStyle(color: Colors.white),
-              readOnly: _isExisting,
-              decoration: InputDecoration(
-                labelText: 'Customer Name *',
-                prefixIcon: const Icon(Icons.person),
-                filled: _isExisting, fillColor: _isExisting ? AppTheme.darkCard.withValues(alpha: 0.5) : null,
               ),
-            ),
-            // Extra address fields shown only for new customers
-            if (!_isExisting && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp) ...[
+              if (_lookupError) _inlineBanner(AppTheme.error, Icons.wifi_off, 'تعذر البحث — تحقق من الاتصال', action: TextButton(onPressed: _onPhoneChanged, style: TextButton.styleFrom(foregroundColor: AppTheme.error, padding: EdgeInsets.zero, minimumSize: const Size(50, 28)), child: const Text('إعادة', style: TextStyle(fontSize: 12)))),
+              if (_isExisting && !_lookupError)     _inlineBanner(AppTheme.success, Icons.check_circle_outline, '✅ عميل موجود'),
+              if (!_isExisting && !_lookupError && _phoneCtrl.text.length >= 5 && !_isLookingUp)
+                _inlineBanner(AppTheme.accent, Icons.person_add_alt_1, '🆕 عميل جديد'),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _nameCtrl,
+                readOnly: _isExisting,
+                style: const TextStyle(color: Colors.white),
+                decoration: InputDecoration(
+                  labelText: 'اسم العميل *', prefixIcon: const Icon(Icons.person),
+                  filled: _isExisting, fillColor: _isExisting ? AppTheme.darkCard.withValues(alpha: 0.5) : null,
+                ),
+              ),
+              if (!_isExisting && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp) ...[
+                const SizedBox(height: 8),
+                Row(children: [
+                  Expanded(child: _compactField(_phone2Ctrl,      'رقم ثاني',  Icons.phone_outlined)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _compactField(_cityCtrl,        'المدينة',   Icons.location_city)),
+                ]),
+                const SizedBox(height: 6),
+                Row(children: [
+                  Expanded(child: _compactField(_areaCtrl,        'المنطقة',   Icons.map_outlined)),
+                  const SizedBox(width: 8),
+                  Expanded(child: _compactField(_streetCtrl,      'الشارع',    Icons.home_outlined)),
+                ]),
+                const SizedBox(height: 6),
+                _compactField(_locationUrlCtrl, 'رابط اللوكيشن', Icons.location_on_outlined, type: TextInputType.url),
+              ],
+
+              const SizedBox(height: 18),
+
+              // ── 2. Cart link ─────────────────────────────────────
+              const _SectionHeader(icon: Icons.link, label: 'رابط السلة'),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _cartLinkCtrl,
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+                keyboardType: TextInputType.url,
+                decoration: const InputDecoration(
+                  labelText: 'رابط السلة المشتركة *',
+                  hintText: 'https://shein.top/...',
+                  hintStyle: TextStyle(color: Colors.white24),
+                  prefixIcon: Icon(Icons.shopping_cart_outlined, size: 18),
+                  isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+              ),
+
+              const SizedBox(height: 18),
+
+              // ── 3. Order type ────────────────────────────────────
+              const _SectionHeader(icon: Icons.category_outlined, label: 'نوع الطلب'),
               const SizedBox(height: 10),
               Row(children: [
-                Expanded(child: TextField(controller: _phone2Ctrl, style: const TextStyle(color: Colors.white, fontSize: 13),
-                  keyboardType: TextInputType.phone,
-                  decoration: const InputDecoration(labelText: 'رقم ثاني', prefixIcon: Icon(Icons.phone_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
-                const SizedBox(width: 8),
-                Expanded(child: TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: const InputDecoration(labelText: 'المدينة', prefixIcon: Icon(Icons.location_city, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
+                Expanded(child: _orderTypeChip('full_cart', 'سلة تامة', Icons.shopping_basket)),
+                const SizedBox(width: 10),
+                Expanded(child: _orderTypeChip('individual_items', 'منتجات متفرقة', Icons.list_alt)),
               ]),
-              const SizedBox(height: 8),
-              Row(children: [
-                Expanded(child: TextField(controller: _areaCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: const InputDecoration(labelText: 'المنطقة', prefixIcon: Icon(Icons.map_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
-                const SizedBox(width: 8),
-                Expanded(child: TextField(controller: _streetCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
-                  decoration: const InputDecoration(labelText: 'الشارع', prefixIcon: Icon(Icons.home_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
-              ]),
-              const SizedBox(height: 8),
-              TextField(controller: _locationUrlCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
-                keyboardType: TextInputType.url,
-                decoration: const InputDecoration(labelText: 'رابط اللوكيشن', prefixIcon: Icon(Icons.location_on_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
-            ],
-            const SizedBox(height: 12),
 
-            // ── Shein Cart Import ────────────────────────────────
-            Row(children: [
-              Expanded(
-                child: TextField(
-                  controller: _sheinUrlCtrl,
-                  style: const TextStyle(color: Colors.white, fontSize: 13),
-                  keyboardType: TextInputType.url,
-                  decoration: InputDecoration(
-                    labelText: 'رابط سلة شي إن المشتركة',
-                    hintText: 'https://shein.top/...',
-                    hintStyle: const TextStyle(color: Colors.white24),
-                    prefixIcon: const Icon(Icons.shopping_cart_outlined, size: 18),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    filled: true,
-                    fillColor: AppTheme.darkCard.withValues(alpha: 0.5),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppTheme.darkBorder)),
-                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: AppTheme.darkBorder)),
+              const SizedBox(height: 16),
+
+              // ── 4a. Full-cart: single total price ────────────────
+              if (_orderType == 'full_cart') ...[
+                _compactField(_totalSalePriceCtrl, 'إجمالي سعر البيع (د.ل) *', Icons.sell_outlined,
+                  type: const TextInputType.numberWithOptions(decimal: true)),
+                const SizedBox(height: 4),
+                Text('سيُدخل الأدمن تكلفة الشراء لاحقاً', style: TextStyle(color: Colors.white38, fontSize: 11)),
+              ],
+
+              // ── 4b. Individual items: dynamic list ───────────────
+              if (_orderType == 'individual_items') ...[
+                Row(children: [
+                  const Text('المنتجات', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+                  const Spacer(),
+                  TextButton.icon(
+                    onPressed: _addItem,
+                    icon: const Icon(Icons.add_circle_outline, size: 18, color: AppTheme.secondary),
+                    label: const Text('إضافة منتج', style: TextStyle(color: AppTheme.secondary, fontSize: 13, fontWeight: FontWeight.w600)),
                   ),
-                ),
-              ),
-              const SizedBox(width: 8),
-              SizedBox(
-                height: 44,
-                child: ElevatedButton.icon(
-                  onPressed: _sheinFetching ? null : _fetchSheinCart,
-                  icon: _sheinFetching
-                    ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                    : const Icon(Icons.auto_awesome, size: 17),
-                  label: Text(_sheinFetching ? 'جاري...' : 'جلب ✨', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: AppTheme.primary.withValues(alpha: 0.15),
-                    foregroundColor: AppTheme.primary,
-                    disabledForegroundColor: AppTheme.primary.withValues(alpha: 0.4),
-                    side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.4)),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                  ),
-                ),
-              ),
-            ]),
-            const SizedBox(height: 10),
-
-            // Items section header
-            Row(children: [
-              const Text('Items', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 15)),
-              const Spacer(),
-              TextButton.icon(
-                onPressed: _addItem,
-                icon: const Icon(Icons.add_circle_outline, size: 20, color: AppTheme.secondary),
-                label: const Text('إضافة عنصر +', style: TextStyle(color: AppTheme.secondary, fontWeight: FontWeight.w600)),
-              ),
-            ]),
-            const SizedBox(height: 8),
-
-            // Items list (scrollable)
-            Flexible(
-              child: ListView.separated(
-                shrinkWrap: true,
-                itemCount: _items.length,
-                separatorBuilder: (_, __) => const SizedBox(height: 10),
-                itemBuilder: (context, index) {
-                  final item = _items[index];
-                  return Container(
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: AppTheme.darkCard.withValues(alpha: 0.5),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: AppTheme.darkBorder),
-                    ),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      Row(children: [
-                        Text('Item ${index + 1}', style: const TextStyle(color: Colors.white54, fontSize: 12, fontWeight: FontWeight.w600)),
-                        const Spacer(),
-                        if (_items.length > 1)
-                          IconButton(
-                            icon: const Icon(Icons.delete_outline, color: AppTheme.error, size: 20),
-                            onPressed: () => _removeItem(index),
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                      ]),
-                      const SizedBox(height: 8),
-                      TextField(controller: item.productCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
-                        onChanged: (_) => setState(() {}),
-                        decoration: const InputDecoration(labelText: 'اسم المنتج *', prefixIcon: Icon(Icons.shopping_bag, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
-                      const SizedBox(height: 8),
-                      TextField(controller: item.urlCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
-                        keyboardType: TextInputType.url,
-                        onChanged: (_) => setState(() {}),
-                        decoration: const InputDecoration(labelText: 'رابط المنتج *', prefixIcon: Icon(Icons.link, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10))),
-                      const SizedBox(height: 8),
-                      TextField(controller: item.skuCtrl, style: const TextStyle(color: Colors.white, fontSize: 12),
-                        decoration: const InputDecoration(labelText: 'SKU / الرقم التسلسلي', prefixIcon: Icon(Icons.qr_code, size: 16), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 8))),
-                      const SizedBox(height: 8),
-                      Row(children: [
-                        Expanded(child: TextField(controller: item.priceCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white, fontSize: 13),
-                          decoration: const InputDecoration(labelText: 'Price', prefixIcon: Icon(Icons.attach_money, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
-                        const SizedBox(width: 8),
-                        SizedBox(width: 60, child: TextField(controller: item.qtyCtrl, keyboardType: TextInputType.number, style: const TextStyle(color: Colors.white, fontSize: 13),
-                          decoration: const InputDecoration(labelText: 'Qty', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
-                      ]),
-                      const SizedBox(height: 8),
-                      Row(children: [
-                        Expanded(child: TextField(controller: item.sizeCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
-                          decoration: const InputDecoration(labelText: 'Size', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
-                        const SizedBox(width: 8),
-                        Expanded(child: TextField(controller: item.colorCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
-                          decoration: const InputDecoration(labelText: 'Color', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)))),
-                      ]),
-                    ]),
-                  );
-                },
-              ),
-            ),
-            const SizedBox(height: 20),
-            if (!_canSubmit && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp && _nameCtrl.text.trim().isEmpty)
-              Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(color: AppTheme.warning.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
-                child: const Row(children: [
-                  Icon(Icons.info_outline, color: AppTheme.warning, size: 16), SizedBox(width: 6),
-                  Text('أدخل اسم العميل للمتابعة', style: TextStyle(color: AppTheme.warning, fontSize: 12)),
                 ]),
-              ),
-            SizedBox(height: 48, child: ElevatedButton(
+                const SizedBox(height: 6),
+                ListView.separated(
+                  shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+                  itemCount: _items.length,
+                  separatorBuilder: (_, __) => const SizedBox(height: 10),
+                  itemBuilder: (_, index) => _ItemCard(
+                    entry: _items[index],
+                    index: index,
+                    canRemove: _items.length > 1,
+                    categoryOptions: _categoryOptions,
+                    onRemove: () => _removeItem(index),
+                    onChanged: () => setState(() {}),
+                  ),
+                ),
+              ],
+            ]))),
+
+            const SizedBox(height: 18),
+            if (!_canSubmit && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp && _nameCtrl.text.trim().isEmpty)
+              _inlineBanner(AppTheme.warning, Icons.info_outline, 'أدخل اسم العميل للمتابعة'),
+            SizedBox(height: 50, child: ElevatedButton(
               onPressed: _canSubmit ? _createOrder : null,
               child: _isLoading
                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : _isLookingUp
                   ? const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                       SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
-                      SizedBox(width: 8),
-                      Text('جاري البحث عن العميل...'),
+                      SizedBox(width: 8), Text('جاري البحث...'),
                     ])
-                  : Text('إنشاء الطلب (${_items.length} منتج${_items.length > 1 ? '' : ''})'),
+                  : Text('إنشاء الطلب${_orderType == 'individual_items' ? ' (${_items.length} منتج)' : ''}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
             )),
           ]),
         ),
       ),
+    );
+  }
+
+  // ── Helpers ───────────────────────────────────────────────
+
+  Widget _orderTypeChip(String value, String label, IconData icon) {
+    final selected = _orderType == value;
+    return GestureDetector(
+      onTap: () => setState(() => _orderType = value),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: selected ? AppTheme.primary.withValues(alpha: 0.2) : AppTheme.darkCard,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: selected ? AppTheme.primary : AppTheme.darkBorder, width: selected ? 1.5 : 1),
+        ),
+        child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+          Icon(icon, size: 16, color: selected ? AppTheme.primary : Colors.white54),
+          const SizedBox(width: 6),
+          Text(label, style: TextStyle(color: selected ? AppTheme.primary : Colors.white70, fontWeight: selected ? FontWeight.w700 : FontWeight.w500, fontSize: 13)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _inlineBanner(Color color, IconData icon, String text, {Widget? action}) {
+    return Container(
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(color: color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+      child: Row(children: [
+        Icon(icon, color: color, size: 15), const SizedBox(width: 6),
+        Expanded(child: Text(text, style: TextStyle(color: color, fontSize: 12))),
+        if (action != null) action,
+      ]),
+    );
+  }
+
+  Widget _compactField(TextEditingController ctrl, String label, IconData icon, {TextInputType? type}) {
+    return TextField(
+      controller: ctrl, style: const TextStyle(color: Colors.white, fontSize: 13),
+      keyboardType: type,
+      decoration: InputDecoration(
+        labelText: label, prefixIcon: Icon(icon, size: 17),
+        isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      ),
+    );
+  }
+}
+
+// ── Reusable section header ───────────────────────────────
+class _SectionHeader extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  const _SectionHeader({required this.icon, required this.label});
+  @override
+  Widget build(BuildContext context) {
+    return Row(children: [
+      Icon(icon, size: 15, color: AppTheme.primary),
+      const SizedBox(width: 6),
+      Text(label, style: const TextStyle(color: AppTheme.primary, fontWeight: FontWeight.w700, fontSize: 13, letterSpacing: 0.3)),
+      const SizedBox(width: 8),
+      const Expanded(child: Divider(color: AppTheme.darkBorder, height: 1)),
+    ]);
+  }
+}
+
+// ── Item card for individual_items orders ─────────────────
+class _ItemCard extends StatefulWidget {
+  final _ItemEntry entry;
+  final int index;
+  final bool canRemove;
+  final List<(String, String)> categoryOptions;
+  final VoidCallback onRemove;
+  final VoidCallback onChanged;
+  const _ItemCard({required this.entry, required this.index, required this.canRemove, required this.categoryOptions, required this.onRemove, required this.onChanged});
+  @override
+  State<_ItemCard> createState() => _ItemCardState();
+}
+
+class _ItemCardState extends State<_ItemCard> {
+  @override
+  Widget build(BuildContext context) {
+    final entry = widget.entry;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppTheme.darkCard.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTheme.darkBorder),
+      ),
+      child: Column(mainAxisSize: MainAxisSize.min, children: [
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
+            child: Text('${widget.index + 1}', style: const TextStyle(color: AppTheme.primary, fontSize: 11, fontWeight: FontWeight.w700)),
+          ),
+          const Spacer(),
+          if (widget.canRemove)
+            IconButton(icon: const Icon(Icons.delete_outline, color: AppTheme.error, size: 18), onPressed: widget.onRemove, padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+        ]),
+        const SizedBox(height: 8),
+        // Product name
+        TextField(
+          controller: entry.nameCtrl, style: const TextStyle(color: Colors.white, fontSize: 13),
+          onChanged: (_) => widget.onChanged(),
+          decoration: const InputDecoration(labelText: 'اسم المنتج *', prefixIcon: Icon(Icons.shopping_bag, size: 17), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+        ),
+        const SizedBox(height: 8),
+        // Sale price + category
+        Row(children: [
+          Expanded(child: TextField(
+            controller: entry.salePriceCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            style: const TextStyle(color: Colors.white, fontSize: 13),
+            decoration: const InputDecoration(labelText: 'سعر البيع (د.ل)', prefixIcon: Icon(Icons.sell_outlined, size: 17), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+          )),
+          const SizedBox(width: 8),
+          Expanded(child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 0),
+            decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(8), border: Border.all(color: AppTheme.darkBorder)),
+            child: DropdownButtonHideUnderline(child: DropdownButton<String?>(
+              value: entry.category, isExpanded: true, dropdownColor: AppTheme.darkCard,
+              style: const TextStyle(color: Colors.white, fontSize: 13),
+              icon: const Icon(Icons.expand_more, color: Colors.white54, size: 18),
+              hint: const Text('الفئة', style: TextStyle(color: Colors.white38, fontSize: 13)),
+              items: [
+                const DropdownMenuItem<String?>(value: null, child: Text('—', style: TextStyle(color: Colors.white38))),
+                ...widget.categoryOptions.map((o) => DropdownMenuItem(value: o.$1, child: Text(o.$2, style: const TextStyle(color: Colors.white)))),
+              ],
+              onChanged: (v) => setState(() { entry.category = v; }),
+            )),
+          )),
+        ]),
+        // Dynamic attribute fields
+        if (entry.showAttr1) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: TextField(
+              controller: entry.attr1Ctrl, style: const TextStyle(color: Colors.white, fontSize: 13),
+              decoration: InputDecoration(labelText: entry.attr1Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+            )),
+            if (entry.showAttr2) ...[
+              const SizedBox(width: 8),
+              Expanded(child: TextField(
+                controller: entry.attr2Ctrl, style: const TextStyle(color: Colors.white, fontSize: 13),
+                decoration: InputDecoration(labelText: entry.attr2Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
+              )),
+            ],
+          ]),
+        ],
+      ]),
     );
   }
 }
@@ -973,8 +1034,9 @@ class _CreateSettlementDialogState extends State<_CreateSettlementDialog> {
                 if (name.isEmpty) { setState(() => _error = 'اسم الدفعة مطلوب'); return; }
                 if (rate == null || rate <= 0) { setState(() => _error = 'سعر الصرف يجب أن يكون رقماً موجباً'); return; }
                 setState(() { _loading = true; _error = null; });
+                final nav = Navigator.of(context);
                 await widget.onConfirm(name, rate);
-                if (mounted) Navigator.of(context).pop();
+                if (mounted) nav.pop();
               },
               icon: _loading
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
@@ -1041,9 +1103,10 @@ class _BulkUpdateDialogState extends State<_BulkUpdateDialog> {
             const SizedBox(height: 24),
             SizedBox(height: 48, child: ElevatedButton.icon(
               onPressed: _loading ? null : () async {
+                final nav = Navigator.of(context);
                 setState(() => _loading = true);
                 await widget.onConfirm(_status);
-                if (mounted) Navigator.of(context).pop();
+                if (mounted) nav.pop();
               },
               icon: _loading
                 ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
