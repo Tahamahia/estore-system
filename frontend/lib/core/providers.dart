@@ -82,9 +82,13 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
 
   /// Fetches items from a Shein shared-cart link via the backend reverse-engineer proxy.
   /// Returns a list of item maps with keys: name, url, sku, price, qty, size, color.
+  /// Backend always returns HTTP 200 — errors are signalled via { success: false, message }.
   Future<List<Map<String, dynamic>>> parseSheinCart(String url) async {
     final response = await _dio.post('/tools/parse-shein-cart', data: {'url': url});
     final data = response.data as Map<String, dynamic>;
+    if (data['success'] == false) {
+      throw Exception(data['message'] as String? ?? 'فشل جلب السلة');
+    }
     return List<Map<String, dynamic>>.from(data['items'] ?? []);
   }
 
