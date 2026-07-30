@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -1503,9 +1504,8 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
   late final TextEditingController _weightCtrl;
   late final TextEditingController _localPriceCtrl;
   late final TextEditingController _qtyCtrl;
-  late final TextEditingController _sizeCtrl;
-  late final TextEditingController _colorCtrl;
-  late final TextEditingController _brandCtrl;
+  late final TextEditingController _attr1Ctrl;
+  late final TextEditingController _attr2Ctrl;
   String? _selectedCategory;
   late String _selectedStatus;
   String? _selectedSourceName;
@@ -1513,7 +1513,53 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
   bool _saving = false;
   String? _error;
 
-  static const _categories = ['Clothes', 'Electronic', 'Accessories', 'Other'];
+  static const _categoryOptions = [
+    ('clothing',    'ملابس'),
+    ('electronics', 'إلكترونيات'),
+    ('cosmetics',   'مستحضرات تجميل'),
+    ('general',     'عام'),
+  ];
+
+  static const _legacyCategoryMap = {
+    'Clothes':     'clothing',
+    'Electronic':  'electronics',
+    'Accessories': 'cosmetics',
+    'Other':       'general',
+  };
+
+  String get _attr1Label {
+    switch (_selectedCategory) {
+      case 'clothing':    return 'المقاس';
+      case 'electronics': return 'الإصدار';
+      case 'cosmetics':   return 'التظليل';
+      default:            return 'تفاصيل';
+    }
+  }
+
+  String get _attr2Label {
+    switch (_selectedCategory) {
+      case 'clothing':    return 'اللون';
+      case 'electronics': return 'السعة';
+      case 'cosmetics':   return 'الحجم';
+      default:            return '';
+    }
+  }
+
+  bool get _showAttr1 => _selectedCategory != null;
+  bool get _showAttr2 => _selectedCategory != null && _selectedCategory != 'general';
+
+  Map<String, dynamic> _toAttributes() {
+    final map = <String, dynamic>{};
+    final v1 = _attr1Ctrl.text.trim();
+    final v2 = _attr2Ctrl.text.trim();
+    switch (_selectedCategory) {
+      case 'clothing':    if (v1.isNotEmpty) map['size'] = v1; if (v2.isNotEmpty) map['color'] = v2;
+      case 'electronics': if (v1.isNotEmpty) map['version'] = v1; if (v2.isNotEmpty) map['capacity'] = v2;
+      case 'cosmetics':   if (v1.isNotEmpty) map['shade'] = v1; if (v2.isNotEmpty) map['volume'] = v2;
+      case 'general':     if (v1.isNotEmpty) map['details'] = v1;
+    }
+    return map;
+  }
 
   static const _statusOptions = [
     ('pending',           'في انتظار الشراء'),
@@ -1543,11 +1589,30 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     _localPriceCtrl = TextEditingController(text: localPrice > 0 ? localPrice.toStringAsFixed(0) : '');
     final qty  = (widget.item['quantity'] as num?)?.toInt() ?? 1;
     _qtyCtrl   = TextEditingController(text: qty.toString());
-    _sizeCtrl  = TextEditingController(text: widget.item['size']  as String? ?? '');
-    _colorCtrl = TextEditingController(text: widget.item['color'] as String? ?? '');
-    _brandCtrl = TextEditingController(text: widget.item['brand'] as String? ?? '');
-    final rawCat = widget.item['item_category'] as String?;
-    _selectedCategory = _categories.contains(rawCat) ? rawCat : null;
+    // Category: prefer new lowercase key, fall back to legacy key with mapping
+    final rawCat = (widget.item['category'] ?? widget.item['item_category']) as String?;
+    _selectedCategory = rawCat != null
+        ? (_categoryOptions.any((o) => o.$1 == rawCat)
+            ? rawCat
+            : _legacyCategoryMap[rawCat])
+        : null;
+
+    // Parse attributes JSON to pre-fill dynamic attribute fields
+    String attr1 = '', attr2 = '';
+    final rawAttrs = widget.item['attributes'];
+    if (rawAttrs != null && rawAttrs.toString().isNotEmpty) {
+      try {
+        final attrs = (rawAttrs is String ? jsonDecode(rawAttrs) : rawAttrs) as Map<String, dynamic>;
+        switch (_selectedCategory) {
+          case 'clothing':    attr1 = attrs['size'] as String? ?? ''; attr2 = attrs['color'] as String? ?? '';
+          case 'electronics': attr1 = attrs['version'] as String? ?? ''; attr2 = attrs['capacity'] as String? ?? '';
+          case 'cosmetics':   attr1 = attrs['shade'] as String? ?? ''; attr2 = attrs['volume'] as String? ?? '';
+          case 'general':     attr1 = attrs['details'] as String? ?? '';
+        }
+      } catch (_) {}
+    }
+    _attr1Ctrl = TextEditingController(text: attr1);
+    _attr2Ctrl = TextEditingController(text: attr2);
     final rawStatus = (widget.item['status'] as String?) ?? 'pending';
     _selectedStatus = _statusOptions.any((o) => o.$1 == rawStatus) ? rawStatus : 'pending';
     _selectedSourceName = widget.item['source_name'] as String?;
@@ -1568,9 +1633,8 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     _weightCtrl.dispose();
     _localPriceCtrl.dispose();
     _qtyCtrl.dispose();
-    _sizeCtrl.dispose();
-    _colorCtrl.dispose();
-    _brandCtrl.dispose();
+    _attr1Ctrl.dispose();
+    _attr2Ctrl.dispose();
     super.dispose();
   }
 
@@ -1598,10 +1662,11 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
           if (_localPriceCtrl.text.trim().isNotEmpty)
             'unit_price_local': double.tryParse(_localPriceCtrl.text.trim()) ?? 0,
           'quantity':     int.tryParse(_qtyCtrl.text.trim()) ?? 1,
-          'size':         _sizeCtrl.text.trim(),
-          'color':        _colorCtrl.text.trim(),
-          'brand':        _brandCtrl.text.trim(),
-          if (_selectedCategory != null) 'item_category': _selectedCategory,
+          if (_selectedCategory != null) ...{
+            'category':      _selectedCategory,
+            'item_category': _selectedCategory,
+            'attributes':    jsonEncode(_toAttributes()),
+          },
           'status':       _selectedStatus,
           'version':      widget.item['version'],
         },
@@ -1621,8 +1686,6 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     final weight = double.tryParse(_weightCtrl.text.trim()) ?? 0;
     final qty = int.tryParse(_qtyCtrl.text.trim()) ?? 1;
     final calcShipping = weight * _currentShippingRate * qty;
-    final showClothesFields = _selectedCategory == 'Clothes';
-    final showBrandField = _selectedCategory == 'Electronic' || _selectedCategory == 'Accessories';
 
     return Dialog(
       backgroundColor: AppTheme.darkSurface,
@@ -1719,25 +1782,25 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
                   hint: const Text('الفئة (اختياري)', style: TextStyle(color: Colors.white38)),
                   items: [
                     const DropdownMenuItem<String?>(value: null, child: Text('— بدون فئة —', style: TextStyle(color: Colors.white38))),
-                    ..._categories.map((c) => DropdownMenuItem(value: c, child: Text(c, style: const TextStyle(color: Colors.white)))),
+                    ..._categoryOptions.map((opt) => DropdownMenuItem(value: opt.$1, child: Text(opt.$2, style: const TextStyle(color: Colors.white)))),
                   ],
                   onChanged: (v) => setState(() => _selectedCategory = v),
                 ),
               ),
             ),
-            if (showClothesFields) ...[
+            if (_showAttr1) ...[
               const SizedBox(height: 12),
-              Row(children: [
-                Expanded(child: TextField(controller: _sizeCtrl, style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(labelText: 'المقاس', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-                const SizedBox(width: 12),
-                Expanded(child: TextField(controller: _colorCtrl, style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(labelText: 'اللون', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-              ]),
-            ] else if (showBrandField) ...[
-              const SizedBox(height: 12),
-              TextField(controller: _brandCtrl, style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'الماركة', prefixIcon: Icon(Icons.verified_outlined, size: 18))),
+              if (_showAttr2)
+                Row(children: [
+                  Expanded(child: TextField(controller: _attr1Ctrl, style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(labelText: _attr1Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+                  const SizedBox(width: 12),
+                  Expanded(child: TextField(controller: _attr2Ctrl, style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(labelText: _attr2Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
+                ])
+              else
+                TextField(controller: _attr1Ctrl, style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(labelText: _attr1Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12))),
             ],
             const SizedBox(height: 16),
 
