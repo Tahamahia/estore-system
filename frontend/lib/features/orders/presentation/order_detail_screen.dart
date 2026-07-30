@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
@@ -364,8 +365,9 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                     // Always pop using the dialog's own context — never the page context
                     Navigator.of(statusCtx).pop();
                     if (!mounted) return;
-                    // Capture messenger now while Scaffold is guaranteed in the tree
+                    // Capture messenger and a rollback snapshot before any mutation
                     final messenger = ScaffoldMessenger.of(context);
+                    final previousOrder = _order;
                     try {
                       await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
                         'status': selectedStatus,
@@ -446,10 +448,23 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                         content: Text('✅ تم تحديث ${successIds.length} منتج'),
                         backgroundColor: AppTheme.success,
                       ));
+                    } on DioException catch (e) {
+                      if (!mounted) return;
+                      // Rollback the optimistic state so the UI reflects reality
+                      setState(() => _order = previousOrder);
+                      final data = e.response?.data;
+                      final errorMsg = data is Map<String, dynamic>
+                          ? (data['message'] as String? ?? data['error'] as String? ?? 'حدث خطأ غير معروف')
+                          : (data?.toString() ?? 'فشل الاتصال بالخادم');
+                      messenger.showSnackBar(SnackBar(
+                        content: Text('فشل: $errorMsg'),
+                        backgroundColor: AppTheme.error,
+                      ));
                     } catch (e) {
                       if (!mounted) return;
+                      setState(() => _order = previousOrder);
                       messenger.showSnackBar(SnackBar(
-                        content: Text('فشل: $e'),
+                        content: Text('فشل: ${e.toString()}'),
                         backgroundColor: AppTheme.error,
                       ));
                     }

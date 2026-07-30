@@ -537,10 +537,16 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
   setClauses.push(`version = version + 1`);
   setClauses.push(`updated_at = datetime('now')`);
 
-  const result = await c.env.DB.prepare(
-    `UPDATE order_items SET ${setClauses.join(', ')}
-     WHERE id = ? AND order_id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
-  ).bind(...values, itemId, orderId, tenantId, version).run();
+  let result;
+  try {
+    result = await c.env.DB.prepare(
+      `UPDATE order_items SET ${setClauses.join(', ')}
+       WHERE id = ? AND order_id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
+    ).bind(...values, itemId, orderId, tenantId, version).run();
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: 'Database Error', message: msg }, 400);
+  }
 
   if (result.meta.changes === 0) {
     return c.json({
@@ -631,7 +637,13 @@ orderRoutes.patch('/:id', async (c) => {
     );
   }
 
-  const results = await c.env.DB.batch(stmts);
+  let results;
+  try {
+    results = await c.env.DB.batch(stmts);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: 'Database Error', message: msg }, 400);
+  }
 
   if ((results[0].meta.changes ?? 0) === 0) {
     return c.json({
