@@ -6,58 +6,42 @@ export const toolRoutes = new Hono<AppEnv>();
 const MOBILE_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 16_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.6 Mobile/15E148 Safari/604.1';
 
-const ALLOWED_SHEIN_HOSTS = [
-  'shein.com',
-  'shein.top',
-  'sheinlinks.com',
-  'm.shein.com',
-  'onelink.shein.com',
-  'in.shein.com',
-  'us.shein.com',
-  'ar.shein.com',
-  'fr.shein.com',
-  'de.shein.com',
-  'uk.shein.com',
-  'eu.shein.com',
-];
+// ─── SSRF guard — only the USER-SUPPLIED input is checked ──
+// Intermediate redirect hops may pass through CDN/deeplink services
+// (e.g. AppsFlyer for onelink.shein.com), so we only block clearly
+// non-Shein starting URLs rather than every hop in the chain.
+const SHEIN_INPUT_PATTERN = /^https?:\/\/([a-z0-9-]+\.)*shein\.(com|top|co\.uk|com\.au|de|fr|es|it|se|nl|be|at|ch|pl|ru|br|mx|in|jp|kr|com\.ar|com\.br|com\.mx)([/?#]|$)/i;
 
-function isSheinHost(urlStr: string): boolean {
-  try {
-    const host = new URL(urlStr).hostname.toLowerCase();
-    return ALLOWED_SHEIN_HOSTS.some((d) => host === d || host.endsWith('.' + d));
-  } catch {
-    return false;
-  }
-}
-
-/** Follow HTTP 3xx redirects manually to stay in allowed-host list. */
-async function resolveRedirects(start: string, maxHops = 8): Promise<string> {
-  let current = start;
-  for (let i = 0; i < maxHops; i++) {
-    if (!isSheinHost(current)) {
-      throw new Error(`Redirect left Shein domain: ${current}`);
-    }
-    const resp = await fetch(current, {
-      method: 'GET',
-      redirect: 'manual',
-      headers: { 'User-Agent': MOBILE_UA, Accept: 'text/html,*/*;q=0.8' },
-    });
-    if (resp.status < 300 || resp.status >= 400) return current;
-    const loc = resp.headers.get('location');
-    if (!loc) return current;
-    current = loc.startsWith('http') ? loc : new URL(loc, current).href;
-  }
-  return current;
+function isSheinUrl(urlStr: string): boolean {
+  // Also allow sheinlinks.com (Shein's own link shortener)
+  if (/^https?:\/\/([a-z0-9-]+\.)*sheinlinks\.com([/?#]|$)/i.test(urlStr)) return true;
+  return SHEIN_INPUT_PATTERN.test(urlStr);
 }
 
 /** Extract the `shc` share-cart code from a URL string. */
-function extractShc(url: string): string | null {
+function extractShcFromUrl(url: string): string | null {
   try {
+    // Standard query param
     const shc = new URL(url).searchParams.get('shc');
-    if (shc) return shc;
+    if (shc && /^[A-Za-z0-9_-]{3,60}$/.test(shc)) return shc;
   } catch { /* fall through */ }
-  const m = url.match(/[?&#]shc=([A-Za-z0-9_-]+)/);
+  // Regex fallback covers hashes and malformed URLs
+  const m = url.match(/[?&#]shc=([A-Za-z0-9_-]{3,60})/);
   return m ? m[1] : null;
+}
+
+/** Scan raw HTML/JSON response text for an embedded shc code. */
+function extractShcFromBody(body: string): string | null {
+  // JSON key: "shc":"XXXXX"
+  const jsonMatch = body.match(/"shc"\s*:\s*"([A-Za-z0-9_-]{3,60})"/);
+  if (jsonMatch) return jsonMatch[1];
+  // URL param embedded in HTML: shc=XXXXX
+  const paramMatch = body.match(/[?&#]shc=([A-Za-z0-9_-]{3,60})/);
+  if (paramMatch) return paramMatch[1];
+  // share-cart URL pattern anywhere in the page
+  const urlMatch = body.match(/share[_-]?cart[^'"]*shc=([A-Za-z0-9_-]{3,60})/i);
+  if (urlMatch) return urlMatch[1];
+  return null;
 }
 
 // ─── Field mapping helpers ─────────────────────────────────
@@ -81,8 +65,8 @@ function getAttrs(list: unknown): { size: string; color: string } {
     const attr = a as Record<string, unknown>;
     const n = String(attr.attr_name || attr.name || '').toLowerCase();
     const v = String(attr.attr_value_name || attr.attr_value || attr.value || '');
-    if (n.includes('size'))                            size  = v;
-    if (n.includes('color') || n.includes('colour'))  color = v;
+    if (n.includes('size'))                           size  = v;
+    if (n.includes('color') || n.includes('colour')) color = v;
   }
   return { size, color };
 }
@@ -136,7 +120,7 @@ function hunt(obj: unknown, depth = 0): Record<string, unknown>[] {
   }
 
   const rec = obj as Record<string, unknown>;
-  for (const key of ['carts', 'cartList', 'cart_list', 'goods_list', 'goodsList', 'products', 'items', 'result']) {
+  for (const key of ['carts', 'cartList', 'cart_list', 'goods_list', 'goodsList', 'products', 'items', 'result', 'info', 'data']) {
     if (rec[key]) {
       const r = hunt(rec[key], depth + 1);
       if (r.length) return r;
@@ -156,59 +140,104 @@ toolRoutes.post('/parse-shein-cart', async (c) => {
   try {
     body = await c.req.json<{ url?: string }>();
   } catch {
-    return c.json({ error: 'Request body must be JSON with a "url" field' }, 400);
+    return c.json({ error: 'يجب أن يحتوي الطلب على JSON مع حقل "url"' }, 400);
   }
 
   const rawUrl = (body?.url ?? '').trim();
-  if (!rawUrl) return c.json({ error: '"url" is required' }, 400);
+  if (!rawUrl) return c.json({ error: 'حقل "url" مطلوب' }, 400);
 
-  if (!isSheinHost(rawUrl)) {
-    return c.json({ error: 'URL must be a Shein link (shein.com, shein.top, etc.)' }, 400);
+  if (!isSheinUrl(rawUrl)) {
+    return c.json({ error: 'يجب أن يكون الرابط من موقع شي إن (shein.com, shein.top, إلخ)' }, 400);
   }
 
-  // Step 1 — follow redirects (shortlinks → canonical URL)
-  let finalUrl: string;
+  // ── Step 1: follow all redirects with native CF runtime ──────────────
+  // redirect:'follow' lets the runtime traverse the full chain (including
+  // through AppsFlyer/onelink CDN hops) without us needing to check each
+  // intermediate domain.  We only validated the *input* URL above.
+  let landingResp: Response;
+  let landingBody = '';
   try {
-    finalUrl = await resolveRedirects(rawUrl);
+    landingResp = await fetch(rawUrl, {
+      redirect: 'follow',
+      headers: {
+        'User-Agent':     MOBILE_UA,
+        'Accept':         'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language':'en-US,en;q=0.9,ar;q=0.8',
+      },
+    });
+    // Read body for HTML-based shc extraction (capped at 256 KB)
+    const buf = await landingResp.arrayBuffer();
+    landingBody = new TextDecoder().decode(buf.slice(0, 262144));
   } catch (err) {
-    return c.json({ error: `Redirect error: ${err instanceof Error ? err.message : err}` }, 502);
+    return c.json({ error: `فشل تتبع الرابط: ${err instanceof Error ? err.message : err}` }, 502);
   }
 
-  // Step 2 — extract share code
-  const shc = extractShc(finalUrl);
+  // ── Step 2: extract shc from final URL or page body ──────────────────
+  const finalUrl = landingResp.url || rawUrl;
+  let shc = extractShcFromUrl(finalUrl) ?? extractShcFromBody(landingBody);
+
+  // Fallback: for shein.top/XXXXX the path segment itself is the share code
+  if (!shc) {
+    try {
+      const pathPart = new URL(rawUrl).pathname.replace(/^\/+/, '').split('/')[0];
+      if (pathPart && /^[A-Za-z0-9_-]{4,30}$/.test(pathPart)) {
+        shc = pathPart;
+      }
+    } catch { /* ignore */ }
+  }
+
   if (!shc) {
     return c.json({
-      error: 'Could not extract share code (shc=…) from URL. Make sure this is a Shein shared-cart link.',
+      error: 'تعذر استخراج رمز السلة من الرابط. تأكد أن هذا رابط سلة مشتركة من شي إن وليس رابط منتج عادي.',
       resolved_url: finalUrl,
     }, 422);
   }
 
-  // Step 3 — call Shein's internal share-cart API
+  // ── Step 3: call Shein's internal share-cart API ──────────────────────
   const apiUrl = `https://m.shein.com/api/cart/share/detail?shc=${encodeURIComponent(shc)}`;
   let apiData: Record<string, unknown>;
   try {
-    const resp = await fetch(apiUrl, {
+    const apiResp = await fetch(apiUrl, {
       headers: {
-        'User-Agent':       MOBILE_UA,
-        'Accept':           'application/json, text/javascript, */*; q=0.01',
-        'X-Requested-With': 'XMLHttpRequest',
-        'Referer':          'https://m.shein.com/',
-        'Accept-Language':  'en-US,en;q=0.9,ar;q=0.8',
+        'User-Agent':        MOBILE_UA,
+        'Accept':            'application/json, text/javascript, */*; q=0.01',
+        'X-Requested-With':  'XMLHttpRequest',
+        'Referer':           'https://m.shein.com/',
+        'Accept-Language':   'en-US,en;q=0.9,ar;q=0.8',
       },
     });
-    if (!resp.ok) {
-      return c.json({ error: `Shein API returned HTTP ${resp.status}` }, 502);
+
+    const raw = await apiResp.text();
+
+    // Shein sometimes returns 200 with an error payload ({code: -1, ...})
+    // or a non-JSON page when WAF triggers. Handle both gracefully.
+    try {
+      apiData = JSON.parse(raw) as Record<string, unknown>;
+    } catch {
+      return c.json({
+        error: 'لم يتمكن الخادم من قراءة رد شي إن. قد يكون الرابط قد انتهت صلاحيته.',
+        http_status: apiResp.status,
+      }, 502);
     }
-    apiData = (await resp.json()) as Record<string, unknown>;
+
+    // Shein uses code:0 for success; anything else is an API-level error
+    const code = apiData.code ?? apiData.status;
+    if (code !== 0 && code !== '0' && !apiResp.ok) {
+      const msg = String(apiData.msg || apiData.message || apiData.error || '');
+      return c.json({
+        error: `رفض موقع شي إن الطلب${msg ? `: ${msg}` : ''}. حاول فتح الرابط في المتصفح للتأكد من صلاحيته.`,
+        shein_code: code,
+      }, 400);
+    }
   } catch (err) {
-    return c.json({ error: `Shein API request failed: ${err instanceof Error ? err.message : err}` }, 502);
+    return c.json({ error: `فشل الاتصال بخادم شي إن: ${err instanceof Error ? err.message : err}` }, 502);
   }
 
-  // Step 4 — extract and map cart items
+  // ── Step 4: map response items ────────────────────────────────────────
   const items = hunt(apiData);
   if (!items.length) {
     return c.json({
-      error: 'No cart items found in Shein response. The link may have expired or the cart is empty.',
+      error: 'السلة فارغة أو انتهت صلاحية الرابط. تأكد أن الرابط لا يزال صالحاً.',
       shc,
     }, 422);
   }
