@@ -38,6 +38,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   bool _orphanLoading = false;
   bool _dispatchLoading = false;
   String? _error;
+  final Set<String> _selectedItemIds = {};
 
   @override
   void initState() {
@@ -51,7 +52,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     try {
       final order = await ref.read(ordersProvider.notifier).fetchOrderById(widget.orderId);
       if (!mounted) return;
-      setState(() { _order = order; _loading = false; });
+      setState(() { _order = order; _loading = false; _selectedItemIds.clear(); });
     } catch (e) {
       if (!mounted) return;
       setState(() { _error = e.toString(); _loading = false; });
@@ -497,6 +498,111 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     );
   }
 
+  /// Opens a status-chip dialog and PATCHes only the items in [_selectedItemIds].
+  void _showBulkItemStatusDialog() {
+    if (_selectedItemIds.isEmpty) return;
+    const validItemStatuses = [
+      'pending', 'purchased', 'shipped', 'arrived_warehouse',
+      'sorted', 'ready_dispatch', 'dispatched', 'delivered', 'cancelled',
+    ];
+    String selectedStatus = validItemStatuses.first;
+    showDialog(
+      context: context,
+      builder: (bulkCtx) => Dialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: StatefulBuilder(builder: (_, setDialogState) {
+              return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Row(children: [
+                  const Icon(Icons.check_box_outlined, color: AppTheme.primary, size: 20),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(
+                    'تحديث ${_selectedItemIds.length} عنصر محدد',
+                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
+                  )),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white38),
+                    onPressed: () => Navigator.of(bulkCtx).pop(),
+                    padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                  ),
+                ]),
+                const SizedBox(height: 6),
+                const Text('اختر الحالة الجديدة للعناصر المحددة', style: TextStyle(color: Colors.white54, fontSize: 13)),
+                const SizedBox(height: 20),
+                Wrap(spacing: 8, runSpacing: 8, children: [
+                  for (final s in validItemStatuses)
+                    ChoiceChip(
+                      label: Text(_translateStatus(s)),
+                      selected: selectedStatus == s,
+                      onSelected: (_) => setDialogState(() => selectedStatus = s),
+                      selectedColor: _statusColor(s),
+                      backgroundColor: AppTheme.darkCard,
+                      labelStyle: TextStyle(color: selectedStatus == s ? Colors.white : Colors.white70, fontSize: 13),
+                    ),
+                ]),
+                const SizedBox(height: 24),
+                SizedBox(height: 48, child: ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.of(bulkCtx).pop();
+                    if (!mounted) return;
+                    final messenger = ScaffoldMessenger.of(context);
+                    final targetIds = Set<String>.from(_selectedItemIds);
+                    final allItems = (_order?['items'] as List<dynamic>? ?? [])
+                        .map((r) => r as Map<String, dynamic>)
+                        .where((item) => targetIds.contains(item['id'] as String?))
+                        .toList();
+                    final successIds = <String>{};
+                    for (final item in allItems) {
+                      try {
+                        await ref.read(ordersProvider.notifier).updateOrderItem(
+                          widget.orderId,
+                          item['id'] as String,
+                          {'status': selectedStatus, 'version': item['version']},
+                        );
+                        successIds.add(item['id'] as String);
+                      } catch (_) {}
+                    }
+                    if (!mounted) return;
+                    if (successIds.isNotEmpty) {
+                      setState(() {
+                        if (_order == null) return;
+                        final o = Map<String, dynamic>.from(_order!);
+                        o['items'] = (o['items'] as List<dynamic>).map((raw) {
+                          final itm = Map<String, dynamic>.from(raw as Map<String, dynamic>);
+                          if (successIds.contains(itm['id'] as String?)) {
+                            itm['status'] = selectedStatus;
+                            itm['version'] = ((itm['version'] as num?)?.toInt() ?? 0) + 1;
+                          }
+                          return itm;
+                        }).toList();
+                        _order = o;
+                        _selectedItemIds.clear();
+                      });
+                    }
+                    final failed = targetIds.length - successIds.length;
+                    messenger.showSnackBar(SnackBar(
+                      content: Text(failed == 0
+                          ? '✅ تم تحديث ${successIds.length} عنصر إلى "${_translateStatus(selectedStatus)}"'
+                          : '✅ ${successIds.length} نجح، $failed فشل — تحقق من أرقام الإصدار'),
+                      backgroundColor: failed == 0 ? AppTheme.success : AppTheme.warning,
+                    ));
+                  },
+                  icon: const Icon(Icons.check, size: 20),
+                  label: const Text('تحديث', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+                )),
+              ]);
+            }),
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_loading) {
@@ -720,57 +826,133 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 _FinancialSummaryCard(order: order, items: items),
                 const SizedBox(height: 16),
 
-                // Items list header with "Add Item" button
-                Row(children: [
-                  Text(
-                    'العناصر (${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))})',
-                    style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white),
-                  ),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: _showAddItemDialog,
-                    icon: const Icon(Icons.add_circle, color: AppTheme.secondary, size: 20),
-                    label: const Text('إضافة منتج', style: TextStyle(color: AppTheme.secondary, fontWeight: FontWeight.w600)),
-                  ),
-                ]),
-                const SizedBox(height: 12),
+                // Build selection state derived from current items
+                ...() {
+                  final selectableIds = items
+                      .map((r) => (r as Map<String, dynamic>)['id'] as String?)
+                      .whereType<String>()
+                      .toSet();
+                  final allSelected = selectableIds.isNotEmpty &&
+                      selectableIds.every(_selectedItemIds.contains);
+                  final noneSelected = _selectedItemIds.isEmpty ||
+                      !selectableIds.any(_selectedItemIds.contains);
 
-                // Items — shrinkWrap so list expands to full height inside SingleChildScrollView
-                if (items.isEmpty)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 32),
-                    child: Column(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.shopping_bag_outlined, color: Colors.white24, size: 56),
-                      const SizedBox(height: 12),
-                      const Text('لا توجد عناصر في هذا الطلب', style: TextStyle(color: Colors.white38, fontSize: 16)),
-                      const SizedBox(height: 16),
-                      ElevatedButton.icon(
-                        onPressed: _showAddItemDialog,
-                        icon: const Icon(Icons.add_shopping_cart),
-                        label: const Text('إضافة أول منتج'),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: AppTheme.primary,
-                          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                  return [
+                    // ── Items list header ──────────────────────────────────
+                    Row(children: [
+                      if (items.isNotEmpty) ...[
+                        SizedBox(
+                          width: 24,
+                          height: 24,
+                          child: Checkbox(
+                            tristate: true,
+                            value: allSelected ? true : (noneSelected ? false : null),
+                            onChanged: (v) => setState(() {
+                              if (v == true) _selectedItemIds.addAll(selectableIds);
+                              else _selectedItemIds.removeAll(selectableIds);
+                            }),
+                            activeColor: AppTheme.primary,
+                            checkColor: Colors.white,
+                            side: const BorderSide(color: Colors.white38, width: 1.5),
+                            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
                         ),
+                        const SizedBox(width: 8),
+                      ],
+                      Text(
+                        'العناصر (${items.fold<int>(0, (sum, raw) => sum + (((raw as Map<String, dynamic>)['quantity'] as num?)?.toInt() ?? 1))})',
+                        style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w600, color: Colors.white),
+                      ),
+                      const Spacer(),
+                      TextButton.icon(
+                        onPressed: _showAddItemDialog,
+                        icon: const Icon(Icons.add_circle, color: AppTheme.secondary, size: 20),
+                        label: const Text('إضافة منتج', style: TextStyle(color: AppTheme.secondary, fontWeight: FontWeight.w600)),
                       ),
                     ]),
-                  )
-                else
-                  ListView.separated(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    itemCount: items.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 10),
-                    itemBuilder: (context, index) {
-                      final item = items[index] as Map<String, dynamic>;
-                      return _OrderItemCard(
-                        item: item,
-                        statusColor: _statusColor,
-                        translateStatus: _translateStatus,
-                        onEdit: () => _showEditItemDialog(item),
-                      );
-                    },
-                  ),
+
+                    // ── Bulk action bar — visible when items are selected ──
+                    if (_selectedItemIds.isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.primary.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppTheme.primary.withValues(alpha: 0.35)),
+                        ),
+                        child: Row(children: [
+                          const Icon(Icons.check_box_outlined, color: AppTheme.primary, size: 18),
+                          const SizedBox(width: 8),
+                          Text(
+                            '${_selectedItemIds.intersection(selectableIds).length} محدد',
+                            style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w600),
+                          ),
+                          const Spacer(),
+                          TextButton(
+                            onPressed: () => setState(() => _selectedItemIds.removeAll(selectableIds)),
+                            style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 10)),
+                            child: const Text('إلغاء', style: TextStyle(color: Colors.white54, fontSize: 13)),
+                          ),
+                          const SizedBox(width: 4),
+                          SizedBox(height: 36, child: ElevatedButton.icon(
+                            onPressed: _showBulkItemStatusDialog,
+                            icon: const Icon(Icons.update, size: 16),
+                            label: const Text('تحديث الحالة', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primary,
+                              padding: const EdgeInsets.symmetric(horizontal: 14),
+                            ),
+                          )),
+                        ]),
+                      ),
+                    ],
+                    const SizedBox(height: 12),
+
+                    // ── Items list ─────────────────────────────────────────
+                    if (items.isEmpty)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 32),
+                        child: Column(mainAxisSize: MainAxisSize.min, children: [
+                          const Icon(Icons.shopping_bag_outlined, color: Colors.white24, size: 56),
+                          const SizedBox(height: 12),
+                          const Text('لا توجد عناصر في هذا الطلب', style: TextStyle(color: Colors.white38, fontSize: 16)),
+                          const SizedBox(height: 16),
+                          ElevatedButton.icon(
+                            onPressed: _showAddItemDialog,
+                            icon: const Icon(Icons.add_shopping_cart),
+                            label: const Text('إضافة أول منتج'),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: AppTheme.primary,
+                              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+                            ),
+                          ),
+                        ]),
+                      )
+                    else
+                      ListView.separated(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        itemCount: items.length,
+                        separatorBuilder: (_, __) => const SizedBox(height: 10),
+                        itemBuilder: (context, index) {
+                          final item = items[index] as Map<String, dynamic>;
+                          final itemId = item['id'] as String? ?? '';
+                          return _OrderItemCard(
+                            item: item,
+                            statusColor: _statusColor,
+                            translateStatus: _translateStatus,
+                            selected: _selectedItemIds.contains(itemId),
+                            onToggle: itemId.isNotEmpty ? (v) => setState(() {
+                              if (v == true) _selectedItemIds.add(itemId);
+                              else _selectedItemIds.remove(itemId);
+                            }) : null,
+                            onEdit: () => _showEditItemDialog(item),
+                          );
+                        },
+                      ),
+                  ];
+                }(),
                 const SizedBox(height: 16),
               ],
             ),
@@ -1213,7 +1395,16 @@ class _OrderItemCard extends StatelessWidget {
   final Color Function(String) statusColor;
   final String Function(String) translateStatus;
   final VoidCallback? onEdit;
-  const _OrderItemCard({required this.item, required this.statusColor, required this.translateStatus, this.onEdit});
+  final bool selected;
+  final ValueChanged<bool?>? onToggle;
+  const _OrderItemCard({
+    required this.item,
+    required this.statusColor,
+    required this.translateStatus,
+    this.onEdit,
+    this.selected = false,
+    this.onToggle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1244,11 +1435,26 @@ class _OrderItemCard extends StatelessWidget {
       decoration: BoxDecoration(
         color: AppTheme.darkSurface,
         borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: isCancelled
-            ? AppTheme.error.withValues(alpha: 0.4)
-            : isSorted ? AppTheme.success.withValues(alpha: 0.5) : AppTheme.darkBorder),
+        border: Border.all(color: selected
+            ? AppTheme.primary.withValues(alpha: 0.7)
+            : isCancelled
+              ? AppTheme.error.withValues(alpha: 0.4)
+              : isSorted ? AppTheme.success.withValues(alpha: 0.5) : AppTheme.darkBorder),
       ),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Selection checkbox
+        if (onToggle != null) ...[
+          SizedBox(
+            width: 24, height: 24,
+            child: Checkbox(
+              value: selected,
+              onChanged: onToggle,
+              activeColor: AppTheme.primary,
+              side: BorderSide(color: Colors.white38, width: 1.5),
+            ),
+          ),
+          const SizedBox(width: 10),
+        ],
         // Product image or link icon
         ClipRRect(
           borderRadius: BorderRadius.circular(10),
