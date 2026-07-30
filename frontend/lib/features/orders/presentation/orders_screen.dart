@@ -631,8 +631,13 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
       widget.onCreated();
       if (mounted) Navigator.of(context).pop();
     } on DioException catch (e) {
-      final msg = e.message ?? 'خطأ في الاتصال بالخادم';
-      if (mounted) setState(() => _error = msg);
+      final data = e.response?.data;
+      final errorMsg = data is Map<String, dynamic>
+          ? (data['message'] as String?
+              ?? data['error'] as String?
+              ?? 'حدث خطأ غير معروف')
+          : (data?.toString() ?? 'حدث خطأ في الاتصال بالخادم');
+      if (mounted) setState(() => _error = errorMsg);
     } catch (e) {
       final raw = e.toString();
       if (mounted) setState(() => _error = raw.startsWith('Exception: ') ? raw.substring(11) : raw);

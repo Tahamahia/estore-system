@@ -188,7 +188,11 @@ class CustomersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
       final customers = List<Map<String, dynamic>>.from(data['data'] ?? []);
       return customers.isNotEmpty ? customers.first : null;
     } on DioException catch (e) {
-      throw PhoneLookupException('فشل البحث عن العميل (خطأ في الشبكة): ${e.message}');
+      final body = e.response?.data;
+      final serverMsg = body is Map<String, dynamic>
+          ? (body['message'] as String? ?? body['error'] as String?)
+          : null;
+      throw PhoneLookupException(serverMsg ?? 'فشل البحث عن العميل (خطأ في الشبكة)');
     } catch (e) {
       throw PhoneLookupException('فشل البحث عن العميل: $e');
     }
