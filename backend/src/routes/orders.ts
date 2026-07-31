@@ -144,7 +144,7 @@ orderRoutes.post('/', async (c) => {
       `INSERT INTO orders (id, tenant_id, customer_id, platform, platform_order_id,
        pegged_exchange_rate, currency, cart_link, order_type, total_sale_price_lyd, total_cost_usd,
        status, notes, created_by, created_at, updated_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending_purchase', ?, ?, datetime('now'), datetime('now'), 1)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, datetime('now'), datetime('now'), 1)`
     ).bind(
       id, tenantId, customer_id, platform || null, platform_order_id || null,
       pegged_exchange_rate || null, currency || 'USD',
@@ -559,6 +559,160 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
 });
 
 /**
+ * POST /orders/:id/split — Split an order by moving selected items into a new linked child order.
+ * Useful for partial fulfilment: some items are ready, others are still pending.
+ * Payload: { item_ids: string[], moved_sale_price_lyd?: number, moved_cost_usd?: number }
+ */
+orderRoutes.post('/:id/split', requireRole('super_admin', 'store_manager'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const userId = c.get('user_id') as string;
+  const orderId = c.req.param('id');
+  const body = await c.req.json();
+  const { item_ids, moved_sale_price_lyd, moved_cost_usd } = body as {
+    item_ids?: string[];
+    moved_sale_price_lyd?: number;
+    moved_cost_usd?: number;
+  };
+
+  if (!item_ids?.length) {
+    return c.json({ error: 'Bad Request', message: 'item_ids is required and must be non-empty' }, 400);
+  }
+
+  // Fetch the parent order
+  const parentOrder = await c.env.DB.prepare(
+    `SELECT id, tenant_id, customer_id, platform, cart_link, order_type,
+            total_sale_price_lyd, total_cost_usd, notes, version
+     FROM orders WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(orderId, tenantId).first() as Record<string, unknown> | null;
+
+  if (!parentOrder) {
+    return c.json({ error: 'Not Found', message: 'Order not found' }, 404);
+  }
+
+  // Verify all item_ids belong to this order and are not soft-deleted
+  const placeholders = item_ids.map(() => '?').join(', ');
+  const movedItemRows = await c.env.DB.prepare(
+    `SELECT id, status FROM order_items
+     WHERE id IN (${placeholders}) AND order_id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(...item_ids, orderId, tenantId).all();
+
+  if ((movedItemRows.results?.length ?? 0) !== item_ids.length) {
+    return c.json({
+      error: 'Bad Request',
+      message: 'بعض العناصر المحددة غير موجودة أو لا تنتمي لهذه الطلبية',
+    }, 400);
+  }
+
+  // Must leave at least 1 item in the original order
+  const totalItemCount = await c.env.DB.prepare(
+    `SELECT COUNT(*) as total FROM order_items WHERE order_id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(orderId, tenantId).first() as { total: number } | null;
+
+  if ((totalItemCount?.total ?? 0) <= item_ids.length) {
+    return c.json({
+      error: 'Bad Request',
+      message: 'يجب أن يبقى منتج واحد على الأقل في الطلبية الأصلية',
+    }, 400);
+  }
+
+  // full_cart orders require an explicit moved sale price
+  if (parentOrder.order_type === 'full_cart') {
+    if (moved_sale_price_lyd === undefined || moved_sale_price_lyd === null || isNaN(Number(moved_sale_price_lyd))) {
+      return c.json({
+        error: 'Bad Request',
+        message: 'يجب تحديد قيمة القطع المنقولة يدوياً لأن الطلبية سلة تامة',
+      }, 400);
+    }
+  }
+
+  // Derive the new order's status from the EARLIEST (furthest-behind) moved item
+  const statusPriority: Record<string, number> = {
+    pending: 0, purchased: 1, shipped: 2, arrived_warehouse: 3,
+    sorted: 4, ready_dispatch: 5, dispatched: 6, delivered: 7,
+    cancelled: 8, refunded: 8, transferred_to_inventory: 8, in_stock: 8,
+  };
+  let derivedStatus = 'pending';
+  let lowestPriority = 999;
+  for (const row of movedItemRows.results as { id: string; status: string }[]) {
+    const p = statusPriority[row.status] ?? 0;
+    if (p < lowestPriority) {
+      lowestPriority = p;
+      derivedStatus = row.status;
+    }
+  }
+
+  const { v4: uuidv4 } = await import('uuid');
+  const newOrderId = uuidv4();
+  const isFullCart = parentOrder.order_type === 'full_cart';
+
+  const stmts: D1PreparedStatement[] = [];
+
+  // 1. Insert new child order
+  stmts.push(
+    c.env.DB.prepare(
+      `INSERT INTO orders (id, tenant_id, customer_id, platform, cart_link, order_type,
+       parent_order_id, status,
+       total_sale_price_lyd, total_cost_usd,
+       notes, created_by, created_at, updated_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 1)`
+    ).bind(
+      newOrderId,
+      tenantId,
+      parentOrder.customer_id,
+      parentOrder.platform || null,
+      parentOrder.cart_link || null,
+      parentOrder.order_type,
+      orderId,
+      derivedStatus,
+      isFullCart ? (moved_sale_price_lyd ?? null) : null,
+      isFullCart ? (moved_cost_usd ?? null) : null,
+      parentOrder.notes || null,
+      userId,
+    )
+  );
+
+  // 2. Reassign the moved items to the new order
+  for (const itemId of item_ids) {
+    stmts.push(
+      c.env.DB.prepare(
+        `UPDATE order_items SET order_id = ?, updated_at = datetime('now'), version = version + 1
+         WHERE id = ? AND tenant_id = ?`
+      ).bind(newOrderId, itemId, tenantId)
+    );
+  }
+
+  // 3. Update the original order: subtract totals (full_cart) and always bump version
+  if (isFullCart) {
+    stmts.push(
+      c.env.DB.prepare(
+        `UPDATE orders
+         SET total_sale_price_lyd = COALESCE(total_sale_price_lyd, 0) - ?,
+             total_cost_usd       = COALESCE(total_cost_usd, 0) - ?,
+             version              = version + 1,
+             updated_at           = datetime('now')
+         WHERE id = ? AND tenant_id = ?`
+      ).bind(moved_sale_price_lyd ?? 0, moved_cost_usd ?? 0, orderId, tenantId)
+    );
+  } else {
+    stmts.push(
+      c.env.DB.prepare(
+        `UPDATE orders SET version = version + 1, updated_at = datetime('now')
+         WHERE id = ? AND tenant_id = ?`
+      ).bind(orderId, tenantId)
+    );
+  }
+
+  try {
+    await c.env.DB.batch(stmts);
+  } catch (err: unknown) {
+    const msg = err instanceof Error ? err.message : String(err);
+    return c.json({ error: 'Database Error', message: msg }, 400);
+  }
+
+  return c.json({ new_order_id: newOrderId, message: 'تم إنشاء الطلبية الجديدة' }, 201);
+});
+
+/**
  * GET /orders/:id — Get single order with items and customer info
  */
 orderRoutes.get('/:id', async (c) => {
@@ -583,7 +737,11 @@ orderRoutes.get('/:id', async (c) => {
     `SELECT * FROM order_items WHERE order_id = ? AND tenant_id = ? AND is_deleted = 0`
   ).bind(orderId, tenantId).all();
 
-  return c.json({ ...order, items: items.results });
+  const childOrders = await c.env.DB.prepare(
+    `SELECT id, status, created_at FROM orders WHERE parent_order_id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(orderId, tenantId).all();
+
+  return c.json({ ...order, items: items.results, child_orders: childOrders.results });
 });
 
 /**
