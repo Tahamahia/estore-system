@@ -498,6 +498,170 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     );
   }
 
+  /// Splits the order by moving [selectedIds] into a new child order.
+  void _showSplitOrderDialog(Set<String> selectedIds, Set<String> allSelectableIds) {
+    final movedCount = selectedIds.intersection(allSelectableIds).length;
+    final remainingCount = allSelectableIds.length - movedCount;
+    final isFullCart = (_order?['order_type'] as String?) == 'full_cart';
+    final salePriceCtrl = TextEditingController();
+    final costUsdCtrl = TextEditingController();
+
+    showDialog(
+      context: context,
+      builder: (splitCtx) => Dialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 420),
+          child: Padding(
+            padding: const EdgeInsets.all(28),
+            child: StatefulBuilder(builder: (_, setDialogState) {
+              return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                Row(children: [
+                  const Icon(Icons.call_split, color: AppTheme.secondary, size: 20),
+                  const SizedBox(width: 8),
+                  const Expanded(child: Text(
+                    'تقسيم الطلبية',
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
+                  )),
+                  IconButton(
+                    icon: const Icon(Icons.close, color: Colors.white38),
+                    onPressed: () => Navigator.of(splitCtx).pop(),
+                    padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+                  ),
+                ]),
+                const SizedBox(height: 16),
+                Container(
+                  padding: const EdgeInsets.all(14),
+                  decoration: BoxDecoration(
+                    color: AppTheme.secondary.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppTheme.secondary.withValues(alpha: 0.3)),
+                  ),
+                  child: Text(
+                    'سيتم نقل $movedCount منتج إلى طلبية جديدة، وستبقى $remainingCount منتج في الطلبية الحالية.',
+                    style: const TextStyle(color: Colors.white70, fontSize: 14),
+                  ),
+                ),
+                if (isFullCart) ...[
+                  const SizedBox(height: 20),
+                  TextField(
+                    controller: salePriceCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'سعر البيع للقطع المنقولة (د.ل)',
+                      labelStyle: const TextStyle(color: Colors.white54),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: AppTheme.darkBorder),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      focusedBorder: const OutlineInputBorder(
+                        borderSide: BorderSide(color: AppTheme.primary),
+                        borderRadius: BorderRadius.all(Radius.circular(10)),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: costUsdCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(
+                      labelText: 'تكلفة الشراء للقطع المنقولة (دولار) — اختياري',
+                      labelStyle: const TextStyle(color: Colors.white54),
+                      enabledBorder: OutlineInputBorder(
+                        borderSide: BorderSide(color: AppTheme.darkBorder),
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      focusedBorder: const OutlineInputBorder(
+                        borderSide: BorderSide(color: AppTheme.primary),
+                        borderRadius: BorderRadius.all(Radius.circular(10)),
+                      ),
+                    ),
+                  ),
+                ],
+                const SizedBox(height: 24),
+                Row(children: [
+                  Expanded(child: SizedBox(height: 44, child: OutlinedButton(
+                    onPressed: () => Navigator.of(splitCtx).pop(),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white54,
+                      side: BorderSide(color: AppTheme.darkBorder),
+                    ),
+                    child: const Text('إلغاء'),
+                  ))),
+                  const SizedBox(width: 12),
+                  Expanded(child: SizedBox(height: 44, child: ElevatedButton(
+                    onPressed: () async {
+                      if (isFullCart) {
+                        final parsed = double.tryParse(salePriceCtrl.text.trim());
+                        if (parsed == null) {
+                          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                            content: Text('يجب إدخال سعر البيع للقطع المنقولة'),
+                            backgroundColor: AppTheme.error,
+                          ));
+                          return;
+                        }
+                      }
+                      Navigator.of(splitCtx).pop();
+                      if (!mounted) return;
+                      final messenger = ScaffoldMessenger.of(context);
+                      try {
+                        final movedSalePrice = isFullCart
+                            ? double.tryParse(salePriceCtrl.text.trim())
+                            : null;
+                        final movedCost = isFullCart
+                            ? double.tryParse(costUsdCtrl.text.trim())
+                            : null;
+                        final newOrderId = await ref.read(ordersProvider.notifier).splitOrder(
+                          widget.orderId,
+                          selectedIds.toList(),
+                          movedSalePriceLyd: movedSalePrice,
+                          movedCostUsd: movedCost,
+                        );
+                        if (!mounted) return;
+                        setState(() => _selectedItemIds.clear());
+                        await _loadOrder();
+                        if (!mounted) return;
+                        messenger.showSnackBar(SnackBar(
+                          content: const Text('✅ تم إنشاء الطلبية الجديدة'),
+                          backgroundColor: AppTheme.success,
+                          action: SnackBarAction(
+                            label: 'فتح الطلبية الجديدة',
+                            textColor: Colors.white,
+                            onPressed: () => context.go('/orders/$newOrderId'),
+                          ),
+                        ));
+                      } on DioException catch (e) {
+                        if (!mounted) return;
+                        messenger.showSnackBar(SnackBar(
+                          content: Text('فشل: ${_dioMsg(e)}'),
+                          backgroundColor: AppTheme.error,
+                        ));
+                      } catch (e) {
+                        if (!mounted) return;
+                        messenger.showSnackBar(SnackBar(
+                          content: Text('فشل: ${e.toString()}'),
+                          backgroundColor: AppTheme.error,
+                        ));
+                      }
+                    },
+                    style: ElevatedButton.styleFrom(backgroundColor: AppTheme.secondary),
+                    child: const Text('تأكيد التقسيم', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                  ))),
+                ]),
+              ]);
+            }),
+          ),
+        ),
+      ),
+    ).then((_) {
+      salePriceCtrl.dispose();
+      costUsdCtrl.dispose();
+    });
+  }
+
   /// Opens a status-chip dialog and PATCHes only the items in [_selectedItemIds].
   void _showBulkItemStatusDialog() {
     if (_selectedItemIds.isEmpty) return;
@@ -822,6 +986,105 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 ),
                 const SizedBox(height: 16),
 
+                // Parent / child order links
+                Builder(builder: (_) {
+                  final parentId = order['parent_order_id'] as String?;
+                  final childOrders = (order['child_orders'] as List<dynamic>?)
+                      ?.map((r) => r as Map<String, dynamic>)
+                      .toList();
+                  if (parentId == null && (childOrders == null || childOrders.isEmpty)) {
+                    return const SizedBox.shrink();
+                  }
+                  return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    if (parentId != null) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.warning.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppTheme.warning.withValues(alpha: 0.25)),
+                        ),
+                        child: Row(children: [
+                          const Icon(Icons.account_tree_outlined, color: AppTheme.warning, size: 16),
+                          const SizedBox(width: 8),
+                          const Expanded(child: Text(
+                            'هذه الطلبية جزء من طلبية أصلية',
+                            style: TextStyle(color: Colors.white70, fontSize: 13),
+                          )),
+                          ActionChip(
+                            label: Text(
+                              parentId.length >= 8 ? parentId.substring(0, 8).toUpperCase() : parentId,
+                              style: const TextStyle(color: AppTheme.primary, fontSize: 12),
+                            ),
+                            backgroundColor: AppTheme.primary.withValues(alpha: 0.12),
+                            side: BorderSide(color: AppTheme.primary.withValues(alpha: 0.3)),
+                            onPressed: () => context.go('/orders/$parentId'),
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            visualDensity: VisualDensity.compact,
+                          ),
+                        ]),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                    if (childOrders != null && childOrders.isNotEmpty) ...[
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.secondary.withValues(alpha: 0.08),
+                          borderRadius: BorderRadius.circular(10),
+                          border: Border.all(color: AppTheme.secondary.withValues(alpha: 0.25)),
+                        ),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                          Row(children: [
+                            const Icon(Icons.call_split, color: AppTheme.secondary, size: 16),
+                            const SizedBox(width: 8),
+                            Text(
+                              '${childOrders.length} طلبية فرعية',
+                              style: const TextStyle(color: Colors.white70, fontSize: 13),
+                            ),
+                          ]),
+                          const SizedBox(height: 8),
+                          Wrap(spacing: 8, runSpacing: 6, children: [
+                            for (final child in childOrders) ...[
+                              ActionChip(
+                                label: Row(mainAxisSize: MainAxisSize.min, children: [
+                                  Text(
+                                    (child['id'] as String).length >= 8
+                                        ? (child['id'] as String).substring(0, 8).toUpperCase()
+                                        : child['id'] as String,
+                                    style: const TextStyle(color: Colors.white, fontSize: 11),
+                                  ),
+                                  const SizedBox(width: 5),
+                                  Container(
+                                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                                    decoration: BoxDecoration(
+                                      color: _statusColor(child['status'] as String? ?? 'pending').withValues(alpha: 0.2),
+                                      borderRadius: BorderRadius.circular(4),
+                                    ),
+                                    child: Text(
+                                      _translateStatus(child['status'] as String? ?? 'pending'),
+                                      style: TextStyle(
+                                        color: _statusColor(child['status'] as String? ?? 'pending'),
+                                        fontSize: 10,
+                                      ),
+                                    ),
+                                  ),
+                                ]),
+                                backgroundColor: AppTheme.darkCard,
+                                side: BorderSide(color: AppTheme.secondary.withValues(alpha: 0.3)),
+                                onPressed: () => context.go('/orders/${child['id']}'),
+                                padding: const EdgeInsets.symmetric(horizontal: 6),
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ],
+                          ]),
+                        ]),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
+                  ]);
+                }),
+
                 // Financial summary
                 _FinancialSummaryCard(order: order, items: items),
                 const SizedBox(height: 16),
@@ -904,6 +1167,28 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                               padding: const EdgeInsets.symmetric(horizontal: 14),
                             ),
                           )),
+                          const SizedBox(width: 6),
+                          Builder(builder: (_) {
+                            final canSplit = _selectedItemIds.intersection(selectableIds).length < selectableIds.length;
+                            return Tooltip(
+                              message: canSplit ? '' : 'لازم يبقى منتج واحد على الأقل',
+                              child: SizedBox(height: 36, child: ElevatedButton.icon(
+                                onPressed: canSplit
+                                    ? () => _showSplitOrderDialog(
+                                          Set<String>.from(_selectedItemIds.intersection(selectableIds)),
+                                          selectableIds,
+                                        )
+                                    : null,
+                                icon: const Icon(Icons.call_split, size: 16),
+                                label: const Text('تقسيم', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: AppTheme.secondary,
+                                  disabledBackgroundColor: AppTheme.secondary.withValues(alpha: 0.3),
+                                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                                ),
+                              )),
+                            );
+                          }),
                         ]),
                       ),
                     ],

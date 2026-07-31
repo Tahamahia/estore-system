@@ -80,6 +80,20 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
     await _dio.post('/orders/$orderId/orphan-items');
   }
 
+  Future<String> splitOrder(
+    String orderId,
+    List<String> itemIds, {
+    double? movedSalePriceLyd,
+    double? movedCostUsd,
+  }) async {
+    final response = await _dio.post('/orders/$orderId/split', data: {
+      'item_ids': itemIds,
+      if (movedSalePriceLyd != null) 'moved_sale_price_lyd': movedSalePriceLyd,
+      if (movedCostUsd != null) 'moved_cost_usd': movedCostUsd,
+    });
+    return (response.data as Map<String, dynamic>)['new_order_id'] as String;
+  }
+
   /// Fetches items from a Shein shared-cart link via the backend reverse-engineer proxy.
   /// Returns a list of item maps with keys: name, url, sku, price, qty, size, color.
   /// Backend always returns HTTP 200 — errors are signalled via { success: false, message }.
