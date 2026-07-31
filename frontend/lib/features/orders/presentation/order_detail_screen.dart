@@ -344,160 +344,6 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     }
   }
 
-  void _showUpdateStatusDialog() {
-    // Only the 10 admin-settable values from the DB CHECK constraint.
-    // transferred_to_inventory and in_stock are system-set (orphan flow / instant items)
-    // and are intentionally excluded from manual status updates.
-    const validOrderStatuses = [
-      'pending', 'purchased', 'shipped', 'arrived_warehouse',
-      'sorted', 'ready_dispatch', 'dispatched', 'delivered',
-      'cancelled', 'refunded',
-    ];
-    final rawStatus = (_order?['status'] as String?) ?? '';
-    String selectedStatus = validOrderStatuses.contains(rawStatus) ? rawStatus : 'pending';
-    showDialog(
-      context: context,
-      builder: (statusCtx) => Dialog(
-        backgroundColor: AppTheme.darkSurface,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Padding(
-            padding: const EdgeInsets.all(28),
-            child: StatefulBuilder(builder: (_, setDialogState) {
-              return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                const Text('تحديث الحالة', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
-                const SizedBox(height: 8),
-                const Text('اختر الحالة الجديدة للطلب', style: TextStyle(color: Colors.white54, fontSize: 14)),
-                const SizedBox(height: 20),
-                Wrap(spacing: 8, runSpacing: 8, children: [
-                  for (final s in validOrderStatuses)
-                    ChoiceChip(
-                      label: Text(_translateStatus(s)),
-                      selected: selectedStatus == s,
-                      onSelected: (v) => setDialogState(() => selectedStatus = s),
-                      selectedColor: _statusColor(s),
-                      backgroundColor: AppTheme.darkCard,
-                      labelStyle: TextStyle(color: selectedStatus == s ? Colors.white : Colors.white70, fontSize: 13),
-                    ),
-                ]),
-                const SizedBox(height: 24),
-                SizedBox(height: 52, child: ElevatedButton.icon(
-                  onPressed: () async {
-                    // Always pop using the dialog's own context — never the page context
-                    Navigator.of(statusCtx).pop();
-                    if (!mounted) return;
-                    // Capture messenger and a rollback snapshot before any mutation
-                    final messenger = ScaffoldMessenger.of(context);
-                    final previousOrder = _order;
-                    try {
-                      await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
-                        'status': selectedStatus,
-                        'version': _order?['version'],
-                      });
-                      if (!mounted) return;
-                      // Optimistic in-place update — no loading wipe, no Scaffold loss
-                      setState(() {
-                        if (_order == null) return;
-                        final updated = Map<String, dynamic>.from(_order!);
-                        updated['status'] = selectedStatus;
-                        updated['version'] = ((updated['version'] as num?)?.toInt() ?? 0) + 1;
-                        _order = updated;
-                      });
-                      messenger.showSnackBar(SnackBar(
-                        content: Text('✅ تم تحديث الحالة إلى ${_translateStatus(selectedStatus)}'),
-                        backgroundColor: AppTheme.success,
-                      ));
-                      // Cascade: offer to propagate status to all non-cancelled items
-                      final allItems = _order?['items'] as List<dynamic>? ?? [];
-                      final updatable = allItems
-                          .where((r) => (r as Map<String, dynamic>)['status'] != 'cancelled')
-                          .toList();
-                      if (updatable.isEmpty || !mounted) return;
-                      // Cascade confirmation — dialog pops itself via cascadeCtx
-                      final cascade = await showDialog<bool>(
-                        context: context,
-                        builder: (cascadeCtx) => AlertDialog(
-                          backgroundColor: AppTheme.darkSurface,
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-                          title: const Text('تحديث المنتجات', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
-                          content: Text(
-                            'هل تريد تحديث حالة جميع المنتجات (${updatable.length}) إلى "${_translateStatus(selectedStatus)}"؟',
-                            style: const TextStyle(color: Colors.white70),
-                          ),
-                          actions: [
-                            TextButton(
-                              onPressed: () => Navigator.of(cascadeCtx).pop(false),
-                              child: const Text('لا، فقط الطلب', style: TextStyle(color: Colors.white54)),
-                            ),
-                            TextButton(
-                              onPressed: () => Navigator.of(cascadeCtx).pop(true),
-                              style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
-                              child: const Text('نعم، تحديث الكل'),
-                            ),
-                          ],
-                        ),
-                      );
-                      if (cascade != true || !mounted) return;
-                      // Patch each item; track which ones succeeded
-                      final successIds = <String>{};
-                      for (final raw in updatable) {
-                        final item = raw as Map<String, dynamic>;
-                        try {
-                          await ref.read(ordersProvider.notifier).updateOrderItem(
-                            widget.orderId, item['id'] as String,
-                            {'status': selectedStatus, 'version': item['version']},
-                          );
-                          successIds.add(item['id'] as String);
-                        } catch (_) {}
-                      }
-                      if (!mounted || successIds.isEmpty) return;
-                      // In-place items update — never call _loadOrder() here
-                      setState(() {
-                        if (_order == null) return;
-                        final o = Map<String, dynamic>.from(_order!);
-                        o['items'] = (o['items'] as List<dynamic>).map((raw) {
-                          final itm = Map<String, dynamic>.from(raw as Map<String, dynamic>);
-                          if (successIds.contains(itm['id'] as String?)) {
-                            itm['status'] = selectedStatus;
-                            itm['version'] = ((itm['version'] as num?)?.toInt() ?? 0) + 1;
-                          }
-                          return itm;
-                        }).toList();
-                        _order = o;
-                      });
-                      messenger.showSnackBar(SnackBar(
-                        content: Text('✅ تم تحديث ${successIds.length} منتج'),
-                        backgroundColor: AppTheme.success,
-                      ));
-                    } on DioException catch (e) {
-                      if (!mounted) return;
-                      setState(() => _order = previousOrder);
-                      messenger.showSnackBar(SnackBar(
-                        content: Text('فشل: ${_dioMsg(e)}'),
-                        backgroundColor: AppTheme.error,
-                      ));
-                    } catch (e) {
-                      if (!mounted) return;
-                      setState(() => _order = previousOrder);
-                      messenger.showSnackBar(SnackBar(
-                        content: Text('فشل: ${e.toString()}'),
-                        backgroundColor: AppTheme.error,
-                      ));
-                    }
-                  },
-                  icon: const Icon(Icons.check, size: 22),
-                  label: const Text('تحديث', style: TextStyle(fontSize: 16)),
-                  style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
-                )),
-              ]);
-            }),
-          ),
-        ),
-      ),
-    );
-  }
-
   /// Splits the order by moving [selectedIds] into a new child order.
   void _showSplitOrderDialog(Set<String> selectedIds, Set<String> allSelectableIds) {
     final movedCount = selectedIds.intersection(allSelectableIds).length;
@@ -925,18 +771,25 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                             ],
                           ),
                         ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: _statusColor(status).withValues(alpha: 0.15),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
+                        Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: _statusColor(status).withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(12),
+                              border: Border.all(color: _statusColor(status).withValues(alpha: 0.4)),
+                            ),
+                            child: Text(
+                              _translateStatus(status),
+                              style: TextStyle(color: _statusColor(status), fontSize: 14, fontWeight: FontWeight.w700),
+                            ),
                           ),
-                          child: Text(
-                            _translateStatus(status),
-                            style: TextStyle(color: _statusColor(status), fontSize: 14, fontWeight: FontWeight.w700),
+                          const SizedBox(height: 4),
+                          Tooltip(
+                            message: 'تُحسب تلقائياً من حالة المنتجات',
+                            child: const Icon(Icons.info_outline, size: 13, color: Colors.white38),
                           ),
-                        ),
+                        ]),
                       ]),
                       const SizedBox(height: 12),
                       Row(children: [
@@ -1271,13 +1124,6 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
             ],
             Row(children: [
               Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
-                onPressed: _showUpdateStatusDialog,
-                icon: const Icon(Icons.update, size: 22),
-                label: const Text('تحديث الحالة', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-              ))),
-              const SizedBox(width: 12),
-              Expanded(child: SizedBox(height: 52, child: ElevatedButton.icon(
                 onPressed: () => _openWhatsApp(phone, customerName),
                 icon: const Icon(Icons.chat_rounded, size: 22),
                 label: const Text('واتساب', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
@@ -1289,28 +1135,32 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                   onPressed: _dispatchLoading ? null : () async {
                     setState(() => _dispatchLoading = true);
                     final messenger = ScaffoldMessenger.of(context);
-                    final previousOrder = _order;
                     try {
-                      await ref.read(ordersProvider.notifier).updateOrder(widget.orderId, {
-                        'status': 'dispatched',
-                        'version': _order?['version'],
-                      });
+                      final readyItems = (_order?['items'] as List<dynamic>? ?? [])
+                          .map((r) => r as Map<String, dynamic>)
+                          .where((item) {
+                            final s = item['status'] as String? ?? '';
+                            return s == 'sorted' || s == 'ready_dispatch';
+                          })
+                          .toList();
+                      for (final item in readyItems) {
+                        await ref.read(ordersProvider.notifier).updateOrderItem(
+                          widget.orderId, item['id'] as String,
+                          {'status': 'dispatched', 'version': item['version']},
+                        );
+                      }
                       if (!mounted) return;
-                      setState(() {
-                        if (_order == null) return;
-                        final updated = Map<String, dynamic>.from(_order!);
-                        updated['status'] = 'dispatched';
-                        updated['version'] = ((updated['version'] as num?)?.toInt() ?? 0) + 1;
-                        _order = updated;
-                      });
-                      messenger.showSnackBar(const SnackBar(content: Text('✅ تم إرسال الطلب للتوصيل'), backgroundColor: AppTheme.success));
+                      await _loadOrder();
+                      if (!mounted) return;
+                      messenger.showSnackBar(const SnackBar(
+                        content: Text('✅ تم إرسال الطلب للتوصيل'),
+                        backgroundColor: AppTheme.success,
+                      ));
                     } on DioException catch (e) {
                       if (!mounted) return;
-                      setState(() => _order = previousOrder);
                       messenger.showSnackBar(SnackBar(content: Text('فشل: ${_dioMsg(e)}'), backgroundColor: AppTheme.error));
                     } catch (e) {
                       if (!mounted) return;
-                      setState(() => _order = previousOrder);
                       messenger.showSnackBar(SnackBar(content: Text('فشل: ${e.toString()}'), backgroundColor: AppTheme.error));
                     } finally {
                       if (mounted) setState(() => _dispatchLoading = false);

@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { requireRole } from '../middleware/tenant';
+import { buildRecomputeOrderStatusStmt } from '../lib/orderStatus';
 
 function chunkArray<T>(arr: T[], size: number): T[][] {
   const chunks: T[][] = [];
@@ -258,15 +259,35 @@ orderRoutes.patch('/items/bulk', requireRole('super_admin', 'store_manager', 'pu
 
   const setStr = setClauses.join(', ');
 
-  // Chunk updates to stay under the D1 batch limit
-  const updateChunks = chunkArray(resolvedItemIds, D1_BATCH_LIMIT);
-  for (const chunk of updateChunks) {
-    const updateStmts = chunk.map((itemId: string) =>
-      c.env.DB.prepare(
-        `UPDATE order_items SET ${setStr} WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
-      ).bind(...paramValues, itemId, tenantId)
-    );
-    await c.env.DB.batch(updateStmts);
+  // When updating status, collect distinct order_ids so we can recompute each
+  // order's derived status after all item updates are applied.
+  const distinctOrderIds: string[] = [];
+  if (status && resolvedItemIds.length > 0) {
+    const idChunks = chunkArray(resolvedItemIds, D1_BATCH_LIMIT);
+    for (const chunk of idChunks) {
+      const placeholders = chunk.map(() => '?').join(', ');
+      const rows = await c.env.DB.prepare(
+        `SELECT DISTINCT order_id FROM order_items
+         WHERE id IN (${placeholders}) AND tenant_id = ? AND order_id IS NOT NULL`
+      ).bind(...chunk, tenantId).all();
+      for (const row of rows.results as { order_id: string }[]) {
+        if (!distinctOrderIds.includes(row.order_id)) distinctOrderIds.push(row.order_id);
+      }
+    }
+  }
+
+  // Build all update stmts + recompute stmts, then chunk and batch
+  const allStmts: D1PreparedStatement[] = resolvedItemIds.map((itemId: string) =>
+    c.env.DB.prepare(
+      `UPDATE order_items SET ${setStr} WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+    ).bind(...paramValues, itemId, tenantId)
+  );
+  for (const orderId of distinctOrderIds) {
+    allStmts.push(buildRecomputeOrderStatusStmt(c.env.DB, orderId, tenantId));
+  }
+  const allChunks = chunkArray(allStmts, D1_BATCH_LIMIT);
+  for (const chunk of allChunks) {
+    await c.env.DB.batch(chunk);
   }
 
   return c.json({
@@ -291,7 +312,7 @@ orderRoutes.patch('/items/dispatch-ready', requireRole('super_admin', 'store_man
 
   // Find all sorted items for this customer
   const items = await c.env.DB.prepare(
-    `SELECT oi.id FROM order_items oi
+    `SELECT oi.id, oi.order_id FROM order_items oi
      JOIN orders o ON oi.order_id = o.id
      WHERE o.customer_id = ? AND oi.tenant_id = ? AND oi.status = 'sorted' AND oi.is_deleted = 0`
   ).bind(customer_id, tenantId).all();
@@ -300,14 +321,21 @@ orderRoutes.patch('/items/dispatch-ready', requireRole('super_admin', 'store_man
     return c.json({ error: 'Not Found', message: 'No sorted items found for this customer' }, 404);
   }
 
+  const affectedOrderIds = [...new Set(
+    (items.results as { id: string; order_id: string }[]).map(i => i.order_id).filter(Boolean)
+  )];
+
   const stmts: D1PreparedStatement[] = [];
   for (const item of items.results) {
     stmts.push(
       c.env.DB.prepare(
         `UPDATE order_items SET status = 'ready_dispatch', updated_at = datetime('now'), version = version + 1
          WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
-      ).bind(item.id, tenantId)
+      ).bind((item as any).id, tenantId)
     );
+  }
+  for (const orderId of affectedOrderIds) {
+    stmts.push(buildRecomputeOrderStatusStmt(c.env.DB, orderId, tenantId));
   }
 
   await c.env.DB.batch(stmts);
@@ -334,7 +362,7 @@ orderRoutes.patch('/items/dispatch', requireRole('super_admin', 'store_manager',
 
   // Find all ready_dispatch items for this customer
   const items = await c.env.DB.prepare(
-    `SELECT oi.id FROM order_items oi
+    `SELECT oi.id, oi.order_id FROM order_items oi
      JOIN orders o ON oi.order_id = o.id
      WHERE o.customer_id = ? AND oi.tenant_id = ? AND oi.status = 'ready_dispatch' AND oi.is_deleted = 0`
   ).bind(customer_id, tenantId).all();
@@ -343,14 +371,21 @@ orderRoutes.patch('/items/dispatch', requireRole('super_admin', 'store_manager',
     return c.json({ error: 'Not Found', message: 'No ready_dispatch items found for this customer' }, 404);
   }
 
+  const affectedOrderIds = [...new Set(
+    (items.results as { id: string; order_id: string }[]).map(i => i.order_id).filter(Boolean)
+  )];
+
   const stmts: D1PreparedStatement[] = [];
   for (const item of items.results) {
     stmts.push(
       c.env.DB.prepare(
         `UPDATE order_items SET status = 'dispatched', dispatched_at = datetime('now'), updated_at = datetime('now'), version = version + 1
          WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
-      ).bind(item.id, tenantId)
+      ).bind((item as any).id, tenantId)
     );
+  }
+  for (const orderId of affectedOrderIds) {
+    stmts.push(buildRecomputeOrderStatusStmt(c.env.DB, orderId, tenantId));
   }
 
   await c.env.DB.batch(stmts);
@@ -537,18 +572,25 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
   setClauses.push(`version = version + 1`);
   setClauses.push(`updated_at = datetime('now')`);
 
-  let result;
+  const itemStmt = c.env.DB.prepare(
+    `UPDATE order_items SET ${setClauses.join(', ')}
+     WHERE id = ? AND order_id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
+  ).bind(...values, itemId, orderId, tenantId, version);
+
+  const batchStmts: D1PreparedStatement[] = [itemStmt];
+  if (updates.status !== undefined) {
+    batchStmts.push(buildRecomputeOrderStatusStmt(c.env.DB, orderId, tenantId));
+  }
+
+  let batchResults;
   try {
-    result = await c.env.DB.prepare(
-      `UPDATE order_items SET ${setClauses.join(', ')}
-       WHERE id = ? AND order_id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
-    ).bind(...values, itemId, orderId, tenantId, version).run();
+    batchResults = await c.env.DB.batch(batchStmts);
   } catch (err: unknown) {
     const msg = err instanceof Error ? err.message : String(err);
     return c.json({ error: 'Database Error', message: msg }, 400);
   }
 
-  if (result.meta.changes === 0) {
+  if ((batchResults[0].meta.changes ?? 0) === 0) {
     return c.json({
       error: 'Conflict',
       message: 'Item was modified by another request (version mismatch) or not found',
@@ -566,7 +608,7 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
 orderRoutes.post('/:id/split', requireRole('super_admin', 'store_manager'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const userId = c.get('user_id') as string;
-  const orderId = c.req.param('id');
+  const orderId = c.req.param('id') as string;
   const body = await c.req.json();
   const { item_ids, moved_sale_price_lyd, moved_cost_usd } = body as {
     item_ids?: string[];
@@ -681,7 +723,7 @@ orderRoutes.post('/:id/split', requireRole('super_admin', 'store_manager'), asyn
     );
   }
 
-  // 3. Update the original order: subtract totals (full_cart) and always bump version
+  // 3. Update the original order: subtract totals (full_cart), then recompute status from remaining items
   if (isFullCart) {
     stmts.push(
       c.env.DB.prepare(
@@ -693,14 +735,10 @@ orderRoutes.post('/:id/split', requireRole('super_admin', 'store_manager'), asyn
          WHERE id = ? AND tenant_id = ?`
       ).bind(moved_sale_price_lyd ?? 0, moved_cost_usd ?? 0, orderId, tenantId)
     );
-  } else {
-    stmts.push(
-      c.env.DB.prepare(
-        `UPDATE orders SET version = version + 1, updated_at = datetime('now')
-         WHERE id = ? AND tenant_id = ?`
-      ).bind(orderId, tenantId)
-    );
   }
+  // Recompute the original order's status from its remaining items (replaces the plain
+  // version-bump that was here for individual_items, and also runs for full_cart).
+  stmts.push(buildRecomputeOrderStatusStmt(c.env.DB, orderId, tenantId));
 
   try {
     await c.env.DB.batch(stmts);
@@ -760,7 +798,7 @@ orderRoutes.patch('/:id', async (c) => {
   // Build dynamic SET clause
   const setClauses: string[] = [];
   const values: any[] = [];
-  const allowedFields = ['status', 'notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign', 'shipping_rate_per_kg', 'cart_link', 'order_type', 'total_sale_price_lyd', 'total_cost_usd'];
+  const allowedFields = ['notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign', 'shipping_rate_per_kg', 'cart_link', 'order_type', 'total_sale_price_lyd', 'total_cost_usd'];
 
   for (const field of allowedFields) {
     if (updates[field] !== undefined) {
@@ -782,18 +820,6 @@ orderRoutes.patch('/:id', async (c) => {
        WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
     ).bind(...values, orderId, tenantId, version),
   ];
-
-  // Cascade the new status to all non-cancelled items so the order and its
-  // items never get out of sync (e.g. order advances to arrived_warehouse while
-  // items are still stuck in pending).
-  if (updates.status) {
-    stmts.push(
-      c.env.DB.prepare(
-        `UPDATE order_items SET status = ?, updated_at = datetime('now'), version = version + 1
-         WHERE order_id = ? AND tenant_id = ? AND status != 'cancelled' AND is_deleted = 0`
-      ).bind(updates.status, orderId, tenantId)
-    );
-  }
 
   let results;
   try {

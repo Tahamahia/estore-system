@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { requireRole } from '../middleware/tenant';
+import { buildRecomputeOrderStatusStmt } from '../lib/orderStatus';
 
 export const inventoryRoutes = new Hono<AppEnv>();
 
@@ -78,19 +79,22 @@ inventoryRoutes.patch('/in-stock/:item_id/reassign', requireRole('super_admin', 
   if (!order) return c.json({ error: 'Target order not found' }, 404);
 
   // Zero out all costs — the entire selling price becomes pure net profit
-  await c.env.DB.prepare(`
-    UPDATE order_items
-    SET order_id           = ?,
-        status             = 'sorted',
-        unit_price_local   = ?,
-        purchase_price     = 0,
-        shipping_cost_foreign = 0,
-        landed_cost        = 0,
-        net_profit         = ?,
-        updated_at         = datetime('now'),
-        version            = version + 1
-    WHERE id = ? AND tenant_id = ?
-  `).bind(order_id, new_selling_price, new_selling_price, itemId, tenantId).run();
+  await c.env.DB.batch([
+    c.env.DB.prepare(`
+      UPDATE order_items
+      SET order_id           = ?,
+          status             = 'sorted',
+          unit_price_local   = ?,
+          purchase_price     = 0,
+          shipping_cost_foreign = 0,
+          landed_cost        = 0,
+          net_profit         = ?,
+          updated_at         = datetime('now'),
+          version            = version + 1
+      WHERE id = ? AND tenant_id = ?
+    `).bind(order_id, new_selling_price, new_selling_price, itemId, tenantId),
+    buildRecomputeOrderStatusStmt(c.env.DB, order_id, tenantId),
+  ]);
 
   return c.json({ message: 'Item reassigned as pure-profit', item_id: itemId, order_id, net_profit: new_selling_price });
 });

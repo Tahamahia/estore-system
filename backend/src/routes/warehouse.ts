@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { requireRole } from '../middleware/tenant';
+import { buildRecomputeOrderStatusStmt } from '../lib/orderStatus';
 
 export const warehouseRoutes = new Hono<AppEnv>();
 
@@ -57,11 +58,14 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
 
   // Always advance to sorted regardless of prior status — warehouse workers
   // must never be blocked by a purchasing-side sync mistake.
-  await c.env.DB.prepare(
-    `UPDATE order_items SET status = 'sorted', sorted_at = datetime('now'),
-     updated_at = datetime('now'), version = version + 1
-     WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
-  ).bind(item.id, tenantId).run();
+  await c.env.DB.batch([
+    c.env.DB.prepare(
+      `UPDATE order_items SET status = 'sorted', sorted_at = datetime('now'),
+       updated_at = datetime('now'), version = version + 1
+       WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+    ).bind(item.id, tenantId),
+    buildRecomputeOrderStatusStmt(c.env.DB, item.order_id as string, tenantId),
+  ]);
 
   return c.json({ found: true, ambiguous: false, item: { id: item.id, product_name: item.product_name, customer_name: item.customer_name, status: 'sorted' }});
 });
