@@ -85,32 +85,30 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Logo
+                    // Mukhmal logo
                     Container(
-                      padding: const EdgeInsets.all(20),
+                      width: 120, height: 120,
                       decoration: BoxDecoration(
-                        gradient: const LinearGradient(
-                          colors: [AppTheme.primary, AppTheme.secondary],
-                        ),
-                        borderRadius: BorderRadius.circular(24),
-                        boxShadow: [
-                          BoxShadow(
-                            color: AppTheme.primary.withValues(alpha: 0.4),
-                            blurRadius: 32,
-                            offset: const Offset(0, 8),
-                          ),
-                        ],
+                        color: const Color(0xFF6B1A2A),
+                        shape: BoxShape.circle,
+                        boxShadow: [BoxShadow(color: const Color(0xFF6B1A2A).withValues(alpha: 0.5), blurRadius: 32, offset: const Offset(0, 8))],
                       ),
-                      child: const Icon(Icons.warehouse_rounded, size: 48, color: Colors.white),
+                      child: ClipOval(child: Image.asset(
+                        'assets/images/mukhmal-logo.png',
+                        fit: BoxFit.cover,
+                        errorBuilder: (_, __, ___) => const Center(
+                          child: Text('م', style: TextStyle(color: Colors.white, fontSize: 48, fontWeight: FontWeight.bold)),
+                        ),
+                      )),
                     ),
                     const SizedBox(height: 32),
-                    Text('eStore Fulfillment',
+                    Text('مخمل',
                       style: Theme.of(context).textTheme.headlineMedium?.copyWith(
                         fontWeight: FontWeight.w700, color: Colors.white,
                       ),
                     ),
                     const SizedBox(height: 8),
-                    Text('Sign in to your warehouse dashboard',
+                    Text('لوحة تحكم مخمل — تسجيل الدخول',
                       style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.white54),
                     ),
                     const SizedBox(height: 40),

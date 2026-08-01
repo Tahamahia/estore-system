@@ -3,7 +3,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/auth_service.dart';
+import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/utils/dialog_utils.dart';
 
 class DashboardShell extends ConsumerStatefulWidget {
   final Widget child;
@@ -45,6 +47,19 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     final authService = ref.read(authServiceProvider);
     await authService.logout();
     if (mounted) context.go('/login');
+  }
+
+  void _showChangePasswordDialog(BuildContext context) {
+    showDialog(context: context, builder: (_) => _ChangePasswordDialog(
+      onSuccess: () {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('تم تغيير كلمة المرور بنجاح'),
+            backgroundColor: AppTheme.success,
+          ));
+        }
+      },
+    ));
   }
 
   void _showNotifications(BuildContext context) {
@@ -117,18 +132,21 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
                   child: Row(
                     children: [
                       Container(
-                        padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(
-                          gradient: const LinearGradient(colors: [AppTheme.primary, AppTheme.secondary]),
-                          borderRadius: BorderRadius.circular(12),
-                        ),
-                        child: const Icon(Icons.warehouse_rounded, size: 24, color: Colors.white),
+                        width: 36, height: 36,
+                        decoration: const BoxDecoration(color: Color(0xFF6B1A2A), shape: BoxShape.circle),
+                        child: ClipOval(child: Image.asset(
+                          'assets/images/mukhmal-logo.png',
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, __, ___) => const Center(
+                            child: Text('م', style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+                          ),
+                        )),
                       ),
                       if (isWide && _isExpanded) ...[
                         const SizedBox(width: 12),
                         const Expanded(
                           child: Text(
-                            'eStore',
+                            'مخمل',
                             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -239,6 +257,7 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
                         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
                         onSelected: (value) {
                           if (value == 'logout') _handleLogout();
+                          if (value == 'change_password') _showChangePasswordDialog(context);
                         },
                         itemBuilder: (context) => [
                           PopupMenuItem(
@@ -254,12 +273,22 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
                           ),
                           const PopupMenuDivider(),
                           const PopupMenuItem(
+                            value: 'change_password',
+                            child: Row(
+                              children: [
+                                Icon(Icons.lock_outline_rounded, color: Colors.white70, size: 20),
+                                SizedBox(width: 10),
+                                Text('تغيير كلمة المرور', style: TextStyle(color: Colors.white70)),
+                              ],
+                            ),
+                          ),
+                          const PopupMenuItem(
                             value: 'logout',
                             child: Row(
                               children: [
                                 Icon(Icons.logout_rounded, color: AppTheme.error, size: 20),
                                 SizedBox(width: 10),
-                                Text('Logout', style: TextStyle(color: AppTheme.error)),
+                                Text('تسجيل الخروج', style: TextStyle(color: AppTheme.error)),
                               ],
                             ),
                           ),
@@ -335,6 +364,154 @@ class _NotifRow extends StatelessWidget {
         Expanded(child: Text(label, style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w500))),
         Text(value, style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w700)),
       ]),
+    );
+  }
+}
+
+class _ChangePasswordDialog extends ConsumerStatefulWidget {
+  final VoidCallback onSuccess;
+  const _ChangePasswordDialog({required this.onSuccess});
+
+  @override
+  ConsumerState<_ChangePasswordDialog> createState() => _ChangePasswordDialogState();
+}
+
+class _ChangePasswordDialogState extends ConsumerState<_ChangePasswordDialog> {
+  final _currentCtrl = TextEditingController();
+  final _newCtrl = TextEditingController();
+  final _confirmCtrl = TextEditingController();
+  bool _obscureCurrent = true;
+  bool _obscureNew = true;
+  bool _obscureConfirm = true;
+  bool _saving = false;
+  String? _error;
+
+  @override
+  void dispose() {
+    _currentCtrl.dispose();
+    _newCtrl.dispose();
+    _confirmCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _submit() async {
+    final current = _currentCtrl.text;
+    final newPw = _newCtrl.text;
+    final confirm = _confirmCtrl.text;
+
+    if (current.isEmpty || newPw.isEmpty || confirm.isEmpty) {
+      setState(() => _error = 'يرجى ملء جميع الحقول');
+      return;
+    }
+    if (newPw.length < 8) {
+      setState(() => _error = 'كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل');
+      return;
+    }
+    if (newPw != confirm) {
+      setState(() => _error = 'كلمتا المرور غير متطابقتان');
+      return;
+    }
+
+    setState(() { _saving = true; _error = null; });
+    try {
+      await changePassword(ref.read(dioProvider), current, newPw);
+      if (mounted) {
+        Navigator.of(context).pop();
+        widget.onSuccess();
+      }
+    } on Exception catch (e) {
+      // Extract the message from DioException or any other exception
+      final msg = e.toString().replaceFirst('DioException [bad response]: ', '');
+      setState(() { _error = msg; _saving = false; });
+    } catch (e) {
+      setState(() { _error = 'فشل تغيير كلمة المرور'; _saving = false; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 420, maxHeight: dialogMaxHeight(context)),
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(28),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            const Text('تغيير كلمة المرور',
+              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+            const SizedBox(height: 20),
+            if (_error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                  color: AppTheme.error.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+              ),
+            ],
+            TextField(
+              controller: _currentCtrl,
+              obscureText: _obscureCurrent,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'كلمة المرور الحالية',
+                prefixIcon: const Icon(Icons.lock_outline),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureCurrent ? Icons.visibility_off : Icons.visibility),
+                  onPressed: () => setState(() => _obscureCurrent = !_obscureCurrent),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _newCtrl,
+              obscureText: _obscureNew,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'كلمة المرور الجديدة',
+                prefixIcon: const Icon(Icons.lock_reset_outlined),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureNew ? Icons.visibility_off : Icons.visibility),
+                  onPressed: () => setState(() => _obscureNew = !_obscureNew),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _confirmCtrl,
+              obscureText: _obscureConfirm,
+              style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(
+                labelText: 'تأكيد كلمة المرور الجديدة',
+                prefixIcon: const Icon(Icons.lock_reset_outlined),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureConfirm ? Icons.visibility_off : Icons.visibility),
+                  onPressed: () => setState(() => _obscureConfirm = !_obscureConfirm),
+                ),
+              ),
+            ),
+            const SizedBox(height: 24),
+            Row(children: [
+              Expanded(child: TextButton(
+                onPressed: _saving ? null : () => Navigator.of(context).pop(),
+                child: const Text('إلغاء', style: TextStyle(color: Colors.white54)),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: SizedBox(height: 48, child: ElevatedButton(
+                onPressed: _saving ? null : _submit,
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+                child: _saving
+                  ? const SizedBox(width: 20, height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                  : const Text('تغيير', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              ))),
+            ]),
+          ]),
+        ),
+      ),
     );
   }
 }

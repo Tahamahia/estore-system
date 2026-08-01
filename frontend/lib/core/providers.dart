@@ -550,3 +550,53 @@ class InStockNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>
     return orders.where((o) => !terminal.contains(o['status'] as String? ?? '')).toList();
   }
 }
+
+// ─── Users Provider ────────────────────────────────────────
+final usersProvider = StateNotifierProvider<UsersNotifier, AsyncValue<List<Map<String, dynamic>>>>((ref) {
+  return UsersNotifier(ref);
+});
+
+class UsersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>>> {
+  final Ref _ref;
+  UsersNotifier(this._ref) : super(const AsyncValue.loading());
+
+  Dio get _dio => _ref.read(dioProvider);
+
+  Future<void> fetchUsers() async {
+    state = const AsyncValue.loading();
+    try {
+      final response = await _dio.get('/users');
+      final data = response.data as Map<String, dynamic>;
+      state = AsyncValue.data(List<Map<String, dynamic>>.from(data['data'] ?? []));
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  Future<void> updateUser(String id, Map<String, dynamic> updates) async {
+    await _dio.patch('/users/$id', data: updates);
+    await fetchUsers();
+  }
+
+  Future<void> deleteUser(String id) async {
+    await _dio.delete('/users/$id');
+    await fetchUsers();
+  }
+
+  Future<void> resetPassword(String id, String newPassword) async {
+    await _dio.patch('/users/$id/reset-password', data: {'new_password': newPassword});
+  }
+
+  Future<void> createUser(Map<String, dynamic> userData) async {
+    await _dio.post('/auth/register', data: userData);
+    await fetchUsers();
+  }
+}
+
+// ─── Change Password ───────────────────────────────────────
+Future<void> changePassword(Dio dio, String currentPassword, String newPassword) async {
+  await dio.patch('/auth/change-password', data: {
+    'current_password': currentPassword,
+    'new_password': newPassword,
+  });
+}
