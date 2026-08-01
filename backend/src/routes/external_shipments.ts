@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { requireRole } from '../middleware/tenant';
+import { buildRecomputeOrderStatusStmt } from '../lib/orderStatus';
 
 export const externalShipmentRoutes = new Hono<AppEnv>();
 
@@ -311,6 +312,15 @@ externalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager',
   if (setClauses.length === 1) return c.json({ error: 'No fields to update' }, 400);
 
   if (body.manual_status === 'arrived_at_warehouse') {
+    // Collect distinct order_ids before updating so we can recompute each order's status
+    const affected = await c.env.DB.prepare(`
+      SELECT DISTINCT order_id FROM order_items
+      WHERE external_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
+        AND status NOT IN ('cancelled', 'refunded')
+    `).bind(id, tenantId).all();
+    const orderIds = affected.results.map((r) => (r as Record<string, unknown>).order_id as string);
+
+    const recomputeStmts = orderIds.map((oid) => buildRecomputeOrderStatusStmt(c.env.DB, oid, tenantId));
     await c.env.DB.batch([
       c.env.DB.prepare(
         `UPDATE external_shipments SET ${setClauses.join(', ')} WHERE id = ? AND tenant_id = ?`
@@ -321,6 +331,7 @@ externalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager',
         WHERE external_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
           AND status NOT IN ('cancelled', 'refunded')
       `).bind(id, tenantId),
+      ...recomputeStmts,
     ]);
   } else {
     await c.env.DB.prepare(
@@ -366,8 +377,18 @@ externalShipmentRoutes.post('/:id/attach', requireRole('super_admin', 'store_man
   ).bind(id, tenantId).first();
   if (!shipment) return c.json({ error: 'Not Found' }, 404);
 
-  // Use json_each to match all purchased items belonging to the selected orders
-  const result = await c.env.DB.prepare(`
+  // Collect distinct order_ids that will actually be affected before modifying
+  const affected = await c.env.DB.prepare(`
+    SELECT DISTINCT order_id FROM order_items
+    WHERE order_id IN (SELECT value FROM json_each(?))
+      AND tenant_id = ?
+      AND status = 'purchased'
+      AND external_shipment_id IS NULL
+      AND is_deleted = 0
+  `).bind(JSON.stringify(order_ids), tenantId).all();
+  const distinctOrderIds = affected.results.map((r) => (r as Record<string, unknown>).order_id as string);
+
+  const updateStmt = c.env.DB.prepare(`
     UPDATE order_items
     SET external_shipment_id = ?, status = 'shipped',
         updated_at = datetime('now'), version = version + 1
@@ -376,12 +397,15 @@ externalShipmentRoutes.post('/:id/attach', requireRole('super_admin', 'store_man
       AND status = 'purchased'
       AND external_shipment_id IS NULL
       AND is_deleted = 0
-  `).bind(id, JSON.stringify(order_ids), tenantId).run();
+  `).bind(id, JSON.stringify(order_ids), tenantId);
+
+  const recomputeStmts = distinctOrderIds.map((oid) => buildRecomputeOrderStatusStmt(c.env.DB, oid, tenantId));
+  const result = await c.env.DB.batch([updateStmt, ...recomputeStmts]);
 
   return c.json({
     message: `Orders attached to shipment`,
     shipment_id: id,
-    rows_updated: result.meta?.changes ?? 0,
+    rows_updated: (result[0] as D1Result).meta?.changes ?? 0,
   });
 });
 
@@ -396,6 +420,14 @@ externalShipmentRoutes.delete('/:id', requireRole('super_admin', 'store_manager'
   if (!existing) return c.json({ error: 'Not Found' }, 404);
 
   try {
+    // Collect distinct order_ids before unlinking so we can recompute each order's status
+    const affected = await c.env.DB.prepare(`
+      SELECT DISTINCT order_id FROM order_items
+      WHERE external_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
+    `).bind(id, tenantId).all();
+    const orderIds = affected.results.map((r) => (r as Record<string, unknown>).order_id as string);
+
+    const recomputeStmts = orderIds.map((oid) => buildRecomputeOrderStatusStmt(c.env.DB, oid, tenantId));
     await c.env.DB.batch([
       c.env.DB.prepare(`
         UPDATE order_items
@@ -405,6 +437,7 @@ externalShipmentRoutes.delete('/:id', requireRole('super_admin', 'store_manager'
       c.env.DB.prepare(
         `DELETE FROM external_shipments WHERE id = ? AND tenant_id = ?`
       ).bind(id, tenantId),
+      ...recomputeStmts,
     ]);
     return c.json({ message: 'External shipment deleted', id });
   } catch (err) {
