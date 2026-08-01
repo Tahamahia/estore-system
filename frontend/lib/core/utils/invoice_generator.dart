@@ -8,9 +8,7 @@ enum InvoiceMode { customer, merchant }
 class InvoiceGenerator {
   static String _translateStatus(String status) {
     switch (status) {
-      case 'pending_payment': return 'في انتظار الدفع';
-      case 'paid': return 'تم الدفع';
-      case 'purchasing': return 'جاري الشراء';
+      case 'pending': return 'في انتظار الشراء';
       case 'purchased': return 'تم الشراء';
       case 'shipped': return 'تم الشحن';
       case 'arrived_warehouse': return 'وصل المخزن';
@@ -19,6 +17,9 @@ class InvoiceGenerator {
       case 'dispatched': return 'في الطريق';
       case 'delivered': return 'تم التوصيل';
       case 'cancelled': return 'ملغي';
+      case 'refunded': return 'مُسترد';
+      case 'transferred_to_inventory': return 'محوّل للمخزون';
+      case 'in_stock': return 'فوري';
       default: return status;
     }
   }

@@ -63,6 +63,21 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     );
   }
 
+  String _filterLabel(String f) {
+    switch (f) {
+      case 'all': return 'الكل';
+      case 'pending': return 'معلق';
+      case 'purchased': return 'تم الشراء';
+      case 'shipped': return 'شُحن';
+      case 'arrived_warehouse': return 'وصل المستودع';
+      case 'sorted': return 'مفروز';
+      case 'ready_dispatch': return 'جاهز للتوصيل';
+      case 'dispatched': return 'خرج للتوصيل';
+      case 'delivered': return 'تم التوصيل';
+      default: return f.replaceAll('_', ' ');
+    }
+  }
+
   void _showNewOrderDialog() {
     showDialog(context: context, builder: (ctx) => _NewOrderDialog(
       onCreated: () => ref.read(ordersProvider.notifier).fetchOrders(),
@@ -119,9 +134,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
           // Filter chips
           Wrap(spacing: 12, runSpacing: 12, children: [
-            for (final f in ['all', 'pending_payment', 'purchased', 'shipped', 'delivered'])
+            for (final f in ['all', 'pending', 'purchased', 'shipped', 'arrived_warehouse', 'sorted', 'ready_dispatch', 'dispatched', 'delivered'])
               _FilterChip(
-                label: f == 'all' ? 'All' : f.replaceAll('_', ' ').toUpperCase(),
+                label: _filterLabel(f),
                 selected: _activeFilter == f,
                 onTap: () => _applyFilter(f),
               ),
@@ -400,11 +415,18 @@ class _OrderTile extends StatelessWidget {
 
   Color _statusColor(String status) {
     switch (status) {
-      case 'pending_payment': return AppTheme.warning;
-      case 'paid': case 'purchasing': return AppTheme.primary;
-      case 'purchased': case 'shipped': return AppTheme.secondary;
+      case 'pending': return AppTheme.warning;
+      case 'purchased':
+      case 'shipped': return AppTheme.secondary;
+      case 'arrived_warehouse':
+      case 'sorted': return AppTheme.accent;
+      case 'ready_dispatch':
+      case 'dispatched': return const Color(0xFF3B82F6);
       case 'delivered': return AppTheme.success;
-      case 'cancelled': case 'auto_cancelled': return AppTheme.error;
+      case 'cancelled':
+      case 'refunded': return AppTheme.error;
+      case 'in_stock':
+      case 'transferred_to_inventory': return Colors.orange;
       default: return AppTheme.accent;
     }
   }

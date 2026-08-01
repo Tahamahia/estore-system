@@ -97,7 +97,6 @@ const _kStatuses = [
   ('at_delivery_warehouse', 'مستودع التوصيل',     AppTheme.warning),
   ('out_for_delivery',      'في الطريق للزبون',   AppTheme.primary),
   ('delivered',             'تم الاستلام',         AppTheme.success),
-  ('returned',              'راجع',                AppTheme.error),
 ];
 
 Color _statusColor(String status) {
@@ -196,7 +195,7 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
         ),
 
         // Status pipeline
-        if (status != 'delivered' && status != 'returned')
+        if (status != 'delivered')
           Container(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
             decoration: BoxDecoration(border: Border(top: BorderSide(color: AppTheme.darkBorder))),
