@@ -462,15 +462,45 @@ class InStockNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>
 
   Dio get _dio => _ref.read(dioProvider);
 
-  Future<void> fetchInStockItems() async {
-    state = const AsyncValue.loading();
-    try {
-      final response = await _dio.get('/inventory/in-stock');
-      final data = response.data as Map<String, dynamic>;
-      state = AsyncValue.data(List<Map<String, dynamic>>.from(data['data'] ?? []));
-    } catch (e, st) {
-      state = AsyncValue.error(e, st);
+  int _currentPage = 1;
+  bool _hasMore = false;
+  String _currentSearch = '';
+  bool _isLoadingMore = false;
+
+  bool get hasMore => _hasMore;
+  bool get isLoadingMore => _isLoadingMore;
+
+  Future<void> fetchInStockItems({String? search, int page = 1}) async {
+    final q = search ?? _currentSearch;
+    if (page == 1) {
+      state = const AsyncValue.loading();
+      _currentSearch = q;
     }
+    try {
+      final params = <String, dynamic>{'page': page, 'limit': 20};
+      if (q.isNotEmpty) params['search'] = q;
+      final response = await _dio.get('/inventory/in-stock', queryParameters: params);
+      final data = response.data as Map<String, dynamic>;
+      final newItems = List<Map<String, dynamic>>.from(data['data'] ?? []);
+      final total = (data['total'] as num?)?.toInt() ?? newItems.length;
+      _currentPage = page;
+      _hasMore = (page * 20) < total;
+      if (page == 1) {
+        state = AsyncValue.data(newItems);
+      } else {
+        final existing = state.valueOrNull ?? [];
+        state = AsyncValue.data([...existing, ...newItems]);
+      }
+    } catch (e, st) {
+      if (page == 1) state = AsyncValue.error(e, st);
+    }
+  }
+
+  Future<void> loadMoreItems() async {
+    if (!_hasMore || _isLoadingMore) return;
+    _isLoadingMore = true;
+    await fetchInStockItems(page: _currentPage + 1);
+    _isLoadingMore = false;
   }
 
   Future<void> reassignItem(String itemId, String orderId, double newSellingPrice) async {
@@ -478,7 +508,20 @@ class InStockNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>
       'order_id': orderId,
       'new_selling_price': newSellingPrice,
     });
-    await fetchInStockItems();
+    await fetchInStockItems(search: _currentSearch, page: 1);
+  }
+
+  /// Creates a new customer (or finds by phone) and a bare-bones order, then reassigns the item.
+  /// Returns the new order_id for navigation.
+  Future<String> reassignItemToNewCustomer(
+      String itemId, String phone, String name, double price) async {
+    final response = await _dio.patch('/inventory/in-stock/$itemId/reassign', data: {
+      'new_customer_phone': phone,
+      'new_customer_name': name,
+      'new_selling_price': price,
+    });
+    await fetchInStockItems(search: _currentSearch, page: 1);
+    return response.data['order_id'] as String;
   }
 
   Future<List<Map<String, dynamic>>> fetchActiveOrders() async {
