@@ -2,13 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:estore_app/app/theme.dart';
+import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:uuid/uuid.dart';
 import 'dart:async';
 
-/// Warehouse Scanning Screen — Phase 8 UX Polish + Loud Audio + Ambiguous Fix
-/// Features: Haptic cues, massive sort UI, visual match, tappable ambiguous candidates
 class ScanningScreen extends ConsumerStatefulWidget {
   const ScanningScreen({super.key});
   @override
@@ -23,12 +22,12 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
   String? _lastScannedCode;
   final List<_ScanResult> _scanHistory = [];
 
-  // Massive flash overlay state
+  // Flash overlay state
   bool _showFlash = false;
   Color _flashColor = AppTheme.success;
-  String _flashBin = '';
   String _flashCustomer = '';
   String _flashProduct = '';
+  Map<String, dynamic>? _flashOrderProgress;
   late AnimationController _flashAnimCtrl;
   late Animation<double> _flashAnim;
 
@@ -40,6 +39,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
     _flashAnimCtrl.addStatusListener((s) {
       if (s == AnimationStatus.completed && mounted) setState(() => _showFlash = false);
     });
+    Future.microtask(_loadTodayHistory);
   }
 
   @override
@@ -50,35 +50,53 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
     super.dispose();
   }
 
-  /// Generate deterministic bin number from customer name
-  String _binFor(String name) {
-    final prefix = name.length >= 2 ? name.substring(0, 2).toUpperCase() : name.toUpperCase();
-    final hash = name.codeUnits.fold<int>(0, (a, b) => a + b) % 20 + 1;
-    return '$prefix-$hash';
+  Future<void> _loadTodayHistory() async {
+    try {
+      final dio = ref.read(dioProvider);
+      final res = await dio.get('/warehouse/scan-history');
+      final data = res.data as Map<String, dynamic>;
+      final items = List<Map<String, dynamic>>.from(data['data'] ?? []);
+      if (mounted && items.isNotEmpty) {
+        setState(() {
+          for (final item in items) {
+            final rawId = item['id'] as String? ?? '';
+            _scanHistory.add(_ScanResult(
+              barcode: item['sku'] as String? ?? (rawId.length > 8 ? rawId.substring(0, 8) : rawId),
+              timestamp: DateTime.tryParse(item['sorted_at'] as String? ?? '') ?? DateTime.now(),
+              status: _ScanStatus.found,
+              customerName: item['customer_name'] as String?,
+              productName: item['product_name'] as String?,
+            ));
+          }
+        });
+      }
+    } catch (_) {
+      // silent fail — start with empty list
+    }
   }
 
-  void _playAudioCue(bool success) {
-    // SystemSound.click is the only built-in cross-platform sound Flutter exposes.
-    // It works on iOS; on Android/desktop it fires the platform UI click sound.
-    // Browsers may gate it behind an AudioContext resume, but the scan KeyEvent
-    // itself is a user-gesture so browsers should allow it after the first tap.
+  void _playAudioCue(bool success, {bool bagComplete = false}) {
     SystemSound.play(SystemSoundType.click);
     if (success) {
-      HapticFeedback.mediumImpact();
-      Future.delayed(const Duration(milliseconds: 100), () => HapticFeedback.mediumImpact());
-      Future.delayed(const Duration(milliseconds: 200), () => HapticFeedback.mediumImpact());
+      if (bagComplete) {
+        HapticFeedback.heavyImpact();
+        Future.delayed(const Duration(milliseconds: 120), () => HapticFeedback.heavyImpact());
+      } else {
+        HapticFeedback.mediumImpact();
+      }
     } else {
       HapticFeedback.heavyImpact();
     }
   }
 
-  void _showMassiveFlash({required bool success, String? customer, String? product}) {
+  void _showMassiveFlash({required bool success, String? customer, String? product, Map<String, dynamic>? orderProgress}) {
+    final bagComplete = success && (orderProgress?['complete'] == true);
     setState(() {
       _showFlash = true;
-      _flashColor = success ? AppTheme.success : AppTheme.error;
+      _flashColor = !success ? AppTheme.error : bagComplete ? Colors.amber : AppTheme.success;
       _flashCustomer = customer ?? '';
       _flashProduct = product ?? '';
-      _flashBin = customer != null ? _binFor(customer) : '???';
+      _flashOrderProgress = orderProgress;
     });
     _flashAnimCtrl.reset();
     _flashAnimCtrl.forward();
@@ -107,7 +125,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
       final scanState = ref.read(scanResultProvider);
       if (mounted && scanState.hasError) {
         setState(() => _scanHistory[0] = _scanHistory[0].copyWith(
-          status: _ScanStatus.error, errorMsg: scanState.error?.toString() ?? 'Network error'));
+          status: _ScanStatus.error, errorMsg: scanState.error?.toString() ?? 'خطأ في الشبكة'));
         _playAudioCue(false);
         _showMassiveFlash(success: false);
         return;
@@ -119,12 +137,14 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
         final hasError = scanResult['error'] != null;
         final itemMap = scanResult['item'] as Map<String, dynamic>?;
         final candidatesList = scanResult['candidates'] as List<dynamic>?;
+        final orderProgress = scanResult['order_progress'] as Map<String, dynamic>?;
         String? custName;
         String? prodName;
         if (found && !ambiguous && !hasError && itemMap != null) {
           custName = itemMap['customer_name'] as String?;
           prodName = itemMap['product_name'] as String?;
         }
+        final isSuccess = found && !ambiguous && !hasError;
         setState(() {
           _scanHistory[0] = _scanHistory[0].copyWith(
             status: !found ? _ScanStatus.notFound
@@ -134,10 +154,11 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
             customerName: custName, productName: prodName,
             errorMsg: hasError ? (scanResult['message'] as String?) : null,
             candidates: ambiguous && !hasError && candidatesList != null ? candidatesList.cast<Map<String, dynamic>>() : null,
+            orderProgress: isSuccess ? orderProgress : null,
           );
         });
-        _playAudioCue(found && !ambiguous && !hasError);
-        _showMassiveFlash(success: found && !ambiguous && !hasError, customer: custName, product: prodName);
+        _playAudioCue(isSuccess, bagComplete: orderProgress?['complete'] == true);
+        _showMassiveFlash(success: isSuccess, customer: custName, product: prodName, orderProgress: orderProgress);
       }
     } catch (e) {
       if (mounted) {
@@ -151,38 +172,39 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
   Future<void> _logOrphan(String barcode) async {
     try {
       await ref.read(scanResultProvider.notifier).logOrphan({
-        'id': const Uuid().v4(), 'barcode': barcode, 'description': 'Orphaned package — unrecognized barcode',
+        'id': const Uuid().v4(), 'barcode': barcode, 'description': 'قطعة مجهولة — باركود غير معروف',
       });
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Orphaned package logged'), backgroundColor: AppTheme.warning));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('تم تسجيل القطعة المجهولة'), backgroundColor: AppTheme.warning));
     } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'), backgroundColor: AppTheme.error));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
     }
   }
 
   void _openVisualMatch() {
     showDialog(context: context, builder: (_) => _VisualMatchDialog(
       onItemSelected: (itemId, customerName) async {
-        // Trigger same sort logic via scan provider
         try {
           await ref.read(scanResultProvider.notifier).scanBarcode(itemId);
           if (mounted) {
-            _playAudioCue(true);
-            _showMassiveFlash(success: true, customer: customerName);
+            final scanState = ref.read(scanResultProvider);
+            final scanResult = scanState.valueOrNull;
+            final orderProgress = scanResult?['order_progress'] as Map<String, dynamic>?;
+            _playAudioCue(true, bagComplete: orderProgress?['complete'] == true);
+            _showMassiveFlash(success: true, customer: customerName, orderProgress: orderProgress);
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-              content: Text('✅ Manually sorted to $customerName'), backgroundColor: AppTheme.success,
+              content: Text('✅ تم الفرز إلى $customerName'), backgroundColor: AppTheme.success,
             ));
           }
         } catch (e) {
-          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Failed: $e'), backgroundColor: AppTheme.error));
+          if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
         }
       },
     ));
   }
 
-  /// Handle selecting an ambiguous candidate
   void _selectAmbiguousCandidate(Map<String, dynamic> candidate) {
-    final customerName = candidate['customer_name'] as String? ?? 'Unknown';
-    final productName = candidate['product_name'] as String? ?? 'Unknown';
+    final customerName = candidate['customer_name'] as String? ?? 'غير معروف';
+    final productName = candidate['product_name'] as String? ?? 'غير معروف';
     final itemId = candidate['id'] as String? ?? '';
 
     showDialog(context: context, builder: (_) => AlertDialog(
@@ -209,8 +231,11 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
             try {
               await ref.read(scanResultProvider.notifier).scanBarcode(itemId);
               if (mounted) {
-                _playAudioCue(true);
-                _showMassiveFlash(success: true, customer: customerName);
+                final scanState = ref.read(scanResultProvider);
+                final scanResult = scanState.valueOrNull;
+                final orderProgress = scanResult?['order_progress'] as Map<String, dynamic>?;
+                _playAudioCue(true, bagComplete: orderProgress?['complete'] == true);
+                _showMassiveFlash(success: true, customer: customerName, orderProgress: orderProgress);
                 ScaffoldMessenger.of(context).showSnackBar(SnackBar(
                   content: Text('✅ تم الفرز إلى $customerName'), backgroundColor: AppTheme.success,
                 ));
@@ -227,6 +252,8 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
     ));
   }
 
+  int get _todaySortedCount => _scanHistory.where((s) => s.status == _ScanStatus.found).length;
+
   @override
   Widget build(BuildContext context) {
     return KeyboardListener(
@@ -234,7 +261,6 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
       child: GestureDetector(
         onTap: () => _focusNode.requestFocus(),
         child: Stack(children: [
-          // Main content
           Padding(
             padding: const EdgeInsets.all(24),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -258,12 +284,15 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
               ),
             ]),
           ),
-          // Massive flash overlay — BIGGER and LONGER
+          // Massive flash overlay
           if (_showFlash)
             AnimatedBuilder(
               animation: _flashAnim,
               builder: (ctx, _) {
                 final opacity = (1.0 - _flashAnim.value).clamp(0.0, 1.0);
+                final progress = _flashOrderProgress;
+                final bagComplete = _flashColor == Colors.amber;
+                final isSuccess = _flashColor != AppTheme.error;
                 return Positioned.fill(
                   child: IgnorePointer(
                     child: Opacity(
@@ -273,7 +302,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
                         child: Center(
                           child: Column(mainAxisSize: MainAxisSize.min, children: [
                             Icon(
-                              _flashColor == AppTheme.success ? Icons.check_circle_rounded : Icons.cancel_rounded,
+                              isSuccess ? Icons.check_circle_rounded : Icons.cancel_rounded,
                               size: 100, color: Colors.white,
                             ),
                             const SizedBox(height: 20),
@@ -281,31 +310,29 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
                               Text(_flashCustomer, style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w700)),
                               const SizedBox(height: 16),
                             ],
-                            if (_flashBin.isNotEmpty && _flashColor == AppTheme.success) ...[
-                              // ConstrainedBox prevents overflow on tablets < ~500px wide.
-                              // FittedBox inside scales the BIN digit down gracefully.
-                              ConstrainedBox(
-                                constraints: const BoxConstraints(maxWidth: 300),
-                                child: Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 24),
+                            if (isSuccess && progress != null) ...[
+                              if (bagComplete)
+                                const Text(
+                                  '✅ الكيس اكتمل — جاهز للتوصيل',
+                                  style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900),
+                                  textAlign: TextAlign.center,
+                                )
+                              else
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                                   decoration: BoxDecoration(
-                                    color: Colors.white.withValues(alpha: 0.25),
-                                    borderRadius: BorderRadius.circular(24),
+                                    color: Colors.white.withValues(alpha: 0.2),
+                                    borderRadius: BorderRadius.circular(20),
                                   ),
-                                  child: Column(children: [
-                                    const Text('BIN', style: TextStyle(color: Colors.white70, fontSize: 20, fontWeight: FontWeight.w500)),
-                                    const SizedBox(height: 4),
-                                    FittedBox(
-                                      fit: BoxFit.scaleDown,
-                                      child: Text(_flashBin, style: const TextStyle(color: Colors.white, fontSize: 80, fontWeight: FontWeight.w900, letterSpacing: 6)),
-                                    ),
-                                  ]),
+                                  child: Text(
+                                    'منتج ${progress['sorted']} من ${progress['total']} ✓',
+                                    style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w700),
+                                  ),
                                 ),
-                              ),
                             ],
-                            if (_flashColor == AppTheme.error) ...[
+                            if (!isSuccess) ...[
                               const SizedBox(height: 16),
-                              const Text('❌ NOT FOUND', style: TextStyle(color: Colors.white, fontSize: 40, fontWeight: FontWeight.w900)),
+                              const Text('❌ غير موجود', style: TextStyle(color: Colors.white, fontSize: 40, fontWeight: FontWeight.w900)),
                             ],
                             if (_flashProduct.isNotEmpty) ...[
                               const SizedBox(height: 14),
@@ -343,21 +370,35 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
           Row(children: [
             Container(width: 8, height: 8, decoration: const BoxDecoration(color: AppTheme.success, shape: BoxShape.circle)),
             const SizedBox(width: 8),
-            const Text('Scanner Ready', style: TextStyle(color: AppTheme.success, fontWeight: FontWeight.w600)),
+            const Text('السكانر جاهز', style: TextStyle(color: AppTheme.success, fontWeight: FontWeight.w600)),
           ]),
           const SizedBox(height: 4),
-          const Text('Scan barcode or use Visual Match for torn labels', style: TextStyle(color: Colors.white54, fontSize: 13)),
+          const Text('امسح الباركود أو استخدم المطابقة البصرية للملصقات التالفة', style: TextStyle(color: Colors.white54, fontSize: 13)),
         ])),
-        if (_lastScannedCode != null)
+        // Two info chips: last scan + today count
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          if (_lastScannedCode != null) ...[
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(10)),
+              child: Column(children: [
+                const Text('آخر مسح', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                const SizedBox(height: 2),
+                Text(_lastScannedCode!, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+              ]),
+            ),
+            const SizedBox(width: 8),
+          ],
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-            decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(10)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(color: AppTheme.success.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.success.withValues(alpha: 0.3))),
             child: Column(children: [
-              const Text('Last Scan', style: TextStyle(color: Colors.white38, fontSize: 11)),
+              const Text('مفروز اليوم', style: TextStyle(color: Colors.white38, fontSize: 11)),
               const SizedBox(height: 2),
-              Text(_lastScannedCode!, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 16)),
+              Text('$_todaySortedCount', style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700, fontSize: 18)),
             ]),
           ),
+        ]),
       ]),
     );
   }
@@ -369,9 +410,9 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
         Padding(
           padding: const EdgeInsets.all(20),
           child: Row(children: [
-            const Text('Scan History', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
+            const Text('سجل الفرز', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
             const Spacer(),
-            Text('${_scanHistory.length} scans', style: const TextStyle(color: Colors.white38, fontSize: 13)),
+            Text('${_scanHistory.length} عملية', style: const TextStyle(color: Colors.white38, fontSize: 13)),
           ]),
         ),
         const Divider(height: 1, color: AppTheme.darkBorder),
@@ -380,7 +421,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
             ? const Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
                 Icon(Icons.qr_code, size: 48, color: Colors.white24),
                 SizedBox(height: 12),
-                Text('No scans yet', style: TextStyle(color: Colors.white38)),
+                Text('لا توجد عمليات فرز بعد', style: TextStyle(color: Colors.white38)),
               ]))
             : ListView.separated(
                 padding: const EdgeInsets.all(12), itemCount: _scanHistory.length,
@@ -401,25 +442,24 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(color: AppTheme.darkSurface, borderRadius: BorderRadius.circular(16), border: Border.all(color: AppTheme.darkBorder)),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, mainAxisSize: MainAxisSize.min, children: [
-        const Text('Manual Entry', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
+        const Text('إدخال يدوي', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white)),
         const SizedBox(height: 16),
         TextField(
           controller: _manualController,
-          decoration: const InputDecoration(hintText: 'Enter barcode manually...', hintStyle: TextStyle(color: Colors.white38), prefixIcon: Icon(Icons.keyboard, color: Colors.white38)),
+          decoration: const InputDecoration(hintText: 'أدخل الباركود يدوياً...', hintStyle: TextStyle(color: Colors.white38), prefixIcon: Icon(Icons.keyboard, color: Colors.white38)),
           style: const TextStyle(color: Colors.white),
           onSubmitted: (v) { if (v.isNotEmpty) { _processBarcode(v); _manualController.clear(); } _focusNode.requestFocus(); },
         ),
         const SizedBox(height: 16),
         SizedBox(width: double.infinity, child: ElevatedButton.icon(
           onPressed: () { final c = _lastScannedCode; if (c != null) _logOrphan(c); },
-          icon: const Icon(Icons.inventory_2_outlined, size: 20), label: const Text('Log Last as Orphan'),
+          icon: const Icon(Icons.inventory_2_outlined, size: 20), label: const Text('تسجيل كقطعة مجهولة'),
           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.warning),
         )),
         const SizedBox(height: 10),
-        // Visual Match Button
         SizedBox(width: double.infinity, child: ElevatedButton.icon(
           onPressed: _openVisualMatch,
-          icon: const Icon(Icons.visibility_rounded, size: 20), label: const Text('👁️ Visual Match (Missing Barcode)'),
+          icon: const Icon(Icons.visibility_rounded, size: 20), label: const Text('👁️ مطابقة بصرية (ملصق تالف)'),
           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.accent, foregroundColor: Colors.white),
         )),
       ]),
@@ -468,12 +508,12 @@ class _VisualMatchDialogState extends ConsumerState<_VisualMatchDialog> {
             Row(children: [
               const Icon(Icons.visibility_rounded, color: AppTheme.accent),
               const SizedBox(width: 10),
-              const Text('Visual Match — Tap the item you see', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+              const Text('مطابقة بصرية — اضغط على المنتج الذي تراه', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
               const Spacer(),
               IconButton(icon: const Icon(Icons.close, color: Colors.white38), onPressed: () => Navigator.pop(context)),
             ]),
             const SizedBox(height: 4),
-            const Text('Showing items in purchased/shipped status (expected at warehouse)', style: TextStyle(color: Colors.white38, fontSize: 12)),
+            const Text('يعرض المنتجات المشتراة والمشحونة المتوقع وصولها', style: TextStyle(color: Colors.white38, fontSize: 12)),
             const SizedBox(height: 16),
             Expanded(
               child: _loading
@@ -481,7 +521,7 @@ class _VisualMatchDialogState extends ConsumerState<_VisualMatchDialog> {
                 : _error != null
                   ? Center(child: Text(_error!, style: const TextStyle(color: AppTheme.error)))
                   : (_items == null || _items!.isEmpty)
-                    ? const Center(child: Text('No unsorted items found', style: TextStyle(color: Colors.white38)))
+                    ? const Center(child: Text('لا توجد منتجات غير مفروزة', style: TextStyle(color: Colors.white38)))
                     : GridView.builder(
                         gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, childAspectRatio: 0.75, crossAxisSpacing: 10, mainAxisSpacing: 10),
                         itemCount: _items!.length,
@@ -501,14 +541,14 @@ class _VisualMatchDialogState extends ConsumerState<_VisualMatchDialog> {
   }
 
   void _confirmMatch(Map<String, dynamic> item) {
-    final customerName = item['customer_name'] as String? ?? 'Unknown';
-    final productName = item['product_name'] as String? ?? 'Unknown';
+    final customerName = item['customer_name'] as String? ?? 'غير معروف';
+    final productName = item['product_name'] as String? ?? 'غير معروف';
     showDialog(context: context, builder: (_) => AlertDialog(
       backgroundColor: AppTheme.darkCard,
-      title: const Text('Confirm Visual Match', style: TextStyle(color: Colors.white)),
-      content: Text('Manually sort "$productName" to customer $customerName?', style: const TextStyle(color: Colors.white70)),
+      title: const Text('تأكيد المطابقة', style: TextStyle(color: Colors.white)),
+      content: Text('فرز "$productName" للزبون $customerName؟', style: const TextStyle(color: Colors.white70)),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('إلغاء')),
         ElevatedButton(
           onPressed: () async {
             Navigator.pop(context); // close confirm
@@ -516,7 +556,7 @@ class _VisualMatchDialogState extends ConsumerState<_VisualMatchDialog> {
             await widget.onItemSelected(item['id'] as String, customerName);
           },
           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
-          child: const Text('Sort It'),
+          child: const Text('فرز'),
         ),
       ],
     ));
@@ -570,13 +610,37 @@ class _ScanResult {
   final String? productName;
   final String? errorMsg;
   final List<Map<String, dynamic>>? candidates;
+  final Map<String, dynamic>? orderProgress;
 
-  _ScanResult({required this.barcode, required this.timestamp, required this.status, this.customerName, this.productName, this.errorMsg, this.candidates});
+  _ScanResult({
+    required this.barcode,
+    required this.timestamp,
+    required this.status,
+    this.customerName,
+    this.productName,
+    this.errorMsg,
+    this.candidates,
+    this.orderProgress,
+  });
 
-  _ScanResult copyWith({_ScanStatus? status, String? customerName, String? productName, String? errorMsg, List<Map<String, dynamic>>? candidates}) {
-    return _ScanResult(barcode: barcode, timestamp: timestamp, status: status ?? this.status,
-      customerName: customerName ?? this.customerName, productName: productName ?? this.productName,
-      errorMsg: errorMsg ?? this.errorMsg, candidates: candidates ?? this.candidates);
+  _ScanResult copyWith({
+    _ScanStatus? status,
+    String? customerName,
+    String? productName,
+    String? errorMsg,
+    List<Map<String, dynamic>>? candidates,
+    Map<String, dynamic>? orderProgress,
+  }) {
+    return _ScanResult(
+      barcode: barcode,
+      timestamp: timestamp,
+      status: status ?? this.status,
+      customerName: customerName ?? this.customerName,
+      productName: productName ?? this.productName,
+      errorMsg: errorMsg ?? this.errorMsg,
+      candidates: candidates ?? this.candidates,
+      orderProgress: orderProgress ?? this.orderProgress,
+    );
   }
 }
 
@@ -590,12 +654,15 @@ class _ScanTile extends StatelessWidget {
   Widget build(BuildContext context) {
     Color statusColor; IconData statusIcon; String statusText;
     switch (scan.status) {
-      case _ScanStatus.processing: statusColor = AppTheme.warning; statusIcon = Icons.hourglass_top; statusText = 'Processing...';
-      case _ScanStatus.found: statusColor = AppTheme.success; statusIcon = Icons.check_circle; statusText = 'Sorted ✓';
-      case _ScanStatus.notFound: statusColor = AppTheme.error; statusIcon = Icons.error; statusText = 'Not Found';
-      case _ScanStatus.ambiguous: statusColor = AppTheme.accent; statusIcon = Icons.help; statusText = 'Multi-Match';
-      case _ScanStatus.error: statusColor = AppTheme.error; statusIcon = Icons.wifi_off; statusText = 'Error';
+      case _ScanStatus.processing: statusColor = AppTheme.warning; statusIcon = Icons.hourglass_top; statusText = 'جاري البحث...';
+      case _ScanStatus.found: statusColor = AppTheme.success; statusIcon = Icons.check_circle; statusText = 'تم الفرز ✓';
+      case _ScanStatus.notFound: statusColor = AppTheme.error; statusIcon = Icons.error; statusText = 'غير موجود';
+      case _ScanStatus.ambiguous: statusColor = AppTheme.accent; statusIcon = Icons.help; statusText = 'تعدد النتائج';
+      case _ScanStatus.error: statusColor = AppTheme.error; statusIcon = Icons.wifi_off; statusText = 'خطأ';
     }
+    final progress = scan.orderProgress;
+    final bagComplete = progress?['complete'] == true;
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(color: AppTheme.darkCard.withValues(alpha: 0.5), borderRadius: BorderRadius.circular(12), border: Border.all(color: statusColor.withValues(alpha: 0.3))),
@@ -609,10 +676,31 @@ class _ScanTile extends StatelessWidget {
           ])),
           Text(statusText, style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w600)),
         ]),
+        // Progress line
+        if (scan.status == _ScanStatus.found && progress != null) ...[
+          const SizedBox(height: 6),
+          if (bagComplete)
+            const Text('✅ الكيس اكتمل', style: TextStyle(color: AppTheme.success, fontSize: 11, fontWeight: FontWeight.w700))
+          else ...[
+            Text('${progress['sorted']} من ${progress['total']} منتج في الطلبية', style: const TextStyle(color: Colors.white38, fontSize: 11)),
+            const SizedBox(height: 4),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: (progress['total'] as num) > 0
+                    ? (progress['sorted'] as num) / (progress['total'] as num)
+                    : 0.0,
+                backgroundColor: Colors.white12,
+                valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.success),
+                minHeight: 4,
+              ),
+            ),
+          ],
+        ],
         if (scan.status == _ScanStatus.notFound) ...[
           const SizedBox(height: 8),
           SizedBox(width: double.infinity, height: 32, child: OutlinedButton.icon(
-            onPressed: onLogOrphan, icon: const Icon(Icons.add_box_outlined, size: 16), label: const Text('Log as Orphan', style: TextStyle(fontSize: 12)),
+            onPressed: onLogOrphan, icon: const Icon(Icons.add_box_outlined, size: 16), label: const Text('تسجيل كمجهول', style: TextStyle(fontSize: 12)),
             style: OutlinedButton.styleFrom(foregroundColor: AppTheme.warning, side: BorderSide(color: AppTheme.warning.withValues(alpha: 0.5))),
           )),
         ],
@@ -636,7 +724,7 @@ class _ScanTile extends StatelessWidget {
                   const Icon(Icons.person_outline, size: 18, color: AppTheme.accent),
                   const SizedBox(width: 8),
                   Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Text(c['product_name'] ?? 'Unknown', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+                    Text(c['product_name'] ?? 'غير معروف', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
                     Text(c['customer_name'] ?? '', style: const TextStyle(color: Colors.white54, fontSize: 11)),
                   ])),
                   const Icon(Icons.touch_app, color: AppTheme.accent, size: 20),

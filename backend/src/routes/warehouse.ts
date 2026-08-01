@@ -26,13 +26,15 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
     ).bind(barcode, tenantId).all();
   }
 
-  // Fallback 3: Search by tracking number
+  // Fallback 3: Search by external shipment tracking number
   if (!items.results?.length) {
     items = await c.env.DB.prepare(
-      `SELECT oi.*, o.customer_id, c.full_name as customer_name FROM order_items oi
-       JOIN orders o ON oi.order_id = o.id JOIN shipments s ON oi.shipment_id = s.id
+      `SELECT oi.*, o.customer_id, c.full_name as customer_name
+       FROM order_items oi
+       JOIN orders o ON oi.order_id = o.id
        LEFT JOIN customers c ON o.customer_id = c.id
-       WHERE s.tracking_number = ? AND oi.tenant_id = ? AND oi.is_deleted = 0`
+       JOIN external_shipments es ON oi.external_shipment_id = es.id
+       WHERE es.tracking_number = ? AND oi.tenant_id = ? AND oi.is_deleted = 0`
     ).bind(barcode, tenantId).all();
   }
 
@@ -67,7 +69,25 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
     buildRecomputeOrderStatusStmt(c.env.DB, item.order_id as string, tenantId),
   ]);
 
-  return c.json({ found: true, ambiguous: false, item: { id: item.id, product_name: item.product_name, customer_name: item.customer_name, status: 'sorted' }});
+  // Return bag-completion info so the UI can flash the right colour
+  const progress = await c.env.DB.prepare(`
+    SELECT
+      COUNT(*) AS total_items,
+      SUM(CASE WHEN status = 'sorted' THEN 1 ELSE 0 END) AS sorted_items
+    FROM order_items
+    WHERE order_id = ? AND tenant_id = ? AND is_deleted = 0
+      AND status NOT IN ('cancelled','refunded','transferred_to_inventory','in_stock')
+  `).bind(item.order_id as string, tenantId).first();
+
+  const sorted = Number((progress as any)?.sorted_items ?? 0);
+  const total  = Number((progress as any)?.total_items  ?? 0);
+
+  return c.json({
+    found: true,
+    ambiguous: false,
+    item: { id: item.id, product_name: item.product_name, customer_name: item.customer_name, status: 'sorted' },
+    order_progress: { sorted, total, complete: total > 0 && sorted === total },
+  });
 });
 
 warehouseRoutes.post('/orphan', requireRole('super_admin', 'store_manager', 'sorter'), async (c) => {
@@ -82,6 +102,25 @@ warehouseRoutes.post('/orphan', requireRole('super_admin', 'store_manager', 'sor
   ).bind(id, tenantId, barcode || null, description || null, photo_url || null, userId).run();
 
   return c.json({ message: 'Orphaned package logged', id }, 201);
+});
+
+warehouseRoutes.get('/scan-history', async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+
+  const results = await c.env.DB.prepare(`
+    SELECT oi.id, oi.product_name, oi.sku, oi.sorted_at,
+           c.full_name AS customer_name
+    FROM order_items oi
+    JOIN orders o ON oi.order_id = o.id
+    LEFT JOIN customers c ON o.customer_id = c.id
+    WHERE oi.tenant_id = ? AND oi.status = 'sorted'
+      AND DATE(oi.sorted_at) = DATE('now')
+      AND oi.is_deleted = 0
+    ORDER BY oi.sorted_at DESC
+    LIMIT 100
+  `).bind(tenantId).all();
+
+  return c.json({ data: results.results });
 });
 
 warehouseRoutes.get('/consolidate/:customer_id', async (c) => {
