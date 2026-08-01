@@ -28,14 +28,17 @@ async function hashPassword(password: string): Promise<string> {
  */
 userRoutes.get('/', requireRole('super_admin'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
+  const statusFilter = c.req.query('status');
 
-  const result = await c.env.DB.prepare(
-    `SELECT id, email, full_name, role, is_active, created_at
-     FROM users
-     WHERE tenant_id = ? AND is_deleted = 0
-     ORDER BY created_at ASC`
-  ).bind(tenantId).all();
+  let query = `SELECT id, email, full_name, role, is_active, status, created_at FROM users WHERE tenant_id = ? AND is_deleted = 0`;
+  const bindings: unknown[] = [tenantId];
+  if (statusFilter) {
+    query += ` AND status = ?`;
+    bindings.push(statusFilter);
+  }
+  query += ` ORDER BY created_at ASC`;
 
+  const result = await c.env.DB.prepare(query).bind(...bindings).all();
   return c.json({ data: result.results });
 });
 
@@ -131,4 +134,48 @@ userRoutes.patch('/:id/reset-password', requireRole('super_admin'), async (c) =>
   }
 
   return c.json({ message: 'تم تغيير كلمة المرور' });
+});
+
+/**
+ * PATCH /users/:id/approve — approve a pending signup request (super_admin only)
+ * Body: { role: string }
+ */
+userRoutes.patch('/:id/approve', requireRole('super_admin'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const id = c.req.param('id');
+  const body = await c.req.json<{ role: string }>();
+
+  if (!body.role || !ALLOWED_ROLES.includes(body.role)) {
+    return c.json({ error: 'Bad Request', message: `الأدوار المتاحة: ${ALLOWED_ROLES.join(', ')}` }, 400);
+  }
+
+  const result = await c.env.DB.prepare(
+    `UPDATE users SET status = 'active', is_active = 1, role = ?, updated_at = datetime('now')
+     WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(body.role, id, tenantId).run();
+
+  if (result.meta.changes === 0) {
+    return c.json({ error: 'Not Found', message: 'المستخدم غير موجود' }, 404);
+  }
+
+  return c.json({ message: 'تمت الموافقة على الطلب', id });
+});
+
+/**
+ * PATCH /users/:id/reject — reject a pending signup request (super_admin only)
+ */
+userRoutes.patch('/:id/reject', requireRole('super_admin'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const id = c.req.param('id');
+
+  const result = await c.env.DB.prepare(
+    `UPDATE users SET status = 'rejected', updated_at = datetime('now')
+     WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(id, tenantId).run();
+
+  if (result.meta.changes === 0) {
+    return c.json({ error: 'Not Found', message: 'المستخدم غير موجود' }, 404);
+  }
+
+  return c.json({ message: 'تم رفض الطلب', id });
 });

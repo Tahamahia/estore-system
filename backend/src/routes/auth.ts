@@ -33,8 +33,8 @@ authRoutes.post('/login', async (c) => {
 
   // Query user by email (parameterized — no SQL injection)
   const user = await c.env.DB.prepare(
-    `SELECT id, email, password_hash, tenant_id, role, full_name, is_deleted 
-     FROM users 
+    `SELECT id, email, password_hash, tenant_id, role, full_name, is_deleted, status, is_active
+     FROM users
      WHERE email = ? AND is_deleted = 0`
   ).bind(email).first();
 
@@ -46,6 +46,17 @@ authRoutes.post('/login', async (c) => {
   const isValid = await verifyPassword(password, user.password_hash as string);
   if (!isValid) {
     return c.json({ error: 'Unauthorized', message: 'Invalid credentials' }, 401);
+  }
+
+  // Block accounts that are not fully active
+  if ((user.status as string) === 'pending') {
+    return c.json({ error: 'Pending', message: 'حسابك قيد المراجعة. انتظر موافقة المدير.' }, 403);
+  }
+  if ((user.status as string) === 'rejected') {
+    return c.json({ error: 'Rejected', message: 'تم رفض طلب انضمامك. تواصل مع المدير.' }, 403);
+  }
+  if ((user as any).is_active === 0) {
+    return c.json({ error: 'Inactive', message: 'تم تعطيل هذا الحساب. تواصل مع المدير.' }, 403);
   }
 
   // Generate JWT
@@ -117,6 +128,48 @@ authRoutes.post('/register', authMiddleware, tenantMiddleware, requireRole('supe
   } catch (err: any) {
     if (err.message?.includes('UNIQUE')) {
       return c.json({ error: 'Conflict', message: 'Email already exists' }, 409);
+    }
+    throw err;
+  }
+});
+
+/**
+ * POST /api/v1/auth/signup — public self-registration
+ * Creates a pending user with role=sorter. Admin must approve before login is allowed.
+ */
+authRoutes.post('/signup', async (c) => {
+  const body = await c.req.json<{ full_name: string; email: string; password: string }>();
+
+  if (!body.full_name?.trim() || !body.email || !body.password) {
+    return c.json({ error: 'Bad Request', message: 'الاسم والإيميل وكلمة المرور مطلوبة' }, 400);
+  }
+  if (!EMAIL_REGEX.test(body.email)) {
+    return c.json({ error: 'Bad Request', message: 'صيغة الإيميل غير صحيحة' }, 400);
+  }
+  if (body.password.length < 8) {
+    return c.json({ error: 'Bad Request', message: 'كلمة المرور يجب أن تكون 8 أحرف على الأقل' }, 400);
+  }
+
+  const tenant = await c.env.DB.prepare(
+    `SELECT id FROM tenants WHERE is_deleted = 0 LIMIT 1`
+  ).first();
+  if (!tenant) {
+    return c.json({ error: 'Setup Error', message: 'لم يتم إعداد المتجر بعد' }, 500);
+  }
+
+  const hash = await hashPassword(body.password);
+  const id = crypto.randomUUID();
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO users (id, tenant_id, email, password_hash, full_name, role, status, is_active, created_at, updated_at, version)
+       VALUES (?, ?, ?, ?, ?, 'sorter', 'pending', 0, datetime('now'), datetime('now'), 1)`
+    ).bind(id, tenant.id, body.email.toLowerCase().trim(), hash, body.full_name.trim()).run();
+
+    return c.json({ message: 'تم إرسال طلب الانضمام. انتظر موافقة المدير.' }, 201);
+  } catch (err: any) {
+    if (err.message?.includes('UNIQUE')) {
+      return c.json({ error: 'Conflict', message: 'هذا الإيميل مسجّل مسبقاً' }, 409);
     }
     throw err;
   }
