@@ -25,8 +25,7 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     if (location.startsWith('/customers')) return 5;
     if (location.startsWith('/settlements')) return 6;
     if (location.startsWith('/settings')) return 7;
-    if (location.startsWith('/browser')) return 8;
-    if (location.startsWith('/in-stock')) return 9;
+    if (location.startsWith('/in-stock')) return 8;
     return 0;
   }
 
@@ -39,7 +38,6 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     _NavItem(icon: Icons.people_rounded, label: 'Customers', path: '/customers'),
     _NavItem(icon: Icons.account_balance_wallet_rounded, label: 'التسويات', path: '/settlements'),
     _NavItem(icon: Icons.settings_rounded, label: 'الضبط', path: '/settings'),
-    _NavItem(icon: Icons.language_rounded, label: 'Store Browser', path: '/browser'),
     _NavItem(icon: Icons.inventory_2_rounded, label: 'البضاعة الفورية', path: '/in-stock'),
   ];
 
