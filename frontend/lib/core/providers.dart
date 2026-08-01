@@ -23,12 +23,13 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
 
   Dio get _dio => _ref.read(dioProvider);
 
-  Future<void> fetchOrders({int page = 1, int limit = 50, String? status, String? search}) async {
+  Future<void> fetchOrders({int page = 1, int limit = 50, String? status, String? search, bool unsettled = false}) async {
     state = const AsyncValue.loading();
     try {
       final queryParams = <String, dynamic>{'page': page, 'limit': limit};
       if (status != null) queryParams['status'] = status;
       if (search != null && search.isNotEmpty) queryParams['search'] = search;
+      if (unsettled) queryParams['unsettled'] = 'true';
 
       final response = await _dio.get('/orders', queryParameters: queryParams);
       final data = response.data as Map<String, dynamic>;
@@ -445,12 +446,32 @@ class SettlementsNotifier extends StateNotifier<AsyncValue<List<Map<String, dyna
     required String name,
     required double exchangeRate,
     required List<String> orderIds,
+    bool writeOff = false,
   }) async {
     await _dio.post('/settlements', data: {
       'name': name,
       'exchange_rate': exchangeRate,
       'order_ids': orderIds,
+      'write_off': writeOff,
     });
+    await fetchSettlements();
+  }
+
+  Future<Map<String, dynamic>> fetchSettlementDetail(String id) async {
+    final res = await _dio.get('/settlements/$id');
+    return res.data as Map<String, dynamic>;
+  }
+
+  Future<void> updateSettlement(String id, {String? name, double? exchangeRate}) async {
+    await _dio.patch('/settlements/$id', data: {
+      if (name != null) 'name': name,
+      if (exchangeRate != null) 'exchange_rate': exchangeRate,
+    });
+    await fetchSettlements();
+  }
+
+  Future<void> deleteSettlement(String id) async {
+    await _dio.delete('/settlements/$id');
     await fetchSettlements();
   }
 }
