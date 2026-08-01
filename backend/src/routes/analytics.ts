@@ -5,9 +5,8 @@ import { requireRole } from '../middleware/tenant';
 export const analyticsRoutes = new Hono<AppEnv>();
 
 /**
- * GET /analytics/dashboard — Comprehensive dashboard analytics
- * Returns totals, status breakdown, recent orders, top customers, and action items.
- * All queries are tenant-scoped with parameterized bindings.
+ * GET /analytics/dashboard — Dashboard analytics.
+ * All queries tenant-scoped with parameterized bindings.
  */
 analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
@@ -18,10 +17,13 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
     totalRevenueResult,
     totalItemsResult,
     statusCountsResult,
-    recentOrdersResult,
-    topCustomersResult,
     unsortedCountResult,
     readyDispatchCountResult,
+    ordersThisWeekResult,
+    ordersLastWeekResult,
+    revenueThisWeekResult,
+    revenueLastWeekResult,
+    pendingPurchaseCountResult,
   ] = await Promise.all([
     // Total orders
     c.env.DB.prepare(
@@ -33,11 +35,12 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
       `SELECT COUNT(*) as total FROM customers WHERE tenant_id = ? AND is_deleted = 0`
     ).bind(tenantId).first(),
 
-    // Total revenue (local currency)
+    // Total revenue — delivered items only
     c.env.DB.prepare(
       `SELECT COALESCE(SUM(oi.unit_price_local * oi.quantity), 0) as total
        FROM order_items oi
-       WHERE oi.tenant_id = ? AND oi.is_deleted = 0`
+       WHERE oi.tenant_id = ? AND oi.is_deleted = 0
+         AND oi.status = 'delivered'`
     ).bind(tenantId).first(),
 
     // Total items
@@ -52,29 +55,7 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
        GROUP BY status`
     ).bind(tenantId).all(),
 
-    // Recent orders (top 10 with customer name)
-    c.env.DB.prepare(
-      `SELECT o.id, o.status, o.platform, o.currency, o.created_at, o.updated_at,
-              c.full_name as customer_name, c.id as customer_id
-       FROM orders o
-       LEFT JOIN customers c ON o.customer_id = c.id
-       WHERE o.tenant_id = ? AND o.is_deleted = 0
-       ORDER BY o.created_at DESC
-       LIMIT 10`
-    ).bind(tenantId).all(),
-
-    // Top 5 customers by order count
-    c.env.DB.prepare(
-      `SELECT c.id, c.full_name, c.phone, COUNT(o.id) as order_count
-       FROM customers c
-       JOIN orders o ON c.id = o.customer_id
-       WHERE c.tenant_id = ? AND c.is_deleted = 0 AND o.is_deleted = 0
-       GROUP BY c.id
-       ORDER BY order_count DESC
-       LIMIT 5`
-    ).bind(tenantId).all(),
-
-    // Items needing action: unsorted (arrived but not sorted)
+    // Items needing action: unsorted (purchased/shipped/arrived but not yet sorted)
     c.env.DB.prepare(
       `SELECT COUNT(*) as total FROM order_items
        WHERE tenant_id = ? AND is_deleted = 0
@@ -87,19 +68,50 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
        WHERE tenant_id = ? AND is_deleted = 0
        AND status = 'ready_dispatch'`
     ).bind(tenantId).first(),
+
+    // Orders created in the last 7 days
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as total FROM orders
+       WHERE tenant_id = ? AND is_deleted = 0
+         AND created_at >= datetime('now', '-7 days')`
+    ).bind(tenantId).first(),
+
+    // Orders created 8–14 days ago (previous week, for comparison)
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as total FROM orders
+       WHERE tenant_id = ? AND is_deleted = 0
+         AND created_at >= datetime('now', '-14 days')
+         AND created_at < datetime('now', '-7 days')`
+    ).bind(tenantId).first(),
+
+    // Revenue (delivered) last 7 days
+    c.env.DB.prepare(
+      `SELECT COALESCE(SUM(oi.unit_price_local * oi.quantity), 0) as total
+       FROM order_items oi
+       WHERE oi.tenant_id = ? AND oi.is_deleted = 0
+         AND oi.status = 'delivered'
+         AND oi.updated_at >= datetime('now', '-7 days')`
+    ).bind(tenantId).first(),
+
+    // Revenue (delivered) previous week (8–14 days ago)
+    c.env.DB.prepare(
+      `SELECT COALESCE(SUM(oi.unit_price_local * oi.quantity), 0) as total
+       FROM order_items oi
+       WHERE oi.tenant_id = ? AND oi.is_deleted = 0
+         AND oi.status = 'delivered'
+         AND oi.updated_at >= datetime('now', '-14 days')
+         AND oi.updated_at < datetime('now', '-7 days')`
+    ).bind(tenantId).first(),
+
+    // Items pending purchase (ordered but not yet bought by store)
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as total FROM order_items
+       WHERE tenant_id = ? AND is_deleted = 0 AND status = 'pending'`
+    ).bind(tenantId).first(),
   ]);
 
-  // Build status_counts as a flat object
-  const statusCounts: Record<string, number> = {
-    pending_payment: 0,
-    purchased: 0,
-    shipped: 0,
-    arrived_warehouse: 0,
-    sorted: 0,
-    ready_dispatch: 0,
-    dispatched: 0,
-    delivered: 0,
-  };
+  // Build status_counts dynamically — no hardcoded stale keys
+  const statusCounts: Record<string, number> = {};
   for (const row of (statusCountsResult.results || []) as any[]) {
     statusCounts[row.status] = row.count;
   }
@@ -110,11 +122,14 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
     total_revenue_local: (totalRevenueResult as any)?.total || 0,
     total_items: (totalItemsResult as any)?.total || 0,
     status_counts: statusCounts,
-    recent_orders: recentOrdersResult.results || [],
-    top_customers: topCustomersResult.results || [],
     items_needing_action: {
       unsorted: (unsortedCountResult as any)?.total || 0,
-      ready_to_dispatch: (readyDispatchCountResult as any)?.total || 0,
+      ready_dispatch: (readyDispatchCountResult as any)?.total || 0,
+      pending_purchase: (pendingPurchaseCountResult as any)?.total || 0,
     },
+    orders_this_week: (ordersThisWeekResult as any)?.total || 0,
+    orders_last_week: (ordersLastWeekResult as any)?.total || 0,
+    revenue_this_week: (revenueThisWeekResult as any)?.total || 0,
+    revenue_last_week: (revenueLastWeekResult as any)?.total || 0,
   });
 });
