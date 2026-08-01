@@ -218,6 +218,11 @@ class CustomersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynami
     await fetchCustomers();
     return response.data as Map<String, dynamic>;
   }
+
+  Future<void> deleteCustomer(String id) async {
+    await _dio.delete('/customers/$id');
+    await fetchCustomers();
+  }
 }
 
 // ─── External Shipments Provider ──────────────────────────

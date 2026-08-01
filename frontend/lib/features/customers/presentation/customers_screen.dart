@@ -49,22 +49,59 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
 
   String _translateStatus(String status) {
     switch (status) {
-      case 'pending_payment': return 'في انتظار الدفع';
-      case 'paid': return 'تم الدفع';
-      case 'purchasing': return 'جاري الشراء';
-      case 'purchased': return 'تم الشراء';
-      case 'shipped': return 'تم الشحن';
-      case 'sorted': return 'تم الفرز';
-      case 'ready_dispatch': return 'جاهز للتوصيل';
-      case 'dispatched': return 'في الطريق';
-      case 'delivered': return 'تم التوصيل';
-      default: return status.replaceAll('_', ' ');
+      case 'pending':              return 'في الانتظار';
+      case 'purchased':            return 'تم الشراء';
+      case 'shipped':              return 'في الشحن';
+      case 'arrived_warehouse':    return 'وصل المخزن';
+      case 'sorted':               return 'تم الفرز';
+      case 'ready_dispatch':       return 'جاهز للتوصيل';
+      case 'dispatched':           return 'مع المندوب';
+      case 'delivered':            return 'تم التوصيل';
+      case 'cancelled':            return 'ملغي';
+      case 'refunded':             return 'مسترد';
+      case 'transferred_to_inventory': return 'بضاعة فورية';
+      case 'in_stock':             return 'فوري';
+      default:                     return status.replaceAll('_', ' ');
+    }
+  }
+
+  Future<void> _confirmDelete(BuildContext context, Map<String, dynamic> customer) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('حذف الزبون', style: TextStyle(color: Colors.white)),
+        content: Text(
+          'هل تريد حذف "${customer['full_name']}"؟ لا يمكن التراجع عن هذا الإجراء.',
+          style: const TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+            child: const Text('حذف'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true) return;
+    await ref.read(customersProvider.notifier).deleteCustomer(customer['id'] as String);
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('تم حذف الزبون'),
+        backgroundColor: AppTheme.success,
+      ));
     }
   }
 
   void _openWhatsApp(String? phone, String name, {int itemCount = 0, String status = 'in progress'}) async {
     if (phone == null || phone.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No phone number'), backgroundColor: AppTheme.warning));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('لا يوجد رقم هاتف'), backgroundColor: AppTheme.warning));
       return;
     }
     final cleanPhone = phone.replaceAll(RegExp(r'[^0-9+]'), '');
@@ -82,9 +119,9 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
       padding: const EdgeInsets.all(24),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
-          const Text('Customers', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white)),
+          const Text('الزبائن', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white)),
           const Spacer(),
-          ElevatedButton.icon(onPressed: _showAddDialog, icon: const Icon(Icons.person_add, size: 20), label: const Text('Add Customer')),
+          ElevatedButton.icon(onPressed: _showAddDialog, icon: const Icon(Icons.person_add, size: 20), label: const Text('إضافة زبون')),
         ]),
         const SizedBox(height: 16),
         // Tabs: All Customers | Dispatch Status
@@ -98,8 +135,8 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
             unselectedLabelColor: Colors.white54,
             dividerColor: Colors.transparent,
             tabs: const [
-              Tab(text: '👥 All Customers'),
-              Tab(text: '🚦 Dispatch Status'),
+              Tab(text: '👥 كل الزبائن'),
+              Tab(text: '🚦 حالة التوصيل'),
             ],
           ),
         ),
@@ -120,7 +157,7 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
       TextField(
         controller: _searchController,
         decoration: InputDecoration(
-          hintText: 'Search customers...', hintStyle: const TextStyle(color: Colors.white38),
+          hintText: 'بحث بالاسم أو الهاتف...', hintStyle: const TextStyle(color: Colors.white38),
           prefixIcon: const Icon(Icons.search, color: Colors.white38),
           filled: true, fillColor: AppTheme.darkCard,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
@@ -135,8 +172,8 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
             loading: () => const Center(child: CircularProgressIndicator()),
             error: (e, _) => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
               const Icon(Icons.error_outline, color: AppTheme.error, size: 48), const SizedBox(height: 12),
-              const Text('Failed to load', style: TextStyle(color: Colors.white70)), const SizedBox(height: 8),
-              ElevatedButton(onPressed: () => ref.read(customersProvider.notifier).fetchCustomers(), child: const Text('Retry')),
+              const Text('فشل التحميل', style: TextStyle(color: Colors.white70)), const SizedBox(height: 8),
+              ElevatedButton(onPressed: () => ref.read(customersProvider.notifier).fetchCustomers(), child: const Text('إعادة المحاولة')),
             ])),
             data: (customers) {
               // Apply local search filter
@@ -150,7 +187,7 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
               }).toList();
 
               if (filtered.isEmpty) {
-                return const Center(child: Text('No customers found', style: TextStyle(color: Colors.white38)));
+                return const Center(child: Text('لا يوجد زبائن', style: TextStyle(color: Colors.white38)));
               }
               return ListView.separated(
                 padding: const EdgeInsets.all(16), itemCount: filtered.length,
@@ -180,7 +217,11 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
                         decoration: BoxDecoration(color: AppTheme.secondary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
                         child: Text(c['city'], style: const TextStyle(color: AppTheme.secondary, fontSize: 12)),
                       ),
-                      const SizedBox(width: 8),
+                      IconButton(
+                        icon: const Icon(Icons.delete_outline, color: AppTheme.error, size: 20),
+                        tooltip: 'حذف الزبون',
+                        onPressed: () => _confirmDelete(context, c),
+                      ),
                       const Icon(Icons.chevron_right, color: Colors.white38),
                     ]),
                   );
@@ -249,7 +290,7 @@ class _DispatchStatusTabState extends ConsumerState<_DispatchStatusTab> {
       return Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
         Icon(Icons.check_circle_outline, size: 56, color: Colors.white.withValues(alpha: 0.2)),
         const SizedBox(height: 12),
-        const Text('No pending dispatches', style: TextStyle(color: Colors.white38)),
+        const Text('لا توجد طلبيات جارية', style: TextStyle(color: Colors.white38)),
       ]));
     }
     return RefreshIndicator(
@@ -269,8 +310,8 @@ class _DispatchStatusTabState extends ConsumerState<_DispatchStatusTab> {
           final bool isGreen = total > 0 && ready == total;
           final bool isRed = pending > 0 || notOrdered > 0;
           final trafficColor = isGreen ? AppTheme.success : isRed ? AppTheme.error : AppTheme.warning;
-          final trafficLabel = isGreen ? 'READY' : isRed ? 'PARTIAL' : 'WAITING';
-          final statusMsg = isGreen ? 'ready for delivery' : 'partially received ($ready/$total arrived)';
+          final trafficLabel = isGreen ? 'جاهز' : isRed ? 'جزئي' : 'في الانتظار';
+          final statusMsg = isGreen ? 'جاهز للتوصيل' : 'وصل جزئياً ($ready/$total)';
 
           return Container(
             margin: const EdgeInsets.only(bottom: 10),
@@ -304,7 +345,7 @@ class _DispatchStatusTabState extends ConsumerState<_DispatchStatusTab> {
                   ),
                 ]),
                 const SizedBox(height: 4),
-                Text('$ready/$total items sorted • ${pending > 0 ? '$pending in transit' : ''}${notOrdered > 0 ? ' • $notOrdered not ordered' : ''}',
+                Text('$ready من $total مفروز${pending > 0 ? ' • $pending في الطريق' : ''}${notOrdered > 0 ? ' • $notOrdered لم يُطلب' : ''}',
                   style: const TextStyle(color: Colors.white54, fontSize: 12)),
                 // Progress bar
                 const SizedBox(height: 8),
