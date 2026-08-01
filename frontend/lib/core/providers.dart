@@ -328,6 +328,10 @@ class InternalShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String
     await _dio.delete('/internal-shipments/$id');
     await fetchShipments();
   }
+
+  Future<void> returnOrder(String shipmentId, String orderId) async {
+    await _dio.post('/internal-shipments/$shipmentId/orders/$orderId/return');
+  }
 }
 
 // ─── Warehouse Scanner Provider ────────────────────────────

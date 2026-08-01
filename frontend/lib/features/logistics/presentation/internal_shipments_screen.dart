@@ -291,16 +291,6 @@ class _PipelineBar extends StatelessWidget {
             padding: const EdgeInsets.symmetric(vertical: 8),
           ),
         )),
-        const SizedBox(width: 8),
-        Expanded(child: OutlinedButton.icon(
-          onPressed: () => onAdvance('returned'),
-          icon: const Icon(Icons.keyboard_return_rounded, size: 16, color: AppTheme.error),
-          label: const Text('راجع', style: TextStyle(color: AppTheme.error, fontSize: 12)),
-          style: OutlinedButton.styleFrom(
-            side: const BorderSide(color: AppTheme.error),
-            padding: const EdgeInsets.symmetric(vertical: 8),
-          ),
-        )),
       ]),
     ]);
   }
@@ -484,6 +474,51 @@ class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
     }
   }
 
+  Future<void> _returnOrder(String orderId) async {
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (_) => AlertDialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('تأكيد الترجيع', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: const Text(
+          'هل تأكد أن هذا الزبون رفض الاستلام؟ سيتم تحويل قطعه للبضاعة الفورية.',
+          style: TextStyle(color: Colors.white70),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('إلغاء', style: TextStyle(color: Colors.white54)),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.error),
+            child: const Text('تأكيد الترجيع'),
+          ),
+        ],
+      ),
+    );
+    if (!context.mounted || confirm != true) return;
+    try {
+      await ref.read(internalShipmentsProvider.notifier).returnOrder(widget.manifestId, orderId);
+      if (!mounted) return;
+      setState(() {
+        final orders = _manifest!['orders'] as List<dynamic>;
+        orders.removeWhere((o) => (o as Map<String, dynamic>)['id'] == orderId);
+      });
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('تم تحويل الطلبية للبضاعة الفورية'),
+        backgroundColor: AppTheme.success,
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('$e'),
+        backgroundColor: AppTheme.error,
+      ));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Dialog(
@@ -542,6 +577,8 @@ class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
                           final location = [city, area].where((s) => s.isNotEmpty).join(' - ');
                           final itemCount = (order['item_count'] as num?)?.toInt() ?? 0;
                           final status = order['status'] as String? ?? '';
+                          final manifestStatus = _manifest!['status'] as String? ?? '';
+                          final canReturn = manifestStatus != 'delivered';
                           return ListTile(
                             contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 2),
                             title: Text(name, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
@@ -549,11 +586,23 @@ class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
                               [if (phone.isNotEmpty) phone, if (location.isNotEmpty) location, '$itemCount منتج'].join(' · '),
                               style: const TextStyle(color: Colors.white38, fontSize: 12),
                             ),
-                            trailing: Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                              decoration: BoxDecoration(color: _statusColor(status).withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
-                              child: Text(_statusLabel(status), style: TextStyle(color: _statusColor(status), fontSize: 11)),
-                            ),
+                            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                decoration: BoxDecoration(color: _statusColor(status).withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
+                                child: Text(_statusLabel(status), style: TextStyle(color: _statusColor(status), fontSize: 11)),
+                              ),
+                              if (canReturn) ...[
+                                const SizedBox(width: 4),
+                                IconButton(
+                                  icon: const Icon(Icons.reply_rounded, size: 16, color: AppTheme.error),
+                                  tooltip: 'راجع → فوري',
+                                  onPressed: () => _returnOrder(order['id'] as String),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                ),
+                              ],
+                            ]),
                           );
                         },
                       );

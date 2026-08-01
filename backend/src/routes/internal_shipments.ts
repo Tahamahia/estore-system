@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { requireRole } from '../middleware/tenant';
+import { buildRecomputeOrderStatusStmt } from '../lib/orderStatus';
 
 export const internalShipmentRoutes = new Hono<AppEnv>();
 
@@ -107,11 +108,11 @@ internalShipmentRoutes.get('/:id', async (c) => {
   return c.json({ ...shipment, orders: orders.results });
 });
 
-// PATCH /internal-shipments/:id — update status with cascade
+// PATCH /internal-shipments/:id — update status with item-level cascade
 // Status pipeline:
-//   out_for_delivery → cascade orders.status = 'dispatched'
-//   delivered        → cascade orders.status = 'delivered'
-//   returned         → reset orders to 'ready_dispatch', detach, reset items to 'sorted'
+//   out_for_delivery → cascade order_items.status = 'dispatched', recompute orders
+//   delivered        → cascade order_items.status = 'delivered', recompute orders
+//   other            → update shipment only
 internalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
@@ -132,42 +133,29 @@ internalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager')
     `UPDATE internal_shipments SET ${setClauses.join(', ')} WHERE id = ? AND tenant_id = ?`
   ).bind(...values, id, tenantId);
 
-  if (body.status === 'out_for_delivery') {
+  if (body.status === 'out_for_delivery' || body.status === 'delivered') {
+    const itemStatus = body.status === 'out_for_delivery' ? 'dispatched' : 'delivered';
+
+    // Collect the distinct order_ids that will be touched before modifying
+    const affected = await c.env.DB.prepare(`
+      SELECT DISTINCT id FROM orders
+      WHERE internal_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
+    `).bind(id, tenantId).all();
+    const orderIds = affected.results.map((r) => (r as Record<string, unknown>).id as string);
+
+    const recomputeStmts = orderIds.map((oid) => buildRecomputeOrderStatusStmt(c.env.DB, oid, tenantId));
     await c.env.DB.batch([
       updateShipmentStmt,
-      c.env.DB.prepare(`
-        UPDATE orders SET status = 'dispatched', updated_at = datetime('now')
-        WHERE internal_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
-      `).bind(id, tenantId),
-    ]);
-  } else if (body.status === 'delivered') {
-    await c.env.DB.batch([
-      updateShipmentStmt,
-      c.env.DB.prepare(`
-        UPDATE orders SET status = 'delivered', updated_at = datetime('now')
-        WHERE internal_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
-      `).bind(id, tenantId),
-    ]);
-  } else if (body.status === 'returned') {
-    // 1. Reset items back to 'sorted' (warehouse receives them again)
-    // 2. Detach orders from this manifest and set to 'ready_dispatch' (re-dispatch later)
-    // 3. Update the internal shipment status
-    await c.env.DB.batch([
       c.env.DB.prepare(`
         UPDATE order_items
-        SET status = 'sorted', updated_at = datetime('now'), version = version + 1
+        SET status = ?, updated_at = datetime('now'), version = version + 1
         WHERE order_id IN (
           SELECT id FROM orders WHERE internal_shipment_id = ? AND tenant_id = ?
         )
           AND tenant_id = ? AND is_deleted = 0
-          AND status NOT IN ('cancelled', 'refunded')
-      `).bind(id, tenantId, tenantId),
-      c.env.DB.prepare(`
-        UPDATE orders
-        SET status = 'ready_dispatch', internal_shipment_id = NULL, updated_at = datetime('now')
-        WHERE internal_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
-      `).bind(id, tenantId),
-      updateShipmentStmt,
+          AND status NOT IN ('cancelled','refunded','transferred_to_inventory','in_stock')
+      `).bind(itemStatus, id, tenantId, tenantId),
+      ...recomputeStmts,
     ]);
   } else {
     await updateShipmentStmt.run();
@@ -215,4 +203,42 @@ internalShipmentRoutes.delete('/:id', requireRole('super_admin', 'store_manager'
   ]);
 
   return c.json({ message: 'Internal shipment deleted', id });
+});
+
+// POST /internal-shipments/:id/orders/:orderId/return
+// Orphans all non-terminal items → in_stock, cancels the order, detaches from manifest.
+internalShipmentRoutes.post('/:id/orders/:orderId/return', requireRole('super_admin', 'store_manager'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const shipmentId = c.req.param('id');
+  const orderId = c.req.param('orderId');
+
+  const shipment = await c.env.DB.prepare(
+    `SELECT id FROM internal_shipments WHERE id = ? AND tenant_id = ?`
+  ).bind(shipmentId, tenantId).first();
+  if (!shipment) return c.json({ error: 'Shipment not found' }, 404);
+
+  const order = await c.env.DB.prepare(
+    `SELECT id FROM orders WHERE id = ? AND tenant_id = ? AND internal_shipment_id = ? AND is_deleted = 0`
+  ).bind(orderId, tenantId, shipmentId).first();
+  if (!order) return c.json({ error: 'Order not found in this shipment' }, 404);
+
+  await c.env.DB.batch([
+    // Orphan all non-terminal items → available as instant stock
+    c.env.DB.prepare(`
+      UPDATE order_items
+      SET order_id = NULL, status = 'in_stock',
+          updated_at = datetime('now'), version = version + 1
+      WHERE order_id = ? AND tenant_id = ? AND is_deleted = 0
+        AND status NOT IN ('cancelled','refunded','transferred_to_inventory','in_stock')
+    `).bind(orderId, tenantId),
+    // Cancel the order and detach from manifest
+    c.env.DB.prepare(`
+      UPDATE orders
+      SET internal_shipment_id = NULL, status = 'cancelled',
+          updated_at = datetime('now'), version = version + 1
+      WHERE id = ? AND tenant_id = ?
+    `).bind(orderId, tenantId),
+  ]);
+
+  return c.json({ message: 'تم تحويل الطلبية للبضاعة الفورية', order_id: orderId });
 });
