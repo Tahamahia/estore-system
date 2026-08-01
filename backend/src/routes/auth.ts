@@ -122,6 +122,43 @@ authRoutes.post('/register', authMiddleware, tenantMiddleware, requireRole('supe
   }
 });
 
+/**
+ * PATCH /api/v1/auth/change-password (authenticated users)
+ * Verifies current_password, then sets new_password.
+ */
+authRoutes.patch('/change-password', authMiddleware, tenantMiddleware, async (c) => {
+  const userId = c.get('user_id') as string;
+  const body = await c.req.json<{ current_password: string; new_password: string }>();
+
+  if (!body.current_password || !body.new_password) {
+    return c.json({ error: 'Bad Request', message: 'current_password و new_password مطلوبان' }, 400);
+  }
+
+  if (body.new_password.length < 8) {
+    return c.json({ error: 'Bad Request', message: 'كلمة المرور الجديدة يجب أن تكون 8 أحرف على الأقل' }, 400);
+  }
+
+  const user = await c.env.DB.prepare(
+    `SELECT id, password_hash FROM users WHERE id = ? AND is_deleted = 0`
+  ).bind(userId).first();
+
+  if (!user) {
+    return c.json({ error: 'Not Found', message: 'المستخدم غير موجود' }, 404);
+  }
+
+  const isValid = await verifyPassword(body.current_password, user.password_hash as string);
+  if (!isValid) {
+    return c.json({ error: 'Unauthorized', message: 'كلمة المرور الحالية غير صحيحة' }, 401);
+  }
+
+  const newHash = await hashPassword(body.new_password);
+  await c.env.DB.prepare(
+    `UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?`
+  ).bind(newHash, userId).run();
+
+  return c.json({ message: 'تم تغيير كلمة المرور بنجاح' });
+});
+
 // ─── Password Hashing Helpers (PBKDF2 via Web Crypto) ─────
 async function hashPassword(password: string): Promise<string> {
   const encoder = new TextEncoder();
