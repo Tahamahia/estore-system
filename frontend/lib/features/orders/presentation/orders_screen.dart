@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:uuid/uuid.dart';
 
 class OrdersScreen extends ConsumerStatefulWidget {
@@ -652,7 +653,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 540, maxHeight: 900),
+        constraints: BoxConstraints(maxWidth: 540, maxHeight: dialogMaxHeight(context, cap: 900)),
         child: Padding(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [

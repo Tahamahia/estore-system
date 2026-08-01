@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/utils/dialog_utils.dart';
 
 class InStockScreen extends ConsumerStatefulWidget {
   const InStockScreen({super.key});
@@ -382,7 +383,7 @@ class _ReassignItemDialogState extends ConsumerState<_ReassignItemDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 440, maxHeight: 620),
+        constraints: BoxConstraints(maxWidth: 440, maxHeight: dialogMaxHeight(context, cap: 620)),
         child: Padding(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [

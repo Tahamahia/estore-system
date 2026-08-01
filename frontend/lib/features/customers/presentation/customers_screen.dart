@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:uuid/uuid.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -385,7 +386,7 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 460),
+        constraints: BoxConstraints(maxWidth: 460, maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -507,7 +508,7 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 460),
+        constraints: BoxConstraints(maxWidth: 460, maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [

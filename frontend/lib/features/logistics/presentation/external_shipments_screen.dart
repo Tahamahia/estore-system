@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/utils/dialog_utils.dart';
 
 class ExternalShipmentsScreen extends ConsumerStatefulWidget {
   const ExternalShipmentsScreen({super.key});
@@ -475,7 +476,7 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 620),
+        constraints: BoxConstraints(maxWidth: 520, maxHeight: dialogMaxHeight(context, cap: 620)),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: _loading
@@ -640,7 +641,7 @@ class _AttachOrdersDialogState extends ConsumerState<_AttachOrdersDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 620),
+        constraints: BoxConstraints(maxWidth: 520, maxHeight: dialogMaxHeight(context, cap: 620)),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -810,7 +811,7 @@ class _TrackingTimelineDialog extends StatelessWidget {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 500, maxHeight: 580),
+        constraints: BoxConstraints(maxWidth: 500, maxHeight: dialogMaxHeight(context, cap: 580)),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [

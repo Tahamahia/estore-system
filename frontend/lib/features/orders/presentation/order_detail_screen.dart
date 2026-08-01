@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:estore_app/core/utils/invoice_generator.dart';
 import 'package:printing/printing.dart';
 
@@ -1285,7 +1286,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520),
+        constraints: BoxConstraints(maxWidth: 520, maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -1727,7 +1728,7 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
+        constraints: BoxConstraints(maxWidth: 480, maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -2119,7 +2120,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480),
+        constraints: BoxConstraints(maxWidth: 480, maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [

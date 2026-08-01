@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'extraction_js.dart';
 
 // Conditional import: WebView is only available on native platforms
@@ -515,7 +516,7 @@ class _ConfirmOrderDialogState extends ConsumerState<_ConfirmOrderDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 520, maxHeight: 680),
+        constraints: BoxConstraints(maxWidth: 520, maxHeight: dialogMaxHeight(context, cap: 680)),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(
