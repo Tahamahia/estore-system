@@ -185,6 +185,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen>
                         ],
                       ),
                     ),
+                    const SizedBox(height: 16),
+                    TextButton(
+                      onPressed: () => context.go('/signup'),
+                      child: const Text(
+                        'لا تملك حساباً؟ طلب الانضمام',
+                        style: TextStyle(color: Colors.white54, fontSize: 13),
+                      ),
+                    ),
                   ],
                 ),
               ),

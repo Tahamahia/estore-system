@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/auth_service.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/utils/dialog_utils.dart';
 
 const _kRoles = [
   MapEntry('super_admin', 'مدير النظام'),
@@ -27,6 +28,8 @@ class SettingsScreen extends ConsumerStatefulWidget {
 }
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
+  List<Map<String, dynamic>>? _pendingRequests;
+
   @override
   void initState() {
     super.initState();
@@ -35,8 +38,18 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
       final currentUser = ref.read(currentUserProvider);
       if ((currentUser?['role'] as String?) == 'super_admin') {
         ref.read(usersProvider.notifier).fetchUsers();
+        _loadPendingRequests();
       }
     });
+  }
+
+  Future<void> _loadPendingRequests() async {
+    try {
+      final pending = await ref.read(usersProvider.notifier).fetchPendingRequests();
+      if (mounted) setState(() => _pendingRequests = pending);
+    } catch (_) {
+      if (mounted) setState(() => _pendingRequests = []);
+    }
   }
 
   // ── Shipping Sources ────────────────────────────────────────
@@ -216,6 +229,58 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
     ));
   }
 
+  // ── Pending Requests ────────────────────────────────────────
+
+  void _showApproveDialog(Map<String, dynamic> req) {
+    final name = req['full_name'] as String? ?? '';
+    showDialog(context: context, builder: (_) => _ApproveDialog(
+      request: req,
+      onApproved: () {
+        _loadPendingRequests();
+        ref.read(usersProvider.notifier).fetchUsers();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('تمت الموافقة على $name'),
+            backgroundColor: AppTheme.success,
+          ));
+        }
+      },
+    ));
+  }
+
+  void _confirmReject(Map<String, dynamic> req) {
+    final name = req['full_name'] as String? ?? '';
+    showDialog(context: context, builder: (_) => AlertDialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      title: const Text('رفض الطلب', style: TextStyle(color: Colors.white)),
+      content: Text('هل تريد رفض طلب "$name"؟', style: const TextStyle(color: Colors.white70)),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('إلغاء', style: TextStyle(color: Colors.white54)),
+        ),
+        ElevatedButton(
+          onPressed: () async {
+            final navigator = Navigator.of(context);
+            final messenger = ScaffoldMessenger.of(context);
+            navigator.pop();
+            await ref.read(usersProvider.notifier).rejectUser(req['id'] as String);
+            _loadPendingRequests();
+            if (mounted) {
+              messenger.showSnackBar(const SnackBar(
+                content: Text('تم رفض الطلب'),
+                backgroundColor: AppTheme.error,
+              ));
+            }
+          },
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.error),
+          child: const Text('رفض'),
+        ),
+      ],
+    ));
+  }
+
   @override
   Widget build(BuildContext context) {
     final sourcesState = ref.watch(shippingSourcesProvider);
@@ -298,14 +363,84 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
               ]),
             ),
 
-            // ── User Management Section (super_admin only) ────────
+            // ── super_admin only sections ─────────────────────────
             if (isSuperAdmin) ...[
+              const SizedBox(height: 24),
+              _buildPendingSection(),
               const SizedBox(height: 24),
               _buildUsersSection(currentUserId),
             ],
           ],
         ),
       ),
+    );
+  }
+
+  Widget _buildPendingSection() {
+    final pending = _pendingRequests;
+    final count = pending?.length ?? 0;
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: AppTheme.darkSurface,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppTheme.darkBorder),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppTheme.warning.withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Icon(Icons.person_search_outlined, color: AppTheme.warning, size: 20),
+          ),
+          const SizedBox(width: 12),
+          Row(children: [
+            const Text('طلبات الانضمام', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700, color: Colors.white)),
+            if (count > 0) ...[
+              const SizedBox(width: 8),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                decoration: BoxDecoration(
+                  color: AppTheme.warning,
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Text('$count', style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ]),
+        ]),
+        const SizedBox(height: 4),
+        const Padding(
+          padding: EdgeInsets.only(right: 4),
+          child: Text('طلبات الانضمام الجديدة التي تحتاج مراجعة', style: TextStyle(color: Colors.white54, fontSize: 12)),
+        ),
+        const SizedBox(height: 16),
+        if (pending == null)
+          const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
+        else if (pending.isEmpty)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppTheme.darkCard,
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: const Center(
+              child: Text('لا توجد طلبات انضمام جديدة ✓', style: TextStyle(color: Colors.white38)),
+            ),
+          )
+        else
+          Column(
+            children: pending.map((req) => _PendingRequestTile(
+              request: req,
+              onApprove: () => _showApproveDialog(req),
+              onReject: () => _confirmReject(req),
+            )).toList(),
+          ),
+      ]),
     );
   }
 
@@ -884,6 +1019,168 @@ class _ResetPasswordDialogState extends ConsumerState<_ResetPasswordDialog> {
                   ? const SizedBox(width: 20, height: 20,
                       child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
                   : const Text('تعيين', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+              ))),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+}
+
+String _formatDate(String? dateStr) {
+  if (dateStr == null) return '';
+  final dt = DateTime.tryParse(dateStr);
+  if (dt == null) return dateStr;
+  return '${dt.day}/${dt.month}/${dt.year}';
+}
+
+class _PendingRequestTile extends StatelessWidget {
+  final Map<String, dynamic> request;
+  final VoidCallback onApprove;
+  final VoidCallback onReject;
+  const _PendingRequestTile({required this.request, required this.onApprove, required this.onReject});
+
+  @override
+  Widget build(BuildContext context) {
+    final name = request['full_name'] as String? ?? '';
+    final email = request['email'] as String? ?? '';
+    final createdAt = request['created_at'] as String?;
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTheme.darkCard,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.warning.withValues(alpha: 0.35)),
+      ),
+      child: Row(children: [
+        CircleAvatar(
+          radius: 18,
+          backgroundColor: AppTheme.warning.withValues(alpha: 0.2),
+          child: Text(
+            name.isNotEmpty ? name[0].toUpperCase() : '?',
+            style: const TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w700),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(name, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+          Text(email, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+          if (createdAt != null)
+            Text(_formatDate(createdAt), style: const TextStyle(color: Colors.white38, fontSize: 11)),
+        ])),
+        const SizedBox(width: 8),
+        ElevatedButton.icon(
+          onPressed: onApprove,
+          icon: const Icon(Icons.check_rounded, size: 16),
+          label: const Text('قبول'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.success,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            textStyle: const TextStyle(fontSize: 12),
+          ),
+        ),
+        const SizedBox(width: 8),
+        ElevatedButton.icon(
+          onPressed: onReject,
+          icon: const Icon(Icons.close_rounded, size: 16),
+          label: const Text('رفض'),
+          style: ElevatedButton.styleFrom(
+            backgroundColor: AppTheme.error,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            textStyle: const TextStyle(fontSize: 12),
+          ),
+        ),
+      ]),
+    );
+  }
+}
+
+class _ApproveDialog extends ConsumerStatefulWidget {
+  final Map<String, dynamic> request;
+  final VoidCallback onApproved;
+  const _ApproveDialog({required this.request, required this.onApproved});
+
+  @override
+  ConsumerState<_ApproveDialog> createState() => _ApproveDialogState();
+}
+
+class _ApproveDialogState extends ConsumerState<_ApproveDialog> {
+  String _selectedRole = 'sorter';
+  bool _saving = false;
+  String? _error;
+
+  @override
+  Widget build(BuildContext context) {
+    final name = widget.request['full_name'] as String? ?? '';
+
+    return Dialog(
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: 400, maxHeight: dialogMaxHeight(context)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+            Text('قبول طلب $name',
+              style: const TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
+            const SizedBox(height: 20),
+            if (_error != null) ...[
+              Container(
+                padding: const EdgeInsets.all(10),
+                margin: const EdgeInsets.only(bottom: 14),
+                decoration: BoxDecoration(
+                  color: AppTheme.error.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+              ),
+            ],
+            DropdownButtonFormField<String>(
+              value: _selectedRole,
+              dropdownColor: AppTheme.darkCard,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'الدور',
+                prefixIcon: Icon(Icons.badge_outlined),
+              ),
+              items: _kRoles.map((e) => DropdownMenuItem(value: e.key, child: Text(e.value))).toList(),
+              onChanged: (v) => setState(() => _selectedRole = v!),
+            ),
+            const SizedBox(height: 24),
+            Row(children: [
+              Expanded(child: TextButton(
+                onPressed: _saving ? null : () => Navigator.of(context).pop(),
+                child: const Text('إلغاء', style: TextStyle(color: Colors.white54)),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: SizedBox(height: 48, child: ElevatedButton(
+                onPressed: _saving ? null : () async {
+                  setState(() { _saving = true; _error = null; });
+                  final navigator = Navigator.of(context);
+                  try {
+                    await ref.read(usersProvider.notifier).approveUser(
+                      widget.request['id'] as String, _selectedRole,
+                    );
+                    if (mounted) {
+                      navigator.pop();
+                      widget.onApproved();
+                    }
+                  } on DioException catch (e) {
+                    final data = e.response?.data;
+                    final msg = data is Map ? (data['message'] as String? ?? 'فشل القبول') : 'فشل القبول';
+                    setState(() { _error = msg; _saving = false; });
+                  } catch (e) {
+                    setState(() { _error = 'فشل القبول'; _saving = false; });
+                  }
+                },
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+                child: _saving
+                  ? const SizedBox(width: 20, height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2.5, color: Colors.white))
+                  : const Text('تأكيد القبول', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
               ))),
             ]),
           ]),

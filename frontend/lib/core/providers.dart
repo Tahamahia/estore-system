@@ -591,6 +591,19 @@ class UsersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>>
     await _dio.post('/auth/register', data: userData);
     await fetchUsers();
   }
+
+  Future<List<Map<String, dynamic>>> fetchPendingRequests() async {
+    final res = await _dio.get('/users', queryParameters: {'status': 'pending'});
+    return List<Map<String, dynamic>>.from(res.data['data'] ?? []);
+  }
+
+  Future<void> approveUser(String id, String role) async {
+    await _dio.patch('/users/$id/approve', data: {'role': role});
+  }
+
+  Future<void> rejectUser(String id) async {
+    await _dio.patch('/users/$id/reject');
+  }
 }
 
 // ─── Change Password ───────────────────────────────────────

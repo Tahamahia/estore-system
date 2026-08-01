@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../core/auth_service.dart';
 import '../features/auth/presentation/login_screen.dart';
+import '../features/auth/presentation/signup_screen.dart';
 import '../features/dashboard/presentation/dashboard_shell.dart';
 import '../features/dashboard/presentation/overview_screen.dart';
 import '../features/orders/presentation/orders_screen.dart';
@@ -22,20 +23,24 @@ final routerProvider = Provider<GoRouter>((ref) {
     initialLocation: '/login',
     redirect: (context, state) {
       final isLoggedIn = token != null;
-      final isLoginPage = state.matchedLocation == '/login';
+      final location = state.matchedLocation;
+      final isPublicPage = location == '/login' || location == '/signup';
 
-      // Not logged in → force to login (except if already there)
-      if (!isLoggedIn && !isLoginPage) return '/login';
-      // Logged in → redirect away from login to dashboard
-      if (isLoggedIn && isLoginPage) return '/';
+      if (!isLoggedIn && !isPublicPage) return '/login';
+      if (isLoggedIn && isPublicPage) return '/';
 
-      return null; // No redirect needed
+      return null;
     },
     routes: [
       GoRoute(
         path: '/login',
         name: 'login',
         builder: (context, state) => const LoginScreen(),
+      ),
+      GoRoute(
+        path: '/signup',
+        name: 'signup',
+        builder: (context, state) => const SignupScreen(),
       ),
       ShellRoute(
         builder: (context, state, child) => DashboardShell(child: child),
