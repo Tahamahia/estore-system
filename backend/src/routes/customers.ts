@@ -25,26 +25,31 @@ customerRoutes.get('/', async (c) => {
   const search = c.req.query('search');
   const phone = c.req.query('phone'); // Exact phone lookup for debounce
 
-  let query = `SELECT * FROM customers WHERE tenant_id = ? AND is_deleted = 0`;
-  const bindings: any[] = [tenantId];
+  let whereClause = `WHERE tenant_id = ? AND is_deleted = 0`;
+  const whereBindings: any[] = [tenantId];
 
   if (phone) {
     // Exact phone match for phone-first identity
     const normalized = normalizePhone(phone);
     if (normalized) {
-      query += ` AND phone = ?`;
-      bindings.push(normalized);
+      whereClause += ` AND phone = ?`;
+      whereBindings.push(normalized);
     }
   } else if (search) {
-    query += ` AND (full_name LIKE ? OR phone LIKE ?)`;
-    bindings.push(`%${search}%`, `%${search}%`);
+    whereClause += ` AND (full_name LIKE ? OR phone LIKE ?)`;
+    whereBindings.push(`%${search}%`, `%${search}%`);
   }
 
-  query += ` ORDER BY full_name ASC LIMIT ? OFFSET ?`;
-  bindings.push(limit, offset);
+  const [results, countResult] = await Promise.all([
+    c.env.DB.prepare(
+      `SELECT * FROM customers ${whereClause} ORDER BY full_name ASC LIMIT ? OFFSET ?`
+    ).bind(...whereBindings, limit, offset).all(),
+    c.env.DB.prepare(
+      `SELECT COUNT(*) as total FROM customers ${whereClause}`
+    ).bind(...whereBindings).first(),
+  ]);
 
-  const results = await c.env.DB.prepare(query).bind(...bindings).all();
-  return c.json({ data: results.results, page, limit });
+  return c.json({ data: results.results, total: (countResult as any)?.total || 0, page, limit });
 });
 
 customerRoutes.get('/:id', async (c) => {

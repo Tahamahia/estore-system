@@ -16,80 +16,64 @@ export const syncRoutes = new Hono<AppEnv>();
  */
 syncRoutes.get('/', async (c) => {
   const tenantId = c.get('tenant_id');
-  const since = c.req.query('since');  // ISO timestamp or null
+  const since = c.req.query('since');
 
-  // Build a lightweight sync snapshot
-  const queries = [
-    // Order counts by status
-    c.env.DB.prepare(
-      `SELECT 
-         COUNT(*) as total_orders,
-         SUM(CASE WHEN status = 'pending_payment' THEN 1 ELSE 0 END) as pending,
-         SUM(CASE WHEN status = 'purchased' THEN 1 ELSE 0 END) as purchased,
-         SUM(CASE WHEN status = 'shipped' THEN 1 ELSE 0 END) as shipped,
-         SUM(CASE WHEN status = 'delivered' THEN 1 ELSE 0 END) as delivered,
-         MAX(updated_at) as last_order_update
-       FROM orders WHERE tenant_id = ? AND is_deleted = 0`
-    ).bind(tenantId),
-    // Recent changes since last sync
-    c.env.DB.prepare(
-      `SELECT COUNT(*) as changed_orders
-       FROM orders WHERE tenant_id = ? AND is_deleted = 0 AND updated_at > ?`
-    ).bind(tenantId, since || '1970-01-01T00:00:00Z'),
+  const [orderStats, changedOrders, customerStats, itemStats] = await Promise.all([
+    // Order counts using current status enum
+    c.env.DB.prepare(`
+      SELECT COUNT(*) as total_orders,
+        SUM(CASE WHEN status = 'pending'       THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN status = 'purchased'     THEN 1 ELSE 0 END) as purchased,
+        SUM(CASE WHEN status = 'shipped'       THEN 1 ELSE 0 END) as shipped,
+        SUM(CASE WHEN status = 'delivered'     THEN 1 ELSE 0 END) as delivered,
+        MAX(updated_at) as last_order_update
+      FROM orders WHERE tenant_id = ? AND is_deleted = 0
+    `).bind(tenantId).first(),
+
+    // Changed orders since last sync
+    c.env.DB.prepare(`
+      SELECT COUNT(*) as changed_orders
+      FROM orders WHERE tenant_id = ? AND is_deleted = 0 AND updated_at > ?
+    `).bind(tenantId, since || '1970-01-01T00:00:00Z').first(),
+
     // Customer count
-    c.env.DB.prepare(
-      `SELECT COUNT(*) as total_customers FROM customers
-       WHERE tenant_id = ? AND is_deleted = 0`
-    ).bind(tenantId),
-    // Shipment counts
-    c.env.DB.prepare(
-      `SELECT 
-         COUNT(*) as total_shipments,
-         SUM(CASE WHEN status = 'in_transit' THEN 1 ELSE 0 END) as in_transit,
-         MAX(updated_at) as last_shipment_update
-       FROM shipments WHERE tenant_id = ? AND is_deleted = 0`
-    ).bind(tenantId),
-    // Unassigned items (orphans)
-    c.env.DB.prepare(
-      `SELECT COUNT(*) as orphan_count FROM unassigned_items
-       WHERE tenant_id = ? AND is_deleted = 0`
-    ).bind(tenantId),
-  ];
+    c.env.DB.prepare(`
+      SELECT COUNT(*) as total_customers FROM customers
+      WHERE tenant_id = ? AND is_deleted = 0
+    `).bind(tenantId).first(),
 
-  const [orderStats, changedOrders, customerStats, shipmentStats, orphanStats] =
-    await c.env.DB.batch(queries);
+    // Action items
+    c.env.DB.prepare(`
+      SELECT
+        SUM(CASE WHEN status IN ('purchased','shipped','arrived_warehouse') THEN 1 ELSE 0 END) as unsorted,
+        SUM(CASE WHEN status = 'ready_dispatch' THEN 1 ELSE 0 END) as ready_dispatch,
+        SUM(CASE WHEN status = 'in_stock' AND order_id IS NULL THEN 1 ELSE 0 END) as in_stock_count
+      FROM order_items WHERE tenant_id = ? AND is_deleted = 0
+    `).bind(tenantId).first(),
+  ]);
 
   type Row = Record<string, unknown>;
-  const orders = (orderStats.results?.[0] || {}) as Row;
-  const changed = (changedOrders.results?.[0] || {}) as Row;
-  const customers = (customerStats.results?.[0] || {}) as Row;
-  const shipments = (shipmentStats.results?.[0] || {}) as Row;
-  const orphans = (orphanStats.results?.[0] || {}) as Row;
-
-  // Dirty flags: tell the client which sections need re-fetching
-  const hasChanges = (changed.changed_orders as number || 0) > 0;
+  const orders   = (orderStats   || {}) as Row;
+  const changed  = (changedOrders || {}) as Row;
+  const customers = (customerStats || {}) as Row;
+  const items    = (itemStats    || {}) as Row;
 
   return c.json({
     server_time: new Date().toISOString(),
-    dirty: hasChanges,
+    dirty: (changed.changed_orders as number || 0) > 0,
     orders: {
-      total: orders.total_orders || 0,
-      pending: orders.pending || 0,
-      purchased: orders.purchased || 0,
-      shipped: orders.shipped || 0,
-      delivered: orders.delivered || 0,
+      total:       orders.total_orders   || 0,
+      pending:     orders.pending        || 0,
+      purchased:   orders.purchased      || 0,
+      shipped:     orders.shipped        || 0,
+      delivered:   orders.delivered      || 0,
       last_update: orders.last_order_update || null,
     },
-    customers: {
-      total: customers.total_customers || 0,
-    },
-    shipments: {
-      total: shipments.total_shipments || 0,
-      in_transit: shipments.in_transit || 0,
-      last_update: shipments.last_shipment_update || null,
-    },
-    orphans: {
-      count: orphans.orphan_count || 0,
+    customers: { total: customers.total_customers || 0 },
+    action_items: {
+      unsorted:       items.unsorted       || 0,
+      ready_dispatch: items.ready_dispatch || 0,
+      in_stock:       items.in_stock_count || 0,
     },
   });
 });

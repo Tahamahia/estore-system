@@ -150,7 +150,7 @@ settlementRoutes.get('/', async (c) => {
        COUNT(DISTINCT o.id) AS order_count,
        COUNT(CASE WHEN oi.status != 'cancelled' THEN 1 END) AS item_count
      FROM orders o
-     JOIN order_items oi ON oi.order_id = o.id
+     JOIN order_items oi ON oi.order_id = o.id AND oi.is_deleted = 0
      WHERE o.tenant_id = ? AND o.settlement_id IS NOT NULL
      GROUP BY o.settlement_id`
   ).bind(tenantId).all();

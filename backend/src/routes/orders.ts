@@ -217,7 +217,7 @@ orderRoutes.post('/', async (c) => {
 orderRoutes.patch('/items/bulk', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const body = await c.req.json();
-  const { item_ids, order_ids, status, shipment_id, tracking_number } = body;
+  const { item_ids, order_ids, status, external_shipment_id, tracking_number } = body;
 
   // D1 hard limit: 100 statements per batch() call. Use 99 to stay safely under.
   const D1_BATCH_LIMIT = 99;
@@ -247,8 +247,8 @@ orderRoutes.patch('/items/bulk', requireRole('super_admin', 'store_manager', 'pu
     return c.json({ error: 'Bad Request', message: 'item_ids or order_ids array is required' }, 400);
   }
 
-  if (!status && !shipment_id) {
-    return c.json({ error: 'Bad Request', message: 'Provide at least status or shipment_id' }, 400);
+  if (!status && !external_shipment_id) {
+    return c.json({ error: 'Bad Request', message: 'Provide at least status or external_shipment_id' }, 400);
   }
 
   // Build parameterized SET clauses
@@ -259,9 +259,9 @@ orderRoutes.patch('/items/bulk', requireRole('super_admin', 'store_manager', 'pu
     setClauses.push(`status = ?`);
     paramValues.push(status);
   }
-  if (shipment_id) {
-    setClauses.push(`shipment_id = ?`);
-    paramValues.push(shipment_id);
+  if (external_shipment_id) {
+    setClauses.push(`external_shipment_id = ?`);
+    paramValues.push(external_shipment_id);
   }
   setClauses.push(`updated_at = datetime('now')`);
   setClauses.push(`version = version + 1`);
@@ -692,8 +692,7 @@ orderRoutes.post('/:id/split', requireRole('super_admin', 'store_manager'), asyn
     }
   }
 
-  const { v4: uuidv4 } = await import('uuid');
-  const newOrderId = uuidv4();
+  const newOrderId = crypto.randomUUID();
   const isFullCart = parentOrder.order_type === 'full_cart';
 
   const stmts: D1PreparedStatement[] = [];
@@ -881,7 +880,7 @@ orderRoutes.post('/:id/orphan-items', requireRole('super_admin', 'store_manager'
   ).bind(orderId, tenantId).first();
   if (!order) return c.json({ error: 'Order not found' }, 404);
 
-  const terminalStatuses = ['cancelled', 'auto_cancelled', 'refunded', 'delivered'];
+  const terminalStatuses = ['cancelled', 'refunded', 'delivered', 'transferred_to_inventory', 'in_stock'];
   if (terminalStatuses.includes((order as Record<string, unknown>).status as string)) {
     return c.json({ error: `Cannot orphan items from a ${(order as Record<string, unknown>).status as string} order` }, 400);
   }

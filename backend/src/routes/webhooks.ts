@@ -32,9 +32,10 @@ webhookRoutes.post('/telegram', async (c) => {
       `SELECT status, created_at, updated_at FROM orders WHERE id = ? OR platform_order_id = ?`
     ).bind(orderId, orderId).first();
 
+    // No tenant context in webhook — return generic confirmation to avoid cross-tenant data exposure
     const reply = order
-      ? `📦 Order Status: ${order.status}\nCreated: ${order.created_at}\nUpdated: ${order.updated_at}`
-      : `❌ Order not found.`;
+      ? `📦 تم العثور على الطلبية. للتفاصيل، يرجى مراجعة لوحة التحكم.`
+      : `❌ لم يتم العثور على الطلبية.`;
 
     if (c.env.TELEGRAM_BOT_TOKEN) {
       await fetch(`https://api.telegram.org/bot${c.env.TELEGRAM_BOT_TOKEN}/sendMessage`, {
