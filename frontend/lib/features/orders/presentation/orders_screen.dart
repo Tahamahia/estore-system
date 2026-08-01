@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:estore_app/app/theme.dart';
+import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:uuid/uuid.dart';
@@ -36,8 +37,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
       _searchDebounce?.cancel();
       _searchDebounce = Timer(const Duration(milliseconds: 450), () {
         ref.read(ordersProvider.notifier).fetchOrders(
-          status: _activeFilter == 'all' ? null : _activeFilter,
+          status: (_activeFilter == 'all' || _activeFilter == 'settleable')
+              ? (_activeFilter == 'settleable' ? 'delivered' : null)
+              : _activeFilter,
           search: text.isEmpty ? null : text,
+          unsettled: _activeFilter == 'settleable',
         );
       });
     });
@@ -53,8 +57,9 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   void _applyFilter(String filter) {
     setState(() => _activeFilter = filter);
     ref.read(ordersProvider.notifier).fetchOrders(
-      status: filter == 'all' ? null : filter,
+      status: (filter == 'all' || filter == 'settleable') ? (filter == 'settleable' ? 'delivered' : null) : filter,
       search: _searchText.isEmpty ? null : _searchText,
+      unsettled: filter == 'settleable',
     );
   }
 
@@ -120,6 +125,11 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 selected: _activeFilter == f,
                 onTap: () => _applyFilter(f),
               ),
+            _FilterChip(
+              label: 'جاهزة للتسوية',
+              selected: _activeFilter == 'settleable',
+              onTap: () => _applyFilter('settleable'),
+            ),
           ]),
           const SizedBox(height: 20),
 
@@ -241,12 +251,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
     final orderIds = _selectedIds.toList();
     showDialog(context: context, builder: (_) => _CreateSettlementDialog(
       selectedCount: orderIds.length,
-      onConfirm: (name, rate) async {
+      onConfirm: (name, rate, writeOff) async {
         try {
           await ref.read(settlementsProvider.notifier).createSettlement(
             name: name,
             exchangeRate: rate,
             orderIds: orderIds,
+            writeOff: writeOff,
           );
           if (mounted) {
             ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -963,19 +974,38 @@ class _ItemCardState extends State<_ItemCard> {
 }
 
 // ─── Create Settlement Dialog ──────────────────────────────
-class _CreateSettlementDialog extends StatefulWidget {
+class _CreateSettlementDialog extends ConsumerStatefulWidget {
   final int selectedCount;
-  final Future<void> Function(String name, double rate) onConfirm;
+  final Future<void> Function(String name, double rate, bool writeOff) onConfirm;
   const _CreateSettlementDialog({required this.selectedCount, required this.onConfirm});
   @override
-  State<_CreateSettlementDialog> createState() => _CreateSettlementDialogState();
+  ConsumerState<_CreateSettlementDialog> createState() => _CreateSettlementDialogState();
 }
 
-class _CreateSettlementDialogState extends State<_CreateSettlementDialog> {
+class _CreateSettlementDialogState extends ConsumerState<_CreateSettlementDialog> {
   final _nameCtrl = TextEditingController();
   final _rateCtrl = TextEditingController();
   bool _loading = false;
   String? _error;
+  bool _writeOff = false;
+  late Future<int> _inStockCountFuture;
+
+  @override
+  void initState() {
+    super.initState();
+    _inStockCountFuture = _fetchInStockCount();
+  }
+
+  Future<int> _fetchInStockCount() async {
+    try {
+      final dio = ref.read(dioProvider);
+      final res = await dio.get('/inventory/in-stock', queryParameters: {'limit': 1, 'page': 1});
+      final data = res.data as Map<String, dynamic>;
+      return (data['total'] as num?)?.toInt() ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
 
   @override
   void dispose() {
@@ -990,10 +1020,10 @@ class _CreateSettlementDialogState extends State<_CreateSettlementDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
+        constraints: BoxConstraints(maxWidth: 420, maxHeight: dialogMaxHeight(context, cap: 600)),
         child: Padding(
           padding: const EdgeInsets.all(28),
-          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(children: [
               Container(
                 padding: const EdgeInsets.all(10),
@@ -1037,6 +1067,56 @@ class _CreateSettlementDialogState extends State<_CreateSettlementDialog> {
                 prefixIcon: Icon(Icons.currency_exchange_outlined),
               ),
             ),
+            const SizedBox(height: 16),
+            // Write-off checkbox
+            Container(
+              decoration: BoxDecoration(
+                color: AppTheme.darkCard,
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: _writeOff ? AppTheme.warning.withValues(alpha: 0.4) : AppTheme.darkBorder),
+              ),
+              child: CheckboxListTile(
+                value: _writeOff,
+                onChanged: (v) => setState(() => _writeOff = v ?? false),
+                activeColor: AppTheme.warning,
+                title: const Text(
+                  'شطب البضاعة الفورية غير المباعة في هذه التسوية',
+                  style: TextStyle(color: Colors.white, fontSize: 13),
+                ),
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+                dense: true,
+              ),
+            ),
+            const SizedBox(height: 6),
+            FutureBuilder<int>(
+              future: _inStockCountFuture,
+              builder: (ctx, snap) {
+                final count = snap.data ?? 0;
+                if (_writeOff) {
+                  return Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppTheme.warning.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: AppTheme.warning.withValues(alpha: 0.25)),
+                    ),
+                    child: Row(children: [
+                      const Icon(Icons.warning_amber_rounded, color: AppTheme.warning, size: 15),
+                      const SizedBox(width: 6),
+                      Text(
+                        'سيتم شطب $count منتج كخسارة',
+                        style: const TextStyle(color: AppTheme.warning, fontSize: 12),
+                      ),
+                    ]),
+                  );
+                }
+                return const Text(
+                  'لن يتم شطب أي بضاعة فورية',
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                );
+              },
+            ),
             const SizedBox(height: 24),
             SizedBox(height: 48, child: ElevatedButton.icon(
               onPressed: _loading ? null : () async {
@@ -1046,7 +1126,7 @@ class _CreateSettlementDialogState extends State<_CreateSettlementDialog> {
                 if (rate == null || rate <= 0) { setState(() => _error = 'سعر الصرف يجب أن يكون رقماً موجباً'); return; }
                 setState(() { _loading = true; _error = null; });
                 final nav = Navigator.of(context);
-                await widget.onConfirm(name, rate);
+                await widget.onConfirm(name, rate, _writeOff);
                 if (mounted) nav.pop();
               },
               icon: _loading
@@ -1055,7 +1135,7 @@ class _CreateSettlementDialogState extends State<_CreateSettlementDialog> {
               label: Text(_loading ? 'جاري الإنشاء...' : 'إنشاء التسوية'),
               style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
             )),
-          ]),
+          ])),
         ),
       ),
     );

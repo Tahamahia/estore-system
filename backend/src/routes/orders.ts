@@ -23,6 +23,7 @@ orderRoutes.get('/', async (c) => {
   const offset = (page - 1) * limit;
   const status = c.req.query('status');
   const search = c.req.query('search')?.trim();
+  const unsettled = c.req.query('unsettled') === 'true';
 
   let query = `SELECT o.*, c.full_name as customer_name, c.phone as customer_phone
                FROM orders o
@@ -33,6 +34,10 @@ orderRoutes.get('/', async (c) => {
   if (status) {
     query += ` AND o.status = ?`;
     bindings.push(status);
+  }
+
+  if (unsettled && status === 'delivered') {
+    query += ` AND o.settlement_id IS NULL`;
   }
 
   // Full-text search across customer name, order ID, platform order ID,
@@ -67,6 +72,10 @@ orderRoutes.get('/', async (c) => {
   if (status) {
     countQuery += ` AND o.status = ?`;
     countBindings.push(status);
+  }
+
+  if (unsettled && status === 'delivered') {
+    countQuery += ` AND o.settlement_id IS NULL`;
   }
 
   if (search) {
