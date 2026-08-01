@@ -114,11 +114,13 @@ class _SettlementCard extends StatelessWidget {
     final createdAt = settlement['created_at'] as String? ?? '';
     final totalLyd = (settlement['total_lyd_collected'] as num?)?.toDouble() ?? 0;
     final totalUsdCost = (settlement['total_usd_cost'] as num?)?.toDouble() ?? 0;
+    final writeOffUsd = (settlement['total_write_off_usd'] as num?)?.toDouble() ?? 0;
+    final writeOffCount = (settlement['write_off_item_count'] as num?)?.toInt() ?? 0;
     final orderCount = (settlement['order_count'] as num?)?.toInt() ?? 0;
 
-    // Core financial calculations
+    // Core financial calculations — write-offs are an expense against this settlement
     final boughtUsd = exchangeRate > 0 ? totalLyd / exchangeRate : 0.0;
-    final netProfit = boughtUsd - totalUsdCost;
+    final netProfit = boughtUsd - totalUsdCost - writeOffUsd;
     final isProfit = netProfit >= 0;
 
     return Container(
@@ -192,6 +194,29 @@ class _SettlementCard extends StatelessWidget {
             color: AppTheme.primary,
           ),
         ]),
+        if (writeOffCount > 0) ...[
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            decoration: BoxDecoration(
+              color: AppTheme.error.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: AppTheme.error.withValues(alpha: 0.2)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.inventory_2_outlined, color: AppTheme.error, size: 16),
+              const SizedBox(width: 8),
+              Expanded(child: Text(
+                'خسائر بضاعة فورية لم تُبع ($writeOffCount منتج)',
+                style: const TextStyle(color: AppTheme.error, fontSize: 12),
+              )),
+              Text(
+                '-\$${writeOffUsd.toStringAsFixed(2)}',
+                style: const TextStyle(color: AppTheme.error, fontSize: 13, fontWeight: FontWeight.w700),
+              ),
+            ]),
+          ),
+        ],
         const SizedBox(height: 14),
 
         // Net profit — prominent
