@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -5,6 +6,7 @@ import 'api_client.dart';
 
 /// SharedPreferences key for persisted JWT
 const String _kAuthTokenKey = 'auth_token';
+const String _kUserKey = 'auth_user';
 
 /// Auth token state — persists the JWT
 final authTokenProvider = StateProvider<String?>((ref) => null);
@@ -33,10 +35,11 @@ class AuthService {
       _ref.read(authTokenProvider.notifier).state = token;
       _ref.read(currentUserProvider.notifier).state = data['user'];
 
-      // Persist token to SharedPreferences
+      // Persist token and user to SharedPreferences
       if (token != null) {
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString(_kAuthTokenKey, token);
+        await prefs.setString(_kUserKey, jsonEncode(data['user']));
       }
 
       return data;
@@ -72,17 +75,23 @@ class AuthService {
     _ref.read(authTokenProvider.notifier).state = null;
     _ref.read(currentUserProvider.notifier).state = null;
 
-    // Clear persisted token
+    // Clear persisted token and user
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_kAuthTokenKey);
+    await prefs.remove(_kUserKey);
   }
 
-  /// Load saved token from SharedPreferences on app start
+  /// Load saved token and user from SharedPreferences on app start
   static Future<void> loadSavedToken(ProviderContainer container) async {
     final prefs = await SharedPreferences.getInstance();
     final savedToken = prefs.getString(_kAuthTokenKey);
     if (savedToken != null && savedToken.isNotEmpty) {
       container.read(authTokenProvider.notifier).state = savedToken;
+      final savedUser = prefs.getString(_kUserKey);
+      if (savedUser != null && savedUser.isNotEmpty) {
+        container.read(currentUserProvider.notifier).state =
+            Map<String, dynamic>.from(jsonDecode(savedUser) as Map);
+      }
     }
   }
 

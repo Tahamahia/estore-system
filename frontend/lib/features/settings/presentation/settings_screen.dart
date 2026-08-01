@@ -29,6 +29,7 @@ class SettingsScreen extends ConsumerStatefulWidget {
 
 class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   List<Map<String, dynamic>>? _pendingRequests;
+  bool _pendingError = false;
 
   @override
   void initState() {
@@ -44,11 +45,12 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   }
 
   Future<void> _loadPendingRequests() async {
+    if (mounted) setState(() { _pendingError = false; _pendingRequests = null; });
     try {
       final pending = await ref.read(usersProvider.notifier).fetchPendingRequests();
       if (mounted) setState(() => _pendingRequests = pending);
     } catch (_) {
-      if (mounted) setState(() => _pendingRequests = []);
+      if (mounted) setState(() { _pendingRequests = []; _pendingError = true; });
     }
   }
 
@@ -419,9 +421,27 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           child: Text('طلبات الانضمام الجديدة التي تحتاج مراجعة', style: TextStyle(color: Colors.white54, fontSize: 12)),
         ),
         const SizedBox(height: 16),
-        if (pending == null)
+        if (pending == null && !_pendingError)
           const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator()))
-        else if (pending.isEmpty)
+        else if (_pendingError)
+          Container(
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: AppTheme.error.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: AppTheme.error.withValues(alpha: 0.3)),
+            ),
+            child: Row(children: [
+              const Icon(Icons.error_outline, color: AppTheme.error, size: 20),
+              const SizedBox(width: 8),
+              const Expanded(child: Text('فشل تحميل الطلبات', style: TextStyle(color: AppTheme.error))),
+              TextButton(
+                onPressed: _loadPendingRequests,
+                child: const Text('إعادة المحاولة', style: TextStyle(color: AppTheme.primary)),
+              ),
+            ]),
+          )
+        else if (pending!.isEmpty)
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
