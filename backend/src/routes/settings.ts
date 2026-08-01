@@ -5,6 +5,8 @@ import { requireRole } from '../middleware/tenant';
 export const settingsRoutes = new Hono<AppEnv>();
 
 // ─── Shipping Sources CRUD ─────────────────────────────────
+// shipping_sources is intentionally a global/shared table with no tenant_id column.
+// All tenants share the same source catalog (Shein, AliExpress, etc.).
 
 settingsRoutes.get('/sources', async (c) => {
   const result = await c.env.DB.prepare(
