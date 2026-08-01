@@ -49,12 +49,18 @@ class _InStockScreenState extends ConsumerState<InStockScreen> {
                   const Text('عند إلغاء طلبية وتحويلها، ستظهر المنتجات هنا', style: TextStyle(color: Colors.white24, fontSize: 13), textAlign: TextAlign.center),
                 ]));
               }
-              // Summary stats
-              final totalSunkCost = items.fold<double>(0, (sum, it) {
-                final p = (it['purchase_price'] as num?)?.toDouble() ?? 0;
-                final s = (it['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
-                return sum + p + s;
-              });
+              // Summary stats — only count items not yet written off
+              double itemCost(Map<String, dynamic> it) {
+                final costUsd = (it['cost_usd'] as num?)?.toDouble() ?? 0;
+                final unitForeign = (it['unit_price_foreign'] as num?)?.toDouble() ?? 0;
+                final weight = (it['weight'] as num?)?.toDouble() ?? 0;
+                final rate = (it['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
+                final qty = (it['quantity'] as num?)?.toDouble() ?? 1;
+                final perUnit = costUsd > 0 ? costUsd : unitForeign;
+                return (perUnit + weight * rate) * qty;
+              }
+              final pendingItems = items.where((it) => it['written_off_settlement_id'] == null).toList();
+              final totalSunkCost = pendingItems.fold<double>(0, (sum, it) => sum + itemCost(it));
               return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -66,7 +72,7 @@ class _InStockScreenState extends ConsumerState<InStockScreen> {
                   child: Row(children: [
                     const Icon(Icons.warning_amber_rounded, color: AppTheme.warning, size: 20),
                     const SizedBox(width: 10),
-                    Text('${items.length} منتج · إجمالي التكاليف المسجَّلة كخسارة: \$${totalSunkCost.toStringAsFixed(2)}',
+                    Text('${pendingItems.length} منتج معلَّق · إجمالي التكاليف: \$${totalSunkCost.toStringAsFixed(2)}',
                       style: const TextStyle(color: AppTheme.warning, fontSize: 13, fontWeight: FontWeight.w600)),
                   ]),
                 ),
@@ -104,9 +110,14 @@ class _InStockItemCard extends StatelessWidget {
     final name = item['product_name'] as String? ?? '—';
     final sku = item['sku'] as String? ?? '';
     final brand = item['brand'] as String? ?? '';
-    final purchase = (item['purchase_price'] as num?)?.toDouble() ?? 0;
-    final shipping = (item['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
-    final sunkCost = purchase + shipping;
+    final costUsd = (item['cost_usd'] as num?)?.toDouble() ?? 0;
+    final unitForeign = (item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
+    final weight = (item['weight'] as num?)?.toDouble() ?? 0;
+    final rate = (item['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
+    final qty = (item['quantity'] as num?)?.toDouble() ?? 1;
+    final perUnit = costUsd > 0 ? costUsd : unitForeign;
+    final sunkCost = (perUnit + weight * rate) * qty;
+    final isWrittenOff = item['written_off_settlement_id'] != null;
     final imageUrl = item['product_thumb_url'] as String? ?? item['product_image_url'] as String?;
 
     return Container(
@@ -141,12 +152,22 @@ class _InStockItemCard extends StatelessWidget {
                 style: const TextStyle(color: Colors.white38, fontSize: 12)),
             ],
             const SizedBox(height: 8),
-            Row(children: [
-              const Icon(Icons.trending_down_rounded, color: AppTheme.error, size: 14),
-              const SizedBox(width: 4),
-              Text('خسارة مسجَّلة: \$${sunkCost.toStringAsFixed(2)}',
-                style: const TextStyle(color: AppTheme.error, fontSize: 12, fontWeight: FontWeight.w600)),
-            ]),
+            if (isWrittenOff)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: Colors.orange.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: const Text('احتُسبت كخسارة سابقاً', style: TextStyle(color: Colors.orange, fontSize: 11, fontWeight: FontWeight.w600)),
+              )
+            else
+              Row(children: [
+                const Icon(Icons.trending_down_rounded, color: AppTheme.error, size: 14),
+                const SizedBox(width: 4),
+                Text('خسارة مسجَّلة: \$${sunkCost.toStringAsFixed(2)}',
+                  style: const TextStyle(color: AppTheme.error, fontSize: 12, fontWeight: FontWeight.w600)),
+              ]),
           ])),
           // Action
           TextButton.icon(
@@ -217,7 +238,7 @@ class _ReassignItemDialogState extends ConsumerState<_ReassignItemDialog> {
       final messenger = ScaffoldMessenger.of(context);
       Navigator.of(context).pop();
       messenger.showSnackBar(SnackBar(
-        content: Text('تم بيع المنتج — ربح صافي: \$${price.toStringAsFixed(2)}'),
+        content: Text('تم بيع المنتج — ربح صافي: ${price.toStringAsFixed(2)} د.ل'),
         backgroundColor: AppTheme.success,
       ));
     } catch (e) {
@@ -296,8 +317,8 @@ class _ReassignItemDialogState extends ConsumerState<_ReassignItemDialog> {
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(
-                labelText: 'سعر البيع الجديد (\$)',
-                prefixIcon: Icon(Icons.attach_money_rounded),
+                labelText: 'سعر البيع الجديد (د.ل)',
+                prefixIcon: Icon(Icons.sell_outlined),
               ),
             ),
             const SizedBox(height: 24),

@@ -12,8 +12,8 @@ inventoryRoutes.get('/in-stock', async (c) => {
   const results = await c.env.DB.prepare(`
     SELECT id, product_name, product_url, product_image_url, product_thumb_url,
            sku, brand, item_category, color, size, quantity,
-           purchase_price, shipping_cost_foreign, landed_cost,
-           unit_price_local, status, updated_at
+           unit_price_foreign, cost_usd, weight, shipping_rate_per_kg,
+           unit_price_local, status, updated_at, written_off_settlement_id
     FROM order_items
     WHERE tenant_id = ? AND order_id IS NULL AND status = 'in_stock' AND is_deleted = 0
     ORDER BY updated_at DESC
@@ -47,17 +47,17 @@ inventoryRoutes.patch('/in-stock/:item_id/reassign', requireRole('super_admin', 
   await c.env.DB.batch([
     c.env.DB.prepare(`
       UPDATE order_items
-      SET order_id           = ?,
-          status             = 'sorted',
-          unit_price_local   = ?,
-          purchase_price     = 0,
-          shipping_cost_foreign = 0,
-          landed_cost        = 0,
-          net_profit         = ?,
-          updated_at         = datetime('now'),
-          version            = version + 1
+      SET order_id              = ?,
+          status                = 'sorted',
+          unit_price_local      = ?,
+          unit_price_foreign    = 0,
+          cost_usd              = 0,
+          weight                = 0,
+          shipping_rate_per_kg  = 0,
+          updated_at            = datetime('now'),
+          version               = version + 1
       WHERE id = ? AND tenant_id = ?
-    `).bind(order_id, new_selling_price, new_selling_price, itemId, tenantId),
+    `).bind(order_id, new_selling_price, itemId, tenantId),
     buildRecomputeOrderStatusStmt(c.env.DB, order_id, tenantId),
   ]);
 
