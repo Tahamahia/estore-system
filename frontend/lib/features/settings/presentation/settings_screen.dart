@@ -42,6 +42,19 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
         _loadPendingRequests();
       }
     });
+
+    // Reactive fallback: fires once when currentUserProvider transitions from
+    // null → non-null (e.g. SharedPreferences restored asynchronously after
+    // the microtask above already ran with a null user)
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      ref.listenManual(currentUserProvider, (previous, next) {
+        if (previous == null && next != null &&
+            (next['role'] as String?) == 'super_admin') {
+          ref.read(usersProvider.notifier).fetchUsers();
+          _loadPendingRequests();
+        }
+      });
+    });
   }
 
   Future<void> _loadPendingRequests() async {
