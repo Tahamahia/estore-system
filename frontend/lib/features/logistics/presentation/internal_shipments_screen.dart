@@ -51,11 +51,14 @@ class _InternalShipmentsScreenState extends ConsumerState<InternalShipmentsScree
             error: (e, _) => Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
               const Icon(Icons.cloud_off_rounded, color: AppTheme.error, size: 56),
               const SizedBox(height: 12),
-              Text('$e', style: const TextStyle(color: Colors.white54), textAlign: TextAlign.center),
-              const SizedBox(height: 16),
-              ElevatedButton(
-                onPressed: () => ref.read(internalShipmentsProvider.notifier).fetchShipments(),
-                child: const Text('إعادة المحاولة'),
+              const Text('تعذّر تحميل الشحنات', style: TextStyle(color: Colors.white70, fontSize: 16, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 6),
+              const Text('تحقق من الاتصال بالإنترنت وأعد المحاولة', style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: () => ref.invalidate(internalShipmentsProvider),
+                icon: const Icon(Icons.refresh_rounded, size: 18),
+                label: const Text('إعادة المحاولة'),
               ),
             ])),
             data: (manifests) {

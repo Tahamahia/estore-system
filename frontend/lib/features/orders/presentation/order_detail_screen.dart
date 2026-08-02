@@ -959,8 +959,8 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                             tristate: true,
                             value: allSelected ? true : (noneSelected ? false : null),
                             onChanged: (v) => setState(() {
-                              if (v == true) _selectedItemIds.addAll(selectableIds);
-                              else _selectedItemIds.removeAll(selectableIds);
+                              if (v == true) { _selectedItemIds.addAll(selectableIds); }
+                              else { _selectedItemIds.removeAll(selectableIds); }
                             }),
                             activeColor: AppTheme.primary,
                             checkColor: Colors.white,
@@ -1077,8 +1077,8 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                             translateStatus: _translateStatus,
                             selected: _selectedItemIds.contains(itemId),
                             onToggle: itemId.isNotEmpty ? (v) => setState(() {
-                              if (v == true) _selectedItemIds.add(itemId);
-                              else _selectedItemIds.remove(itemId);
+                              if (v == true) { _selectedItemIds.add(itemId); }
+                              else { _selectedItemIds.remove(itemId); }
                             }) : null,
                             onEdit: () => _showEditItemDialog(item),
                           );
@@ -1254,13 +1254,15 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
         if (_brandCtrl.text.trim().isNotEmpty) 'brand': _brandCtrl.text.trim(),
       });
       widget.onAdded();
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) { Navigator.of(context).pop(); }
     } catch (e) {
-      if (mounted) setState(() {
-        _error = e is DioException
-            ? _dioMsg(e)
-            : e.toString();
-      });
+      if (mounted) {
+        setState(() {
+          _error = e is DioException
+              ? _dioMsg(e)
+              : e.toString();
+        });
+      }
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
@@ -1787,12 +1789,14 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                 try {
                   final nav = Navigator.of(context);
                   await widget.onSave(updates);
-                  if (mounted) nav.pop();
+                  if (mounted) { nav.pop(); }
                 } catch (e) {
-                  if (mounted) setState(() {
-                    _saving = false;
-                    _error = e is DioException ? _dioMsg(e) : e.toString();
-                  });
+                  if (mounted) {
+                    setState(() {
+                      _saving = false;
+                      _error = e is DioException ? _dioMsg(e) : e.toString();
+                    });
+                  }
                 }
               },
               icon: _saving
@@ -2083,12 +2087,14 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
         },
       );
       await widget.onSaved();
-      if (mounted) Navigator.of(context).pop();
+      if (mounted) { Navigator.of(context).pop(); }
     } catch (e) {
-      if (mounted) setState(() {
-        _saving = false;
-        _error = e is DioException ? _dioMsg(e) : e.toString();
-      });
+      if (mounted) {
+        setState(() {
+          _saving = false;
+          _error = e is DioException ? _dioMsg(e) : e.toString();
+        });
+      }
     }
   }
 
