@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -6,7 +8,6 @@ import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:uuid/uuid.dart';
-import 'dart:async';
 
 class ScanningScreen extends ConsumerStatefulWidget {
   const ScanningScreen({super.key});
@@ -256,6 +257,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
 
   @override
   Widget build(BuildContext context) {
+    final screenWidth = MediaQuery.of(context).size.width;
     return KeyboardListener(
       focusNode: _focusNode, autofocus: true, onKeyEvent: _handleKeyEvent,
       child: GestureDetector(
@@ -307,14 +309,14 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
                             ),
                             const SizedBox(height: 20),
                             if (_flashCustomer.isNotEmpty) ...[
-                              Text(_flashCustomer, style: const TextStyle(color: Colors.white, fontSize: 36, fontWeight: FontWeight.w700)),
+                              Text(_flashCustomer, style: TextStyle(color: Colors.white, fontSize: math.min(48, screenWidth * 0.1), fontWeight: FontWeight.w700)),
                               const SizedBox(height: 16),
                             ],
                             if (isSuccess && progress != null) ...[
                               if (bagComplete)
-                                const Text(
+                                Text(
                                   '✅ الكيس اكتمل — جاهز للتوصيل',
-                                  style: TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900),
+                                  style: TextStyle(color: Colors.white, fontSize: math.min(28, screenWidth * 0.065), fontWeight: FontWeight.w900),
                                   textAlign: TextAlign.center,
                                 )
                               else
@@ -326,7 +328,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
                                   ),
                                   child: Text(
                                     'منتج ${progress['sorted']} من ${progress['total']} ✓',
-                                    style: const TextStyle(color: Colors.white, fontSize: 28, fontWeight: FontWeight.w700),
+                                    style: TextStyle(color: Colors.white, fontSize: math.min(22, screenWidth * 0.05), fontWeight: FontWeight.w700),
                                   ),
                                 ),
                             ],
@@ -498,10 +500,11 @@ class _VisualMatchDialogState extends ConsumerState<_VisualMatchDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 700, maxHeight: dialogMaxHeight(context, cap: 600)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 700), maxHeight: dialogMaxHeight(context, cap: 600)),
         child: Padding(
           padding: const EdgeInsets.all(24),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [

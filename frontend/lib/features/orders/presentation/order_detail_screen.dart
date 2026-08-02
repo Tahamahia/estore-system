@@ -165,10 +165,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     showDialog(
       context: context,
       builder: (ctx) => Dialog(
+        insetPadding: EdgeInsets.symmetric(horizontal: isMobile(ctx) ? 8 : 40, vertical: 24),
         backgroundColor: AppTheme.darkSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 360),
+          constraints: BoxConstraints(maxWidth: dialogMaxWidth(ctx, desktopMax: 360)),
           child: Padding(
             padding: const EdgeInsets.all(28),
             child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -347,10 +348,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     showDialog(
       context: context,
       builder: (splitCtx) => Dialog(
+        insetPadding: EdgeInsets.symmetric(horizontal: isMobile(splitCtx) ? 8 : 40, vertical: 24),
         backgroundColor: AppTheme.darkSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
+          constraints: BoxConstraints(maxWidth: dialogMaxWidth(splitCtx, desktopMax: 420)),
           child: Padding(
             padding: const EdgeInsets.all(28),
             child: StatefulBuilder(builder: (_, setDialogState) {
@@ -511,10 +513,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     showDialog(
       context: context,
       builder: (bulkCtx) => Dialog(
+        insetPadding: EdgeInsets.symmetric(horizontal: isMobile(bulkCtx) ? 8 : 40, vertical: 24),
         backgroundColor: AppTheme.darkSurface,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
         child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
+          constraints: BoxConstraints(maxWidth: dialogMaxWidth(bulkCtx, desktopMax: 420)),
           child: Padding(
             padding: const EdgeInsets.all(28),
             child: StatefulBuilder(builder: (_, setDialogState) {
@@ -1274,10 +1277,11 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
     final showBrandField = _selectedCategory == 'Electronic' || _selectedCategory == 'Accessories';
 
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 520, maxHeight: dialogMaxHeight(context)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 520), maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -1345,27 +1349,22 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                 ),
                 if (showClothesFields) ...[
                   const SizedBox(height: 10),
-                  Row(children: [
-                    Expanded(child: TextField(
+                  LayoutBuilder(builder: (context, constraints) {
+                    final sizeField = TextField(
                       controller: _sizeCtrl,
                       style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
-                        labelText: 'المقاس',
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                      ),
-                    )),
-                    const SizedBox(width: 10),
-                    Expanded(child: TextField(
+                      decoration: const InputDecoration(labelText: 'المقاس', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+                    );
+                    final colorField = TextField(
                       controller: _colorCtrl,
                       style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(
-                        labelText: 'اللون',
-                        isDense: true,
-                        contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                      ),
-                    )),
-                  ]),
+                      decoration: const InputDecoration(labelText: 'اللون', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+                    );
+                    if (constraints.maxWidth < 400) {
+                      return Column(children: [sizeField, const SizedBox(height: 8), colorField]);
+                    }
+                    return Row(children: [Expanded(child: sizeField), const SizedBox(width: 10), Expanded(child: colorField)]);
+                  }),
                 ] else if (showBrandField) ...[
                   const SizedBox(height: 10),
                   TextField(
@@ -1392,30 +1391,24 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
               child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
                 const Text('التفاصيل المالية', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white70)),
                 const SizedBox(height: 12),
-                Row(children: [
-                  Expanded(child: TextField(
+                LayoutBuilder(builder: (context, constraints) {
+                  final priceField = TextField(
                     controller: _priceCtrl,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
                     style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'تكلفة الشراء (\$)',
-                      prefixIcon: Icon(Icons.attach_money, size: 18),
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    ),
-                  )),
-                  const SizedBox(width: 10),
-                  SizedBox(width: 80, child: TextField(
+                    decoration: const InputDecoration(labelText: 'تكلفة الشراء (\$)', prefixIcon: Icon(Icons.attach_money, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+                  );
+                  final qtyField = TextField(
                     controller: _qtyCtrl,
                     keyboardType: TextInputType.number,
                     style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'الكمية',
-                      isDense: true,
-                      contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    ),
-                  )),
-                ]),
+                    decoration: const InputDecoration(labelText: 'الكمية', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+                  );
+                  if (constraints.maxWidth < 400) {
+                    return Column(children: [priceField, const SizedBox(height: 8), qtyField]);
+                  }
+                  return Row(children: [Expanded(child: priceField), const SizedBox(width: 10), SizedBox(width: 80, child: qtyField)]);
+                }),
                 const SizedBox(height: 10),
                 // Source dropdown
                 DropdownButtonFormField<String?>(
@@ -1716,10 +1709,11 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 480, maxHeight: dialogMaxHeight(context)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 480), maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -2108,10 +2102,11 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     final calcShipping = weight * _currentShippingRate * qty;
 
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 480, maxHeight: dialogMaxHeight(context)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 480), maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -2211,13 +2206,16 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
             if (_showAttr1) ...[
               const SizedBox(height: 12),
               if (_showAttr2)
-                Row(children: [
-                  Expanded(child: TextField(controller: _attr1Ctrl, style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(labelText: _attr1Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-                  const SizedBox(width: 12),
-                  Expanded(child: TextField(controller: _attr2Ctrl, style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(labelText: _attr2Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-                ])
+                LayoutBuilder(builder: (context, constraints) {
+                  final attr1Field = TextField(controller: _attr1Ctrl, style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(labelText: _attr1Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+                  final attr2Field = TextField(controller: _attr2Ctrl, style: const TextStyle(color: Colors.white),
+                    decoration: InputDecoration(labelText: _attr2Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+                  if (constraints.maxWidth < 400) {
+                    return Column(children: [attr1Field, const SizedBox(height: 8), attr2Field]);
+                  }
+                  return Row(children: [Expanded(child: attr1Field), const SizedBox(width: 12), Expanded(child: attr2Field)]);
+                })
               else
                 TextField(controller: _attr1Ctrl, style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(labelText: _attr1Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12))),
@@ -2227,19 +2225,22 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
             // ── Section 2: التفاصيل المالية ───────────────────
             const Text('التفاصيل المالية', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white60)),
             const Divider(color: AppTheme.darkBorder, height: 14),
-            Row(children: [
-              Expanded(child: TextField(
+            LayoutBuilder(builder: (context, constraints) {
+              final priceField = TextField(
                 controller: _priceCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(labelText: 'تكلفة الشراء (\$)', prefixIcon: Icon(Icons.attach_money, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
-              )),
-              const SizedBox(width: 10),
-              SizedBox(width: 80, child: TextField(
+              );
+              final qtyField = TextField(
                 controller: _qtyCtrl, keyboardType: TextInputType.number,
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(labelText: 'الكمية', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
-              )),
-            ]),
+              );
+              if (constraints.maxWidth < 400) {
+                return Column(children: [priceField, const SizedBox(height: 8), qtyField]);
+              }
+              return Row(children: [Expanded(child: priceField), const SizedBox(width: 10), SizedBox(width: 80, child: qtyField)]);
+            }),
             const SizedBox(height: 12),
             TextField(
               controller: _costUsdCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),

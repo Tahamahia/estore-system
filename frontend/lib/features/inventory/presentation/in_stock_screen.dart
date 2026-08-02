@@ -380,10 +380,11 @@ class _ReassignItemDialogState extends ConsumerState<_ReassignItemDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 440, maxHeight: dialogMaxHeight(context, cap: 620)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 440), maxHeight: dialogMaxHeight(context, cap: 620)),
         child: Padding(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [

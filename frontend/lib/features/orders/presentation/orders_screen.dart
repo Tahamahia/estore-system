@@ -683,10 +683,11 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 540, maxHeight: dialogMaxHeight(context, cap: 900)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 540), maxHeight: dialogMaxHeight(context, cap: 900)),
         child: Padding(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -739,17 +740,35 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
               ),
               if (!_isExisting && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp) ...[
                 const SizedBox(height: 8),
-                Row(children: [
-                  Expanded(child: _compactField(_phone2Ctrl,      'رقم ثاني',  Icons.phone_outlined)),
-                  const SizedBox(width: 8),
-                  Expanded(child: _compactField(_cityCtrl,        'المدينة',   Icons.location_city)),
-                ]),
+                LayoutBuilder(builder: (context, constraints) {
+                  if (constraints.maxWidth < 400) {
+                    return Column(children: [
+                      _compactField(_phone2Ctrl, 'رقم ثاني', Icons.phone_outlined),
+                      const SizedBox(height: 6),
+                      _compactField(_cityCtrl, 'المدينة', Icons.location_city),
+                    ]);
+                  }
+                  return Row(children: [
+                    Expanded(child: _compactField(_phone2Ctrl, 'رقم ثاني', Icons.phone_outlined)),
+                    const SizedBox(width: 8),
+                    Expanded(child: _compactField(_cityCtrl, 'المدينة', Icons.location_city)),
+                  ]);
+                }),
                 const SizedBox(height: 6),
-                Row(children: [
-                  Expanded(child: _compactField(_areaCtrl,        'المنطقة',   Icons.map_outlined)),
-                  const SizedBox(width: 8),
-                  Expanded(child: _compactField(_streetCtrl,      'الشارع',    Icons.home_outlined)),
-                ]),
+                LayoutBuilder(builder: (context, constraints) {
+                  if (constraints.maxWidth < 400) {
+                    return Column(children: [
+                      _compactField(_areaCtrl, 'المنطقة', Icons.map_outlined),
+                      const SizedBox(height: 6),
+                      _compactField(_streetCtrl, 'الشارع', Icons.home_outlined),
+                    ]);
+                  }
+                  return Row(children: [
+                    Expanded(child: _compactField(_areaCtrl, 'المنطقة', Icons.map_outlined)),
+                    const SizedBox(width: 8),
+                    Expanded(child: _compactField(_streetCtrl, 'الشارع', Icons.home_outlined)),
+                  ]);
+                }),
                 const SizedBox(height: 6),
                 _compactField(_locationUrlCtrl, 'رابط اللوكيشن', Icons.location_on_outlined, type: TextInputType.url),
               ],
@@ -1039,10 +1058,11 @@ class _CreateSettlementDialogState extends ConsumerState<_CreateSettlementDialog
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 420, maxHeight: dialogMaxHeight(context, cap: 600)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 420), maxHeight: dialogMaxHeight(context, cap: 600)),
         child: Padding(
           padding: const EdgeInsets.all(28),
           child: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -1180,10 +1200,11 @@ class _BulkUpdateDialogState extends State<_BulkUpdateDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 420),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 420)),
         child: Padding(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [

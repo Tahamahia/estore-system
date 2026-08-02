@@ -424,10 +424,11 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 460, maxHeight: dialogMaxHeight(context)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 460), maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -441,23 +442,29 @@ class _AddCustomerDialogState extends ConsumerState<_AddCustomerDialog> {
             TextField(controller: _nameCtrl, style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(labelText: 'الاسم الكامل *', prefixIcon: Icon(Icons.person))),
             const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextField(controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
+            LayoutBuilder(builder: (context, constraints) {
+              final phoneField = TextField(controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
                 keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'رقم الهاتف', prefixIcon: Icon(Icons.phone), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-              const SizedBox(width: 10),
-              Expanded(child: TextField(controller: _phone2Ctrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'رقم الهاتف', prefixIcon: Icon(Icons.phone), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+              final phone2Field = TextField(controller: _phone2Ctrl, style: const TextStyle(color: Colors.white),
                 keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'رقم ثاني', prefixIcon: Icon(Icons.phone_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-            ]),
+                decoration: const InputDecoration(labelText: 'رقم ثاني', prefixIcon: Icon(Icons.phone_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+              if (constraints.maxWidth < 400) {
+                return Column(children: [phoneField, const SizedBox(height: 8), phone2Field]);
+              }
+              return Row(children: [Expanded(child: phoneField), const SizedBox(width: 10), Expanded(child: phone2Field)]);
+            }),
             const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'المدينة', prefixIcon: Icon(Icons.location_city), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-              const SizedBox(width: 10),
-              Expanded(child: TextField(controller: _areaCtrl, style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'المنطقة', prefixIcon: Icon(Icons.map_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-            ]),
+            LayoutBuilder(builder: (context, constraints) {
+              final cityField = TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'المدينة', prefixIcon: Icon(Icons.location_city), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+              final areaField = TextField(controller: _areaCtrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'المنطقة', prefixIcon: Icon(Icons.map_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+              if (constraints.maxWidth < 400) {
+                return Column(children: [cityField, const SizedBox(height: 8), areaField]);
+              }
+              return Row(children: [Expanded(child: cityField), const SizedBox(width: 10), Expanded(child: areaField)]);
+            }),
             const SizedBox(height: 12),
             TextField(controller: _streetCtrl, style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(labelText: 'الشارع أو العنوان', prefixIcon: Icon(Icons.home_outlined))),
@@ -546,10 +553,11 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 460, maxHeight: dialogMaxHeight(context)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 460), maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -571,23 +579,29 @@ class _EditCustomerDialogState extends ConsumerState<_EditCustomerDialog> {
             TextField(controller: _nameCtrl, style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(labelText: 'الاسم الكامل *', prefixIcon: Icon(Icons.person))),
             const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextField(controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
+            LayoutBuilder(builder: (context, constraints) {
+              final phoneField = TextField(controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
                 keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'رقم الهاتف', prefixIcon: Icon(Icons.phone), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-              const SizedBox(width: 10),
-              Expanded(child: TextField(controller: _phone2Ctrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'رقم الهاتف', prefixIcon: Icon(Icons.phone), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+              final phone2Field = TextField(controller: _phone2Ctrl, style: const TextStyle(color: Colors.white),
                 keyboardType: TextInputType.phone,
-                decoration: const InputDecoration(labelText: 'رقم ثاني', prefixIcon: Icon(Icons.phone_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-            ]),
+                decoration: const InputDecoration(labelText: 'رقم ثاني', prefixIcon: Icon(Icons.phone_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+              if (constraints.maxWidth < 400) {
+                return Column(children: [phoneField, const SizedBox(height: 8), phone2Field]);
+              }
+              return Row(children: [Expanded(child: phoneField), const SizedBox(width: 10), Expanded(child: phone2Field)]);
+            }),
             const SizedBox(height: 12),
-            Row(children: [
-              Expanded(child: TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'المدينة', prefixIcon: Icon(Icons.location_city), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-              const SizedBox(width: 10),
-              Expanded(child: TextField(controller: _areaCtrl, style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'المنطقة', prefixIcon: Icon(Icons.map_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)))),
-            ]),
+            LayoutBuilder(builder: (context, constraints) {
+              final cityField = TextField(controller: _cityCtrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'المدينة', prefixIcon: Icon(Icons.location_city), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+              final areaField = TextField(controller: _areaCtrl, style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'المنطقة', prefixIcon: Icon(Icons.map_outlined), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+              if (constraints.maxWidth < 400) {
+                return Column(children: [cityField, const SizedBox(height: 8), areaField]);
+              }
+              return Row(children: [Expanded(child: cityField), const SizedBox(width: 10), Expanded(child: areaField)]);
+            }),
             const SizedBox(height: 12),
             TextField(controller: _streetCtrl, style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(labelText: 'الشارع أو العنوان', prefixIcon: Icon(Icons.home_outlined))),
