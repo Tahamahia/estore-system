@@ -1,3 +1,4 @@
+import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -6,6 +7,31 @@ import 'package:estore_app/core/auth_service.dart';
 import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
+
+// Named-record nav items — shared by sidebar rail (desktop) and drawer (mobile).
+// Dart 3.0 records; each element has .path, .icon, .label
+const _kNavItems = [
+  (path: '/',                   icon: Icons.dashboard_outlined,              label: 'الرئيسية'),
+  (path: '/orders',             icon: Icons.receipt_long_outlined,           label: 'الطلبيات'),
+  (path: '/warehouse',          icon: Icons.qr_code_scanner_outlined,        label: 'المخزن'),
+  (path: '/external-shipments', icon: Icons.flight_land_outlined,            label: 'الشحنات الخارجية'),
+  (path: '/internal-shipments', icon: Icons.local_shipping_outlined,         label: 'الشحنات الداخلية'),
+  (path: '/customers',          icon: Icons.people_outlined,                 label: 'الزبائن'),
+  (path: '/in-stock',           icon: Icons.inventory_2_outlined,            label: 'البضاعة الفورية'),
+  (path: '/settlements',        icon: Icons.account_balance_wallet_outlined, label: 'التسويات'),
+  (path: '/settings',           icon: Icons.settings_outlined,               label: 'الضبط'),
+];
+
+String _drawerRoleLabel(String role) {
+  const map = {
+    'super_admin': 'مدير النظام',
+    'store_manager': 'مديرة المتجر',
+    'purchaser': 'مسؤولة الشراء',
+    'sorter': 'موظفة المخزن',
+    'driver': 'مندوب',
+  };
+  return map[role] ?? role;
+}
 
 class DashboardShell extends ConsumerStatefulWidget {
   final Widget child;
@@ -20,28 +46,16 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
 
   int _selectedIndex(BuildContext context) {
     final location = GoRouterState.of(context).uri.toString();
-    if (location.startsWith('/orders')) return 1;
-    if (location.startsWith('/warehouse')) return 2;
-    if (location.startsWith('/external-shipments')) return 3;
-    if (location.startsWith('/internal-shipments')) return 4;
-    if (location.startsWith('/customers')) return 5;
-    if (location.startsWith('/settlements')) return 6;
-    if (location.startsWith('/settings')) return 7;
-    if (location.startsWith('/in-stock')) return 8;
+    for (int i = 0; i < _kNavItems.length; i++) {
+      final p = _kNavItems[i].path;
+      if (p == '/') {
+        if (location == '/') return i;
+      } else if (location.startsWith(p)) {
+        return i;
+      }
+    }
     return 0;
   }
-
-  static const _navItems = [
-    _NavItem(icon: Icons.dashboard_rounded, label: 'Overview', path: '/'),
-    _NavItem(icon: Icons.receipt_long_rounded, label: 'Orders', path: '/orders'),
-    _NavItem(icon: Icons.qr_code_scanner_rounded, label: 'Warehouse', path: '/warehouse'),
-    _NavItem(icon: Icons.flight_land_rounded, label: 'الشحنات الخارجية', path: '/external-shipments'),
-    _NavItem(icon: Icons.local_shipping_rounded, label: 'الشحنات الداخلية', path: '/internal-shipments'),
-    _NavItem(icon: Icons.people_rounded, label: 'Customers', path: '/customers'),
-    _NavItem(icon: Icons.account_balance_wallet_rounded, label: 'التسويات', path: '/settlements'),
-    _NavItem(icon: Icons.settings_rounded, label: 'الضبط', path: '/settings'),
-    _NavItem(icon: Icons.inventory_2_rounded, label: 'البضاعة الفورية', path: '/in-stock'),
-  ];
 
   Future<void> _handleLogout() async {
     final authService = ref.read(authServiceProvider);
@@ -73,24 +87,24 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
         child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
           Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
           const SizedBox(height: 20),
-          const Text('📋 Notifications', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
+          const Text('📋 التنبيهات', style: TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w700)),
           const SizedBox(height: 20),
           dashData.when(
             loading: () => const Center(child: Padding(padding: EdgeInsets.all(20), child: CircularProgressIndicator())),
-            error: (_, __) => const _NotifRow(icon: Icons.error_outline, color: AppTheme.error, label: 'Could not load data', value: '—'),
+            error: (_, __) => const _NotifRow(icon: Icons.error_outline, color: AppTheme.error, label: 'تعذر تحميل البيانات', value: '—'),
             data: (data) {
               final needsSorting = (data['items_needing_sorting'] as num?)?.toInt() ?? (data['unsorted_items'] as num?)?.toInt() ?? 0;
               final readyDispatch = (data['items_ready_dispatch'] as num?)?.toInt() ?? (data['ready_items'] as num?)?.toInt() ?? 0;
               final totalOrders = (data['total_orders'] as num?)?.toInt() ?? (data['orders_count'] as num?)?.toInt() ?? 0;
               final pendingOrders = (data['pending_orders'] as num?)?.toInt() ?? 0;
               return Column(children: [
-                _NotifRow(icon: Icons.sort_rounded, color: AppTheme.warning, label: 'Items needing sorting', value: '$needsSorting'),
+                _NotifRow(icon: Icons.sort_rounded, color: AppTheme.warning, label: 'قطع تحتاج فرز', value: '$needsSorting'),
                 const SizedBox(height: 12),
-                _NotifRow(icon: Icons.check_circle_outline, color: AppTheme.success, label: 'Ready for dispatch', value: '$readyDispatch'),
+                _NotifRow(icon: Icons.check_circle_outline, color: AppTheme.success, label: 'جاهزة للتوصيل', value: '$readyDispatch'),
                 const SizedBox(height: 12),
-                _NotifRow(icon: Icons.receipt_long, color: AppTheme.primary, label: 'Total orders', value: '$totalOrders'),
+                _NotifRow(icon: Icons.receipt_long, color: AppTheme.primary, label: 'إجمالي الطلبيات', value: '$totalOrders'),
                 const SizedBox(height: 12),
-                _NotifRow(icon: Icons.pending_actions, color: AppTheme.accent, label: 'Pending orders', value: '$pendingOrders'),
+                _NotifRow(icon: Icons.pending_actions, color: AppTheme.accent, label: 'طلبيات معلقة', value: '$pendingOrders'),
               ]);
             },
           ),
@@ -100,18 +114,197 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     );
   }
 
+  // ── Shared user popup menu ─────────────────────────────────
+  Widget _buildUserMenu(BuildContext context, String userName, String userInitial, Map<String, dynamic>? user) {
+    return PopupMenuButton<String>(
+      offset: const Offset(0, 50),
+      color: AppTheme.darkCard,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      onSelected: (value) {
+        if (value == 'logout') _handleLogout();
+        if (value == 'change_password') _showChangePasswordDialog(context);
+      },
+      itemBuilder: (context) => [
+        PopupMenuItem(
+          enabled: false,
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(userName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+            if (user?['email'] != null)
+              Text(user!['email'] as String, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+          ]),
+        ),
+        const PopupMenuDivider(),
+        const PopupMenuItem(
+          value: 'change_password',
+          child: Row(children: [
+            Icon(Icons.lock_outline_rounded, color: Colors.white70, size: 20),
+            SizedBox(width: 10),
+            Text('تغيير كلمة المرور', style: TextStyle(color: Colors.white70)),
+          ]),
+        ),
+        const PopupMenuItem(
+          value: 'logout',
+          child: Row(children: [
+            Icon(Icons.logout_rounded, color: AppTheme.error, size: 20),
+            SizedBox(width: 10),
+            Text('تسجيل الخروج', style: TextStyle(color: AppTheme.error)),
+          ]),
+        ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: AppTheme.darkCard,
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          CircleAvatar(
+            radius: 14,
+            backgroundColor: AppTheme.primary,
+            child: Text(userInitial, style: const TextStyle(fontSize: 12, color: Colors.white)),
+          ),
+          const SizedBox(width: 8),
+          Text(userName, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(width: 4),
+          const Icon(Icons.arrow_drop_down, color: Colors.white54, size: 20),
+        ]),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final selected = _selectedIndex(context);
-    final isWide = MediaQuery.of(context).size.width > 800;
+    final mobile = isMobile(context);
+    final isWide = !mobile && MediaQuery.of(context).size.width > 800;
+    final screenWidth = MediaQuery.of(context).size.width;
 
-    // Read user info from provider
     final user = ref.watch(currentUserProvider);
-    final userName = (user?['full_name'] as String?) ??
-        (user?['email'] as String?) ??
-        'User';
+    final userName = (user?['full_name'] as String?) ?? (user?['email'] as String?) ?? 'User';
     final userInitial = userName.isNotEmpty ? userName[0].toUpperCase() : 'U';
 
+    // ── Mobile layout: AppBar + Drawer ─────────────────────────
+    if (mobile) {
+      return Scaffold(
+        backgroundColor: AppTheme.darkBg,
+        appBar: AppBar(
+          backgroundColor: AppTheme.darkSurface,
+          elevation: 0,
+          toolbarHeight: 56,
+          leading: Builder(
+            builder: (ctx) => IconButton(
+              icon: const Icon(Icons.menu_rounded, color: Colors.white),
+              onPressed: () => Scaffold.of(ctx).openDrawer(),
+            ),
+          ),
+          title: Row(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 24, height: 24,
+              decoration: const BoxDecoration(color: Color(0xFF6B1A2A), shape: BoxShape.circle),
+              child: ClipOval(child: Image.asset(
+                'assets/images/mukhmal-logo.png',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Text('م', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                ),
+              )),
+            ),
+            const SizedBox(width: 8),
+            const Text('مخمل', style: TextStyle(
+              color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700,
+            )),
+          ]),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.notifications_outlined, color: Colors.white54),
+              onPressed: () => _showNotifications(context),
+            ),
+            Padding(
+              padding: const EdgeInsets.only(right: 8),
+              child: _buildUserMenu(context, userName, userInitial, user),
+            ),
+          ],
+        ),
+        drawer: Drawer(
+          width: math.min(280.0, screenWidth * 0.82),
+          backgroundColor: AppTheme.darkSurface,
+          child: Column(children: [
+            // Drawer header
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.fromLTRB(16, 52, 16, 20),
+              decoration: const BoxDecoration(
+                color: Color(0xFF1A1A2E),
+                border: Border(bottom: BorderSide(color: AppTheme.darkBorder)),
+              ),
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Container(
+                  width: 48, height: 48,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF6B1A2A),
+                    shape: BoxShape.circle,
+                    boxShadow: [BoxShadow(
+                      color: const Color(0xFF6B1A2A).withValues(alpha: 0.4),
+                      blurRadius: 12, offset: const Offset(0, 4),
+                    )],
+                  ),
+                  child: ClipOval(child: Image.asset(
+                    'assets/images/mukhmal-logo.png',
+                    fit: BoxFit.cover,
+                    errorBuilder: (_, __, ___) => const Center(
+                      child: Text('م', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
+                    ),
+                  )),
+                ),
+                const SizedBox(height: 12),
+                const Text('مخمل', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
+                const SizedBox(height: 4),
+                Text(userName, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+                if (user?['role'] != null) ...[
+                  const SizedBox(height: 2),
+                  Text(_drawerRoleLabel(user!['role'] as String),
+                      style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                ],
+              ]),
+            ),
+            // Nav tiles
+            Expanded(
+              child: ListView.builder(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                itemCount: _kNavItems.length,
+                itemBuilder: (context, index) {
+                  final item = _kNavItems[index];
+                  final isSelected = index == selected;
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
+                    child: ListTile(
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+                      leading: Icon(item.icon, size: 22,
+                          color: isSelected ? AppTheme.primary : Colors.white54),
+                      title: Text(item.label, style: TextStyle(
+                        color: isSelected ? Colors.white : Colors.white70,
+                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                        fontSize: 14,
+                      )),
+                      selected: isSelected,
+                      selectedTileColor: AppTheme.primary.withValues(alpha: 0.15),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+                      onTap: () {
+                        Navigator.of(context).pop();
+                        context.go(item.path);
+                      },
+                    ),
+                  );
+                },
+              ),
+            ),
+          ]),
+        ),
+        body: widget.child,
+      );
+    }
+
+    // ── Desktop layout: keep NavigationRail sidebar unchanged ──
     return Scaffold(
       body: Row(
         children: [
@@ -145,8 +338,7 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
                       if (isWide && _isExpanded) ...[
                         const SizedBox(width: 12),
                         const Expanded(
-                          child: Text(
-                            'مخمل',
+                          child: Text('مخمل',
                             style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white),
                             overflow: TextOverflow.ellipsis,
                           ),
@@ -161,9 +353,9 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
                 // Nav Items
                 Expanded(
                   child: ListView.builder(
-                    itemCount: _navItems.length,
+                    itemCount: _kNavItems.length,
                     itemBuilder: (context, index) {
-                      final item = _navItems[index];
+                      final item = _kNavItems[index];
                       final isSelected = index == selected;
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -185,22 +377,16 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
                               ),
                               child: Row(
                                 children: [
-                                  Icon(
-                                    item.icon,
-                                    size: 22,
-                                    color: isSelected ? AppTheme.primary : Colors.white54,
-                                  ),
+                                  Icon(item.icon, size: 22,
+                                      color: isSelected ? AppTheme.primary : Colors.white54),
                                   if (isWide && _isExpanded) ...[
                                     const SizedBox(width: 12),
                                     Expanded(
-                                      child: Text(
-                                        item.label,
-                                        style: TextStyle(
-                                          color: isSelected ? Colors.white : Colors.white70,
-                                          fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                                          fontSize: 14,
-                                        ),
-                                      ),
+                                      child: Text(item.label, style: TextStyle(
+                                        color: isSelected ? Colors.white : Colors.white70,
+                                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
+                                        fontSize: 14,
+                                      )),
                                     ),
                                   ],
                                 ],
@@ -242,7 +428,7 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
                   child: Row(
                     children: [
                       Text(
-                        _navItems[selected].label,
+                        _kNavItems[selected].label,
                         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white),
                       ),
                       const Spacer(),
@@ -251,77 +437,13 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
                         onPressed: () => _showNotifications(context),
                       ),
                       const SizedBox(width: 8),
-                      PopupMenuButton<String>(
-                        offset: const Offset(0, 50),
-                        color: AppTheme.darkCard,
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                        onSelected: (value) {
-                          if (value == 'logout') _handleLogout();
-                          if (value == 'change_password') _showChangePasswordDialog(context);
-                        },
-                        itemBuilder: (context) => [
-                          PopupMenuItem(
-                            enabled: false,
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(userName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
-                                if (user?['email'] != null)
-                                  Text(user!['email'] as String, style: const TextStyle(color: Colors.white54, fontSize: 12)),
-                              ],
-                            ),
-                          ),
-                          const PopupMenuDivider(),
-                          const PopupMenuItem(
-                            value: 'change_password',
-                            child: Row(
-                              children: [
-                                Icon(Icons.lock_outline_rounded, color: Colors.white70, size: 20),
-                                SizedBox(width: 10),
-                                Text('تغيير كلمة المرور', style: TextStyle(color: Colors.white70)),
-                              ],
-                            ),
-                          ),
-                          const PopupMenuItem(
-                            value: 'logout',
-                            child: Row(
-                              children: [
-                                Icon(Icons.logout_rounded, color: AppTheme.error, size: 20),
-                                SizedBox(width: 10),
-                                Text('تسجيل الخروج', style: TextStyle(color: AppTheme.error)),
-                              ],
-                            ),
-                          ),
-                        ],
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                          decoration: BoxDecoration(
-                            color: AppTheme.darkCard,
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Row(
-                            children: [
-                              CircleAvatar(
-                                radius: 14,
-                                backgroundColor: AppTheme.primary,
-                                child: Text(userInitial, style: const TextStyle(fontSize: 12, color: Colors.white)),
-                              ),
-                              const SizedBox(width: 8),
-                              Text(userName, style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                              const SizedBox(width: 4),
-                              const Icon(Icons.arrow_drop_down, color: Colors.white54, size: 20),
-                            ],
-                          ),
-                        ),
-                      ),
+                      _buildUserMenu(context, userName, userInitial, user),
                     ],
                   ),
                 ),
 
                 // Page Content
-                Expanded(
-                  child: widget.child,
-                ),
+                Expanded(child: widget.child),
               ],
             ),
           ),
@@ -331,13 +453,7 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
   }
 }
 
-class _NavItem {
-  final IconData icon;
-  final String label;
-  final String path;
-  const _NavItem({required this.icon, required this.label, required this.path});
-}
-
+// ─── Notification row ─────────────────────────────────────────
 class _NotifRow extends StatelessWidget {
   final IconData icon;
   final Color color;
@@ -368,6 +484,7 @@ class _NotifRow extends StatelessWidget {
   }
 }
 
+// ─── Change Password dialog ────────────────────────────────────
 class _ChangePasswordDialog extends ConsumerStatefulWidget {
   final VoidCallback onSuccess;
   const _ChangePasswordDialog({required this.onSuccess});
@@ -420,7 +537,6 @@ class _ChangePasswordDialogState extends ConsumerState<_ChangePasswordDialog> {
         widget.onSuccess();
       }
     } on Exception catch (e) {
-      // Extract the message from DioException or any other exception
       final msg = e.toString().replaceFirst('DioException [bad response]: ', '');
       setState(() { _error = msg; _saving = false; });
     } catch (e) {
@@ -431,10 +547,11 @@ class _ChangePasswordDialogState extends ConsumerState<_ChangePasswordDialog> {
   @override
   Widget build(BuildContext context) {
     return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 420, maxHeight: dialogMaxHeight(context)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 420), maxHeight: dialogMaxHeight(context)),
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
