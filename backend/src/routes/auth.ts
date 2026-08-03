@@ -171,7 +171,8 @@ authRoutes.post('/signup', async (c) => {
     if (err.message?.includes('UNIQUE')) {
       return c.json({ error: 'Conflict', message: 'هذا الإيميل مسجّل مسبقاً' }, 409);
     }
-    throw err;
+    console.error('[signup] DB error:', err.message);
+    return c.json({ error: 'Server Error', message: 'حدث خطأ أثناء التسجيل. حاول مرة أخرى.' }, 500);
   }
 });
 
