@@ -151,7 +151,7 @@ authRoutes.post('/signup', async (c) => {
   }
 
   const tenant = await c.env.DB.prepare(
-    `SELECT id FROM tenants WHERE is_deleted = 0 LIMIT 1`
+    `SELECT id FROM tenants WHERE is_deleted = 0 ORDER BY created_at ASC LIMIT 1`
   ).first();
   if (!tenant) {
     return c.json({ error: 'Setup Error', message: 'لم يتم إعداد المتجر بعد' }, 500);
