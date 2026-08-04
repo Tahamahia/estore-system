@@ -123,13 +123,23 @@ warehouseRoutes.get('/scan-history', async (c) => {
   return c.json({ data: results.results });
 });
 
-warehouseRoutes.get('/consolidate/:customer_id', async (c) => {
+warehouseRoutes.get('/orphans', requireRole('super_admin', 'store_manager', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
-  const customerId = c.req.param('customer_id');
-  const items = await c.env.DB.prepare(
-    `SELECT oi.*, o.id as order_id FROM order_items oi JOIN orders o ON oi.order_id = o.id
-     WHERE o.customer_id = ? AND oi.tenant_id = ? AND oi.status = 'sorted' AND oi.is_deleted = 0`
-  ).bind(customerId, tenantId).all();
+  const results = await c.env.DB.prepare(
+    `SELECT id, barcode, description, photo_url, status, logged_by, created_at
+     FROM unassigned_items WHERE tenant_id = ? AND status = 'pending' ORDER BY created_at DESC`
+  ).bind(tenantId).all();
+  return c.json({ data: results.results });
+});
 
-  return c.json({ customer_id: customerId, items: items.results, total_items: items.results?.length || 0 });
+warehouseRoutes.patch('/orphans/:id/resolve', requireRole('super_admin', 'store_manager', 'sorter'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const id = c.req.param('id');
+  const { resolution } = await c.req.json<{ resolution: 'matched' | 'discarded' }>();
+  const result = await c.env.DB.prepare(
+    `UPDATE unassigned_items SET status = ?, updated_at = datetime('now'), version = version + 1
+     WHERE id = ? AND tenant_id = ?`
+  ).bind(resolution, id, tenantId).run();
+  if (result.meta.changes === 0) return c.json({ error: 'Not Found' }, 404);
+  return c.json({ message: 'تم التحديث', id });
 });

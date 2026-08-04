@@ -120,8 +120,8 @@ authRoutes.post('/register', authMiddleware, tenantMiddleware, requireRole('supe
 
   try {
     await c.env.DB.prepare(
-      `INSERT INTO users (id, email, password_hash, full_name, tenant_id, role, created_at, updated_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'), 1)`
+      `INSERT INTO users (id, email, password_hash, full_name, tenant_id, role, status, is_active, created_at, updated_at, version)
+       VALUES (?, ?, ?, ?, ?, ?, 'active', 1, datetime('now'), datetime('now'), 1)`
     ).bind(body.id, body.email, passwordHash, body.full_name, body.tenant_id, body.role).run();
 
     return c.json({ message: 'User created', id: body.id }, 201);
