@@ -22,6 +22,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
   DateTime _lastKeyTime = DateTime.now();
   String? _lastScannedCode;
   final List<_ScanResult> _scanHistory = [];
+  int _orphanCount = 0;
 
   // Flash overlay state
   bool _showFlash = false;
@@ -41,6 +42,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
       if (s == AnimationStatus.completed && mounted) setState(() => _showFlash = false);
     });
     Future.microtask(_loadTodayHistory);
+    Future.microtask(_loadOrphans);
   }
 
   @override
@@ -49,6 +51,22 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
     _manualController.dispose();
     _flashAnimCtrl.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadOrphans() async {
+    try {
+      final data = await ref.read(scanResultProvider.notifier).fetchOrphans();
+      if (mounted) setState(() => _orphanCount = data.length);
+    } catch (_) {}
+  }
+
+  void _openOrphansDialog() {
+    showDialog(
+      context: context,
+      builder: (_) => _OrphansDialog(
+        onResolved: () => setState(() { if (_orphanCount > 0) _orphanCount--; }),
+      ),
+    );
   }
 
   Future<void> _loadTodayHistory() async {
@@ -377,8 +395,27 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
           const SizedBox(height: 4),
           const Text('امسح الباركود أو استخدم المطابقة البصرية للملصقات التالفة', style: TextStyle(color: Colors.white54, fontSize: 13)),
         ])),
-        // Two info chips: last scan + today count
+        // Info chips: orphans (if any) + last scan + today count
         Row(mainAxisSize: MainAxisSize.min, children: [
+          if (_orphanCount > 0) ...[
+            GestureDetector(
+              onTap: _openOrphansDialog,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.warning.withValues(alpha: 0.15),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: AppTheme.warning.withValues(alpha: 0.3)),
+                ),
+                child: Column(children: [
+                  const Text('مجهولة', style: TextStyle(color: Colors.white38, fontSize: 11)),
+                  const SizedBox(height: 2),
+                  Text('$_orphanCount', style: const TextStyle(color: AppTheme.warning, fontWeight: FontWeight.w700, fontSize: 18)),
+                ]),
+              ),
+            ),
+            const SizedBox(width: 8),
+          ],
           if (_lastScannedCode != null) ...[
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
@@ -597,6 +634,128 @@ class _VisualMatchCard extends StatelessWidget {
             ]),
           ),
         ]),
+      ),
+    );
+  }
+}
+
+// ─── Orphans Dialog ─────────────────────────────────────────
+class _OrphansDialog extends ConsumerStatefulWidget {
+  final VoidCallback onResolved;
+  const _OrphansDialog({required this.onResolved});
+  @override
+  ConsumerState<_OrphansDialog> createState() => _OrphansDialogState();
+}
+
+class _OrphansDialogState extends ConsumerState<_OrphansDialog> {
+  List<Map<String, dynamic>>? _items;
+  bool _loading = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadItems();
+  }
+
+  Future<void> _loadItems() async {
+    try {
+      final data = await ref.read(scanResultProvider.notifier).fetchOrphans();
+      if (mounted) setState(() { _items = data; _loading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _error = e.toString(); _loading = false; });
+    }
+  }
+
+  Future<void> _resolve(String id, String resolution) async {
+    try {
+      await ref.read(scanResultProvider.notifier).resolveOrphan(id, resolution);
+      widget.onResolved();
+      if (mounted) setState(() => _items?.removeWhere((i) => i['id'] == id));
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('فشل: $e'), backgroundColor: AppTheme.error));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 600), maxHeight: dialogMaxHeight(context, cap: 600)),
+        child: Padding(
+          padding: const EdgeInsets.all(24),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const Icon(Icons.inventory_2_outlined, color: AppTheme.warning),
+              const SizedBox(width: 10),
+              const Text('القطع المجهولة المعلقة', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+              const Spacer(),
+              IconButton(icon: const Icon(Icons.close, color: Colors.white38), onPressed: () => Navigator.pop(context)),
+            ]),
+            const SizedBox(height: 16),
+            Expanded(
+              child: _loading
+                ? const Center(child: CircularProgressIndicator())
+                : _error != null
+                  ? Center(child: Text(_error!, style: const TextStyle(color: AppTheme.error)))
+                  : (_items == null || _items!.isEmpty)
+                    ? const Center(child: Text('لا توجد قطع معلقة', style: TextStyle(color: Colors.white38)))
+                    : ListView.separated(
+                        itemCount: _items!.length,
+                        separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.darkBorder),
+                        itemBuilder: (ctx, i) {
+                          final item = _items![i];
+                          final barcode = item['barcode'] as String? ?? '—';
+                          final desc = item['description'] as String? ?? '';
+                          final photoUrl = item['photo_url'] as String? ?? '';
+                          final createdAt = item['created_at'] as String? ?? '';
+                          final id = item['id'] as String;
+                          return Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              if (photoUrl.isNotEmpty)
+                                ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.network(photoUrl, width: 56, height: 56, fit: BoxFit.cover,
+                                    errorBuilder: (_, __, ___) => const SizedBox(width: 56, height: 56, child: Icon(Icons.broken_image, color: Colors.white24))),
+                                )
+                              else
+                                Container(width: 56, height: 56, decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(8)),
+                                  child: const Icon(Icons.inventory_2_outlined, color: Colors.white24)),
+                              const SizedBox(width: 12),
+                              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                Text(barcode, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+                                if (desc.isNotEmpty) ...[
+                                  const SizedBox(height: 2),
+                                  Text(desc, style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                                ],
+                                const SizedBox(height: 2),
+                                Text(createdAt.length >= 10 ? createdAt.substring(0, 10) : createdAt, style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                                const SizedBox(height: 8),
+                                Row(children: [
+                                  Expanded(child: OutlinedButton(
+                                    onPressed: () => _resolve(id, 'matched'),
+                                    style: OutlinedButton.styleFrom(foregroundColor: AppTheme.success, side: BorderSide(color: AppTheme.success.withValues(alpha: 0.5)), padding: const EdgeInsets.symmetric(vertical: 4)),
+                                    child: const Text('تم التعرف عليها', style: TextStyle(fontSize: 12)),
+                                  )),
+                                  const SizedBox(width: 8),
+                                  Expanded(child: OutlinedButton(
+                                    onPressed: () => _resolve(id, 'discarded'),
+                                    style: OutlinedButton.styleFrom(foregroundColor: Colors.white38, side: const BorderSide(color: Colors.white12), padding: const EdgeInsets.symmetric(vertical: 4)),
+                                    child: const Text('تجاهل', style: TextStyle(fontSize: 12)),
+                                  )),
+                                ]),
+                              ])),
+                            ]),
+                          );
+                        },
+                      ),
+            ),
+          ]),
+        ),
       ),
     );
   }

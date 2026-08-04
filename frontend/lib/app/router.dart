@@ -27,7 +27,17 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isPublicPage = location == '/login' || location == '/signup';
 
       if (!isLoggedIn && !isPublicPage) return '/login';
-      if (isLoggedIn && isPublicPage) return '/';
+      if (isLoggedIn && isPublicPage) {
+        final role = ref.read(currentUserProvider)?['role'] as String?;
+        switch (role) {
+          case 'sorter':
+            return '/warehouse';
+          case 'driver':
+            return '/internal-shipments';
+          default:
+            return '/';
+        }
+      }
 
       return null;
     },

@@ -363,6 +363,15 @@ class ScanNotifier extends StateNotifier<AsyncValue<Map<String, dynamic>?>> {
     await _dio.post('/warehouse/orphan', data: data);
   }
 
+  Future<List<Map<String, dynamic>>> fetchOrphans() async {
+    final res = await _dio.get('/warehouse/orphans');
+    return List<Map<String, dynamic>>.from((res.data as Map<String, dynamic>)['data'] ?? []);
+  }
+
+  Future<void> resolveOrphan(String id, String resolution) async {
+    await _dio.patch('/warehouse/orphans/$id/resolve', data: {'resolution': resolution});
+  }
+
   void clear() {
     state = const AsyncValue.data(null);
   }
