@@ -391,9 +391,13 @@ class _OrderTile extends StatelessWidget {
               ),
               child: const Text('تمت التسوية', style: TextStyle(color: AppTheme.success, fontSize: 10, fontWeight: FontWeight.w600)),
             ),
-          if (order['total_local'] != null)
-            Text('\$${(order['total_local'] as num).toStringAsFixed(2)}',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+          Builder(builder: (_) {
+            final saleLyd = (order['total_sale_price_lyd'] as num?)?.toDouble()
+                ?? (order['items_sale_total_lyd'] as num?)?.toDouble();
+            if (saleLyd == null || saleLyd == 0) return const SizedBox.shrink();
+            return Text('${saleLyd.toStringAsFixed(0)} د.ل',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600));
+          }),
           const SizedBox(height: 4),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),

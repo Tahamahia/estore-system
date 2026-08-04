@@ -25,7 +25,10 @@ orderRoutes.get('/', async (c) => {
   const search = c.req.query('search')?.trim();
   const unsettled = c.req.query('unsettled') === 'true';
 
-  let query = `SELECT o.*, c.full_name as customer_name, c.phone as customer_phone
+  let query = `SELECT o.*, c.full_name as customer_name, c.phone as customer_phone,
+               (SELECT COALESCE(SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)), 0)
+                FROM order_items oi WHERE oi.order_id = o.id AND oi.is_deleted = 0 AND oi.status != 'cancelled'
+               ) AS items_sale_total_lyd
                FROM orders o
                LEFT JOIN customers c ON o.customer_id = c.id
                WHERE o.tenant_id = ? AND o.is_deleted = 0`;
