@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:estore_app/app/theme.dart';
@@ -335,7 +336,7 @@ class _ReassignItemDialogState extends ConsumerState<_ReassignItemDialog> {
   }
 
   Future<void> _submit() async {
-    final price = double.tryParse(_priceCtrl.text.trim());
+    final price = double.tryParse(_priceCtrl.text.trim().replaceAll(',', '.'));
     if (price == null || price < 0) { setState(() => _error = 'أدخل سعر بيع صحيح'); return; }
     setState(() { _submitting = true; _error = null; });
     try {
@@ -511,6 +512,7 @@ class _ReassignItemDialogState extends ConsumerState<_ReassignItemDialog> {
             TextField(
               controller: _priceCtrl,
               keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(
                 labelText: 'سعر البيع الجديد (د.ل)',

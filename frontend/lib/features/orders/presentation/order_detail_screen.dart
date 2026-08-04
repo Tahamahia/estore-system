@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:go_router/go_router.dart';
@@ -11,6 +12,9 @@ import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:estore_app/core/utils/invoice_generator.dart';
 import 'package:printing/printing.dart';
+
+double _parseDouble(String text) =>
+    double.tryParse(text.trim().replaceAll(',', '.')) ?? 0;
 
 /// Extracts the clean human-readable message from a DioException.
 /// Reads e.response?.data directly — never falls back to e.message or
@@ -435,7 +439,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                   Expanded(child: SizedBox(height: 44, child: ElevatedButton(
                     onPressed: () async {
                       if (isFullCart) {
-                        final parsed = double.tryParse(salePriceCtrl.text.trim());
+                        final parsed = double.tryParse(salePriceCtrl.text.trim().replaceAll(',', '.'));
                         if (parsed == null) {
                           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
                             content: Text('يجب إدخال سعر البيع للقطع المنقولة'),
@@ -449,10 +453,10 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                       final messenger = ScaffoldMessenger.of(context);
                       try {
                         final movedSalePrice = isFullCart
-                            ? double.tryParse(salePriceCtrl.text.trim())
+                            ? double.tryParse(salePriceCtrl.text.trim().replaceAll(',', '.'))
                             : null;
                         final movedCost = isFullCart
-                            ? double.tryParse(costUsdCtrl.text.trim())
+                            ? double.tryParse(costUsdCtrl.text.trim().replaceAll(',', '.'))
                             : null;
                         final newOrderId = await ref.read(ordersProvider.notifier).splitOrder(
                           widget.orderId,
@@ -1241,12 +1245,12 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
         'product_name': _productCtrl.text.trim(),
         if (_skuCtrl.text.trim().isNotEmpty) 'sku': _skuCtrl.text.trim(),
         if (_urlCtrl.text.trim().isNotEmpty) 'product_url': _urlCtrl.text.trim(),
-        'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
-        'weight': double.tryParse(_weightCtrl.text.trim()) ?? 0,
+        'unit_price_foreign': _parseDouble(_priceCtrl.text),
+        'weight': _parseDouble(_weightCtrl.text),
         'shipping_rate_per_kg': _currentShippingRate,
         if (_selectedSourceName != null) 'source_name': _selectedSourceName,
         if (_localPriceCtrl.text.trim().isNotEmpty)
-          'unit_price_local': double.tryParse(_localPriceCtrl.text.trim()) ?? 0,
+          'unit_price_local': _parseDouble(_localPriceCtrl.text),
         'quantity': int.tryParse(_qtyCtrl.text.trim()) ?? 1,
         if (_selectedCategory != null) 'item_category': _selectedCategory,
         if (_sizeCtrl.text.trim().isNotEmpty) 'size': _sizeCtrl.text.trim(),
@@ -1272,7 +1276,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
   Widget build(BuildContext context) {
     final sourcesState = ref.watch(shippingSourcesProvider);
     final sources = sourcesState.valueOrNull ?? [];
-    final weight = double.tryParse(_weightCtrl.text.trim()) ?? 0;
+    final weight = _parseDouble(_weightCtrl.text);
     final qty = int.tryParse(_qtyCtrl.text.trim()) ?? 1;
     final calcShipping = weight * _currentShippingRate * qty;
     final showClothesFields = _selectedCategory == 'Clothes';
@@ -1397,6 +1401,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                   final priceField = TextField(
                     controller: _priceCtrl,
                     keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
                     style: const TextStyle(color: Colors.white),
                     decoration: const InputDecoration(labelText: 'تكلفة الشراء (\$)', prefixIcon: Icon(Icons.attach_money, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
                   );
@@ -1449,6 +1454,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                 TextField(
                   controller: _weightCtrl,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
                   style: const TextStyle(color: Colors.white),
                   decoration: InputDecoration(
                     labelText: 'الوزن (كغ)',
@@ -1465,6 +1471,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
                 TextField(
                   controller: _localPriceCtrl,
                   keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
                   style: const TextStyle(color: Colors.white),
                   decoration: const InputDecoration(
                     labelText: 'سعر البيع المحلي (د.ل)',
@@ -1782,9 +1789,9 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                 updates['notes'] = _notesCtrl.text.trim();
                 final link = _cartLinkCtrl.text.trim();
                 if (link.isNotEmpty) updates['cart_link'] = link;
-                final costUsd = double.tryParse(_totalCostUsdCtrl.text.trim());
+                final costUsd = double.tryParse(_totalCostUsdCtrl.text.trim().replaceAll(',', '.'));
                 if (costUsd != null) updates['total_cost_usd'] = costUsd;
-                final saleLyd = double.tryParse(_totalSalePriceLydCtrl.text.trim());
+                final saleLyd = double.tryParse(_totalSalePriceLydCtrl.text.trim().replaceAll(',', '.'));
                 if (saleLyd != null) updates['total_sale_price_lyd'] = saleLyd;
                 try {
                   final nav = Navigator.of(context);
@@ -2068,14 +2075,14 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
           'product_name': name,
           'sku':          _skuCtrl.text.trim(),
           'product_url':  _urlCtrl.text.trim(),
-          'unit_price_foreign': double.tryParse(_priceCtrl.text.trim()) ?? 0,
+          'unit_price_foreign': _parseDouble(_priceCtrl.text),
           if (_costUsdCtrl.text.trim().isNotEmpty)
-            'cost_usd': double.tryParse(_costUsdCtrl.text.trim()) ?? 0,
-          'weight':       double.tryParse(_weightCtrl.text.trim()) ?? 0,
+            'cost_usd': _parseDouble(_costUsdCtrl.text),
+          'weight':       _parseDouble(_weightCtrl.text),
           'shipping_rate_per_kg': _currentShippingRate,
           if (_selectedSourceName != null) 'source_name': _selectedSourceName,
           if (_localPriceCtrl.text.trim().isNotEmpty)
-            'unit_price_local': double.tryParse(_localPriceCtrl.text.trim()) ?? 0,
+            'unit_price_local': _parseDouble(_localPriceCtrl.text),
           'quantity':     int.tryParse(_qtyCtrl.text.trim()) ?? 1,
           if (_selectedCategory != null) ...{
             'category':      _selectedCategory,
@@ -2103,7 +2110,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     final sourcesState = ref.watch(shippingSourcesProvider);
     final sources = sourcesState.valueOrNull ?? [];
     final isCancelled = _selectedStatus == 'cancelled';
-    final weight = double.tryParse(_weightCtrl.text.trim()) ?? 0;
+    final weight = _parseDouble(_weightCtrl.text);
     final qty = int.tryParse(_qtyCtrl.text.trim()) ?? 1;
     final calcShipping = weight * _currentShippingRate * qty;
 
@@ -2234,6 +2241,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
             LayoutBuilder(builder: (context, constraints) {
               final priceField = TextField(
                 controller: _priceCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
                 style: const TextStyle(color: Colors.white),
                 decoration: const InputDecoration(labelText: 'تكلفة الشراء (\$)', prefixIcon: Icon(Icons.attach_money, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
               );
@@ -2250,6 +2258,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
             const SizedBox(height: 12),
             TextField(
               controller: _costUsdCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(
                 labelText: 'التكلفة الفعلية (\$)',
@@ -2299,6 +2308,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
             const SizedBox(height: 12),
             TextField(
               controller: _weightCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
               style: const TextStyle(color: Colors.white),
               decoration: InputDecoration(
                 labelText: 'الوزن (كيلو)', prefixIcon: const Icon(Icons.scale_outlined, size: 18),
@@ -2312,6 +2322,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
             const SizedBox(height: 12),
             TextField(
               controller: _localPriceCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(labelText: 'سعر البيع المحلي (د.ل)', prefixIcon: Icon(Icons.sell_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
             ),

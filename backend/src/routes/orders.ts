@@ -564,13 +564,15 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
   }
 
   const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'unit_price_local', 'shipping_cost_foreign', 'quantity', 'size', 'color', 'sku', 'status', 'item_category', 'weight', 'brand', 'source_name', 'shipping_rate_per_kg', 'category', 'attributes', 'sale_price_lyd', 'cost_usd'];
+  const floatFields = new Set(['unit_price_foreign', 'unit_price_local', 'shipping_cost_foreign', 'weight', 'shipping_rate_per_kg', 'sale_price_lyd', 'cost_usd']);
   const setClauses: string[] = [];
   const values: any[] = [];
 
   for (const field of allowedFields) {
     if (updates[field] !== undefined) {
       setClauses.push(`${field} = ?`);
-      values.push(updates[field] === '' ? null : updates[field]);
+      const raw = updates[field] === '' ? null : updates[field];
+      values.push(raw !== null && floatFields.has(field) ? parseFloat(String(raw)) || 0 : raw);
     }
   }
 
