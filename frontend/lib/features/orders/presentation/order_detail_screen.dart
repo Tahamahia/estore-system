@@ -1745,32 +1745,55 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
               ),
             ),
             const SizedBox(height: 14),
-            Row(children: [
-              Expanded(child: TextField(
-                controller: _totalCostUsdCtrl,
-                style: const TextStyle(color: Colors.white),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'إجمالي التكلفة (\$)',
-                  prefixIcon: Icon(Icons.attach_money, size: 18),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            if (widget.order['order_type'] == 'full_cart') ...[
+              Row(children: [
+                Expanded(child: TextField(
+                  controller: _totalCostUsdCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'إجمالي التكلفة (\$)',
+                    prefixIcon: Icon(Icons.attach_money, size: 18),
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                )),
+                const SizedBox(width: 12),
+                Expanded(child: TextField(
+                  controller: _totalSalePriceLydCtrl,
+                  style: const TextStyle(color: Colors.white),
+                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                  decoration: const InputDecoration(
+                    labelText: 'إجمالي سعر البيع (د.ل)',
+                    prefixIcon: Icon(Icons.sell_outlined, size: 18),
+                    isDense: true,
+                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                  ),
+                )),
+              ]),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: () => setState(() {
+                    _totalCostUsdCtrl.clear();
+                    _totalSalePriceLydCtrl.clear();
+                  }),
+                  icon: const Icon(Icons.refresh_rounded, size: 16),
+                  label: const Text('احسب من المنتجات'),
+                  style: TextButton.styleFrom(
+                    foregroundColor: AppTheme.accent,
+                    textStyle: const TextStyle(fontSize: 12),
+                    padding: EdgeInsets.zero,
+                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                  ),
                 ),
-              )),
-              const SizedBox(width: 12),
-              Expanded(child: TextField(
-                controller: _totalSalePriceLydCtrl,
-                style: const TextStyle(color: Colors.white),
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(
-                  labelText: 'إجمالي سعر البيع (د.ل)',
-                  prefixIcon: Icon(Icons.sell_outlined, size: 18),
-                  isDense: true,
-                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                ),
-              )),
-            ]),
-            const SizedBox(height: 14),
+              ),
+              const Text(
+                'اتركه فارغاً ليُحسب تلقائياً من المنتجات المضافة لهذه الطلبية',
+                style: TextStyle(color: Colors.white38, fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+            ],
             TextField(
               controller: _notesCtrl,
               style: const TextStyle(color: Colors.white),
@@ -1789,10 +1812,16 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                 updates['notes'] = _notesCtrl.text.trim();
                 final link = _cartLinkCtrl.text.trim();
                 if (link.isNotEmpty) updates['cart_link'] = link;
-                final costUsd = double.tryParse(_totalCostUsdCtrl.text.trim().replaceAll(',', '.'));
-                if (costUsd != null) updates['total_cost_usd'] = costUsd;
-                final saleLyd = double.tryParse(_totalSalePriceLydCtrl.text.trim().replaceAll(',', '.'));
-                if (saleLyd != null) updates['total_sale_price_lyd'] = saleLyd;
+                if (widget.order['order_type'] == 'full_cart') {
+                  final costText = _totalCostUsdCtrl.text.trim();
+                  updates['total_cost_usd'] = costText.isEmpty
+                      ? null
+                      : double.tryParse(costText.replaceAll(',', '.'));
+                  final saleText = _totalSalePriceLydCtrl.text.trim();
+                  updates['total_sale_price_lyd'] = saleText.isEmpty
+                      ? null
+                      : double.tryParse(saleText.replaceAll(',', '.'));
+                }
                 try {
                   final nav = Navigator.of(context);
                   await widget.onSave(updates);
@@ -1869,7 +1898,11 @@ class _FinancialSummaryCard extends StatelessWidget {
           const SizedBox(height: 6),
         ],
         if (displayCostUsd != null) ...[
-          _FinancialRow(label: 'التكلفة الفعلية (\$)', value: '\$${displayCostUsd.toStringAsFixed(2)}', highlight: true),
+          _FinancialRow(
+            label: orderTotalCostUsd != null ? 'التكلفة الفعلية (يدوي) (\$)' : 'التكلفة الفعلية (من المنتجات) (\$)',
+            value: '\$${displayCostUsd.toStringAsFixed(2)}',
+            highlight: true,
+          ),
           const SizedBox(height: 6),
         ],
         const Divider(height: 16, color: AppTheme.darkBorder),
@@ -1878,7 +1911,11 @@ class _FinancialSummaryCard extends StatelessWidget {
             child: Text('في انتظار تحديد سعر البيع', style: TextStyle(color: Colors.white38, fontSize: 13)),
           )
         else
-          _FinancialRow(label: 'سعر البيع (د.ل)', value: '${displaySaleLyd.toStringAsFixed(0)} د.ل', bold: true),
+          _FinancialRow(
+            label: orderTotalSaleLyd != null ? 'سعر البيع (يدوي) (د.ل)' : 'سعر البيع (من المنتجات) (د.ل)',
+            value: '${displaySaleLyd.toStringAsFixed(0)} د.ل',
+            bold: true,
+          ),
       ]),
     );
   }

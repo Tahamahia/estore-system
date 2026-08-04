@@ -270,7 +270,10 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(color: statusColor.withValues(alpha: 0.4)),
               ),
-              child: Text(_manualStatusLabel(manualStatus), style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w600)),
+              child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
+                Text(_manualStatusLabel(manualStatus), style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w600)),
+                const Text('حالة تتبع الشحنة الفعلية — منفصلة عن حالة المنتج', style: TextStyle(color: Colors.white38, fontSize: 11)),
+              ]),
             ),
           ]),
         ),

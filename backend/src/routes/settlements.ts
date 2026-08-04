@@ -133,27 +133,29 @@ settlementRoutes.get('/', async (c) => {
   }
 
   const financials = await c.env.DB.prepare(
-    `SELECT
+    `WITH order_item_sums AS (
+       SELECT
+         oi.order_id,
+         SUM(CASE WHEN oi.status != 'cancelled' THEN COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1) ELSE 0 END) AS item_lyd,
+         SUM(CASE WHEN oi.status != 'cancelled' THEN
+           (CASE WHEN COALESCE(oi.cost_usd,0) > 0 THEN oi.cost_usd ELSE COALESCE(oi.unit_price_foreign,0) END
+            + COALESCE(oi.weight,0) * COALESCE(oi.shipping_rate_per_kg,0))
+           * COALESCE(oi.quantity,1) ELSE 0 END) AS item_usd,
+         COUNT(CASE WHEN oi.status != 'cancelled' THEN 1 END) AS live_item_count
+       FROM order_items oi WHERE oi.tenant_id = ? AND oi.is_deleted = 0
+       GROUP BY oi.order_id
+     )
+     SELECT
        o.settlement_id,
-       COALESCE(SUM(
-         CASE WHEN oi.status != 'cancelled'
-              THEN COALESCE(oi.unit_price_local, 0) * COALESCE(oi.quantity, 1)
-              ELSE 0 END
-       ), 0) AS total_lyd_collected,
-       COALESCE(SUM(
-         CASE WHEN oi.status != 'cancelled'
-              THEN (CASE WHEN COALESCE(oi.cost_usd, 0) > 0 THEN oi.cost_usd ELSE COALESCE(oi.unit_price_foreign, 0) END
-                    + COALESCE(oi.weight, 0) * COALESCE(oi.shipping_rate_per_kg, 0))
-                   * COALESCE(oi.quantity, 1)
-              ELSE 0 END
-       ), 0) AS total_usd_cost,
+       COALESCE(SUM(COALESCE(ois.item_lyd, o.total_sale_price_lyd, 0)), 0) AS total_lyd_collected,
+       COALESCE(SUM(COALESCE(ois.item_usd, o.total_cost_usd, 0)), 0) AS total_usd_cost,
        COUNT(DISTINCT o.id) AS order_count,
-       COUNT(CASE WHEN oi.status != 'cancelled' THEN 1 END) AS item_count
+       COALESCE(SUM(ois.live_item_count), 0) AS item_count
      FROM orders o
-     JOIN order_items oi ON oi.order_id = o.id AND oi.is_deleted = 0
+     LEFT JOIN order_item_sums ois ON ois.order_id = o.id
      WHERE o.tenant_id = ? AND o.settlement_id IS NOT NULL
      GROUP BY o.settlement_id`
-  ).bind(tenantId).all();
+  ).bind(tenantId, tenantId).all();
 
   const writeOffs = await c.env.DB.prepare(
     `SELECT
@@ -210,7 +212,9 @@ settlementRoutes.get('/:id', async (c) => {
     SELECT o.id, o.status, o.created_at,
            c.full_name AS customer_name, c.phone AS customer_phone,
            COUNT(oi.id) AS item_count,
-           COALESCE(SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)), 0) AS total_lyd
+           CASE WHEN COALESCE(SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)), 0) > 0
+                THEN COALESCE(SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)), 0)
+                ELSE COALESCE(o.total_sale_price_lyd, 0) END AS total_lyd
     FROM orders o
     LEFT JOIN customers c ON o.customer_id = c.id
     LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.is_deleted = 0
