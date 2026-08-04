@@ -172,6 +172,15 @@ orderRoutes.post('/', async (c) => {
     if (!item.id) {
       return c.json({ error: 'Bad Request', message: 'Each item must have a client-generated id' }, 400);
     }
+    if (item.quantity !== undefined && item.quantity <= 0) {
+      return c.json({ error: 'Bad Request', message: `الكمية يجب أن تكون أكبر من صفر (${item.product_name})` }, 400);
+    }
+    const numericFields = ['unit_price_foreign', 'unit_price_local', 'cost_usd', 'sale_price_lyd', 'weight', 'shipping_rate_per_kg'];
+    for (const field of numericFields) {
+      if (item[field] !== undefined && item[field] !== null && Number(item[field]) < 0) {
+        return c.json({ error: 'Bad Request', message: `القيمة "${field}" لا يمكن أن تكون سالبة (${item.product_name})` }, 400);
+      }
+    }
     stmts.push(
       c.env.DB.prepare(
         `INSERT INTO order_items (id, tenant_id, order_id, product_name, product_url,
@@ -533,6 +542,16 @@ orderRoutes.post('/:id/items', async (c) => {
     return c.json({ error: 'Not Found', message: 'Order not found' }, 404);
   }
 
+  if (quantity !== undefined && quantity <= 0) {
+    return c.json({ error: 'Bad Request', message: 'الكمية يجب أن تكون أكبر من صفر' }, 400);
+  }
+  const numericItemFields = ['unit_price_foreign', 'unit_price_local', 'cost_usd', 'sale_price_lyd', 'weight', 'shipping_rate_per_kg'];
+  for (const field of numericItemFields) {
+    if (body[field] !== undefined && body[field] !== null && Number(body[field]) < 0) {
+      return c.json({ error: 'Bad Request', message: `القيمة "${field}" لا يمكن أن تكون سالبة` }, 400);
+    }
+  }
+
   await c.env.DB.prepare(
     `INSERT INTO order_items (id, tenant_id, order_id, product_name, product_url,
      product_image_url, quantity, unit_price_foreign, unit_price_local, shipping_cost_foreign,
@@ -564,6 +583,16 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
 
   if (version === undefined || version === null) {
     return c.json({ error: 'Bad Request', message: 'version required for OCC' }, 400);
+  }
+
+  if (updates.quantity !== undefined && updates.quantity <= 0) {
+    return c.json({ error: 'Bad Request', message: 'الكمية يجب أن تكون أكبر من صفر' }, 400);
+  }
+  const numericPatchFields = ['unit_price_foreign', 'unit_price_local', 'cost_usd', 'sale_price_lyd', 'weight', 'shipping_rate_per_kg'];
+  for (const field of numericPatchFields) {
+    if (updates[field] !== undefined && updates[field] !== null && Number(updates[field]) < 0) {
+      return c.json({ error: 'Bad Request', message: `القيمة "${field}" لا يمكن أن تكون سالبة` }, 400);
+    }
   }
 
   const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'unit_price_local', 'shipping_cost_foreign', 'quantity', 'size', 'color', 'sku', 'status', 'item_category', 'weight', 'brand', 'source_name', 'shipping_rate_per_kg', 'category', 'attributes', 'sale_price_lyd', 'cost_usd'];

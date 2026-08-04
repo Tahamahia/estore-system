@@ -29,6 +29,9 @@ settingsRoutes.post('/sources', requireRole('super_admin', 'store_manager'), asy
 settingsRoutes.put('/sources/:id', requireRole('super_admin', 'store_manager'), async (c) => {
   const id = Number(c.req.param('id'));
   const body = await c.req.json<{ name?: string; rate_per_kg?: number }>();
+  if (body.rate_per_kg !== undefined && body.rate_per_kg < 0) {
+    return c.json({ error: 'Bad Request', message: 'سعر الشحن لا يمكن أن يكون سالباً' }, 400);
+  }
   const setClauses: string[] = [];
   const values: (string | number)[] = [];
   if (body.name !== undefined) { setClauses.push('name = ?'); values.push(body.name.trim()); }
