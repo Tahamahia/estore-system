@@ -79,9 +79,21 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   }
 
   void _showNewOrderDialog() {
-    showDialog(context: context, builder: (ctx) => _NewOrderDialog(
-      onCreated: () => ref.read(ordersProvider.notifier).fetchOrders(),
-    ));
+    if (isMobile(context)) {
+      Navigator.of(context).push(MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _NewOrderDialog(
+          onCreated: () => ref.read(ordersProvider.notifier).fetchOrders(),
+        ),
+      ));
+    } else {
+      showDialog(
+        context: context,
+        builder: (ctx) => _NewOrderDialog(
+          onCreated: () => ref.read(ordersProvider.notifier).fetchOrders(),
+        ),
+      );
+    }
   }
 
   @override
@@ -696,8 +708,52 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
 
   @override
   Widget build(BuildContext context) {
+    if (isMobile(context)) {
+      return Scaffold(
+        backgroundColor: AppTheme.darkSurface,
+        appBar: AppBar(
+          backgroundColor: AppTheme.darkSurface,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.close, color: Colors.white38),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          title: const Row(children: [
+            Icon(Icons.receipt_long_outlined, color: AppTheme.primary, size: 22),
+            SizedBox(width: 10),
+            Text('طلب جديد', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
+          ]),
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: _buildFormContent(),
+        ),
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              if (!_canSubmit && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp && _nameCtrl.text.trim().isEmpty)
+                _inlineBanner(AppTheme.warning, Icons.info_outline, 'أدخل اسم العميل للمتابعة'),
+              const SizedBox(height: 4),
+              SizedBox(height: 50, child: ElevatedButton(
+                onPressed: _canSubmit ? _createOrder : null,
+                child: _isLoading
+                  ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : _isLookingUp
+                    ? const Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                        SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white)),
+                        SizedBox(width: 8), Text('جاري البحث...'),
+                      ])
+                    : Text('إنشاء الطلب${_orderType == 'individual_items' ? ' (${_items.length} منتج)' : ''}', style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+              )),
+            ]),
+          ),
+        ),
+      );
+    }
+
     return Dialog(
-      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
@@ -705,7 +761,6 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
         child: Padding(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            // ── Header ───────────────────────────────────────────
             Row(children: [
               const Icon(Icons.receipt_long_outlined, color: AppTheme.primary, size: 22),
               const SizedBox(width: 10),
@@ -713,147 +768,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
               IconButton(icon: const Icon(Icons.close, color: Colors.white38), onPressed: () => Navigator.of(context).pop(), padding: EdgeInsets.zero, constraints: const BoxConstraints()),
             ]),
             const SizedBox(height: 20),
-
-            if (_error != null) Container(
-              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 14),
-              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
-              child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
-            ),
-
-            Flexible(child: SingleChildScrollView(child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-              // ── 1. Phone-first ──────────────────────────────────
-              const _SectionHeader(icon: Icons.person_outline, label: 'بيانات العميل'),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
-                keyboardType: TextInputType.phone,
-                decoration: InputDecoration(
-                  labelText: 'رقم الهاتف *',
-                  prefixIcon: const Icon(Icons.phone),
-                  suffixIcon: _isLookingUp
-                    ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
-                    : _lookupError  ? const Icon(Icons.wifi_off, color: AppTheme.error)
-                    : _isExisting   ? const Icon(Icons.check_circle, color: AppTheme.success)
-                    : _phoneCtrl.text.length >= 5 ? const Icon(Icons.person_add, color: AppTheme.accent)
-                    : null,
-                ),
-              ),
-              if (_lookupError) _inlineBanner(AppTheme.error, Icons.wifi_off, 'تعذر البحث — تحقق من الاتصال', action: TextButton(onPressed: _onPhoneChanged, style: TextButton.styleFrom(foregroundColor: AppTheme.error, padding: EdgeInsets.zero, minimumSize: const Size(50, 28)), child: const Text('إعادة', style: TextStyle(fontSize: 12)))),
-              if (_isExisting && !_lookupError)     _inlineBanner(AppTheme.success, Icons.check_circle_outline, '✅ عميل موجود'),
-              if (!_isExisting && !_lookupError && _phoneCtrl.text.length >= 5 && !_isLookingUp)
-                _inlineBanner(AppTheme.accent, Icons.person_add_alt_1, '🆕 عميل جديد'),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _nameCtrl,
-                readOnly: _isExisting,
-                style: const TextStyle(color: Colors.white),
-                decoration: InputDecoration(
-                  labelText: 'اسم العميل *', prefixIcon: const Icon(Icons.person),
-                  filled: _isExisting, fillColor: _isExisting ? AppTheme.darkCard.withValues(alpha: 0.5) : null,
-                ),
-              ),
-              if (!_isExisting && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp) ...[
-                const SizedBox(height: 8),
-                LayoutBuilder(builder: (context, constraints) {
-                  if (constraints.maxWidth < 400) {
-                    return Column(children: [
-                      _compactField(_phone2Ctrl, 'رقم ثاني', Icons.phone_outlined),
-                      const SizedBox(height: 6),
-                      _compactField(_cityCtrl, 'المدينة', Icons.location_city),
-                    ]);
-                  }
-                  return Row(children: [
-                    Expanded(child: _compactField(_phone2Ctrl, 'رقم ثاني', Icons.phone_outlined)),
-                    const SizedBox(width: 8),
-                    Expanded(child: _compactField(_cityCtrl, 'المدينة', Icons.location_city)),
-                  ]);
-                }),
-                const SizedBox(height: 6),
-                LayoutBuilder(builder: (context, constraints) {
-                  if (constraints.maxWidth < 400) {
-                    return Column(children: [
-                      _compactField(_areaCtrl, 'المنطقة', Icons.map_outlined),
-                      const SizedBox(height: 6),
-                      _compactField(_streetCtrl, 'الشارع', Icons.home_outlined),
-                    ]);
-                  }
-                  return Row(children: [
-                    Expanded(child: _compactField(_areaCtrl, 'المنطقة', Icons.map_outlined)),
-                    const SizedBox(width: 8),
-                    Expanded(child: _compactField(_streetCtrl, 'الشارع', Icons.home_outlined)),
-                  ]);
-                }),
-                const SizedBox(height: 6),
-                _compactField(_locationUrlCtrl, 'رابط اللوكيشن', Icons.location_on_outlined, type: TextInputType.url),
-              ],
-
-              const SizedBox(height: 18),
-
-              // ── 2. Cart link ─────────────────────────────────────
-              const _SectionHeader(icon: Icons.link, label: 'رابط السلة'),
-              const SizedBox(height: 10),
-              TextField(
-                controller: _cartLinkCtrl,
-                style: const TextStyle(color: Colors.white, fontSize: 13),
-                keyboardType: TextInputType.url,
-                decoration: const InputDecoration(
-                  labelText: 'رابط السلة المشتركة *',
-                  hintText: 'https://shein.top/...',
-                  hintStyle: TextStyle(color: Colors.white24),
-                  prefixIcon: Icon(Icons.shopping_cart_outlined, size: 18),
-                  isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                ),
-              ),
-
-              const SizedBox(height: 18),
-
-              // ── 3. Order type ────────────────────────────────────
-              const _SectionHeader(icon: Icons.category_outlined, label: 'نوع الطلب'),
-              const SizedBox(height: 10),
-              Row(children: [
-                Expanded(child: _orderTypeChip('full_cart', 'سلة تامة', Icons.shopping_basket)),
-                const SizedBox(width: 10),
-                Expanded(child: _orderTypeChip('individual_items', 'منتجات متفرقة', Icons.list_alt)),
-              ]),
-
-              const SizedBox(height: 16),
-
-              // ── 4a. Full-cart: single total price ────────────────
-              if (_orderType == 'full_cart') ...[
-                _compactField(_totalSalePriceCtrl, 'إجمالي سعر البيع (د.ل) *', Icons.sell_outlined,
-                  type: const TextInputType.numberWithOptions(decimal: true)),
-                const SizedBox(height: 4),
-                Text('سيُدخل الأدمن تكلفة الشراء لاحقاً', style: TextStyle(color: Colors.white38, fontSize: 11)),
-              ],
-
-              // ── 4b. Individual items: dynamic list ───────────────
-              if (_orderType == 'individual_items') ...[
-                Row(children: [
-                  const Text('المنتجات', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
-                  const Spacer(),
-                  TextButton.icon(
-                    onPressed: _addItem,
-                    icon: const Icon(Icons.add_circle_outline, size: 18, color: AppTheme.secondary),
-                    label: const Text('إضافة منتج', style: TextStyle(color: AppTheme.secondary, fontSize: 13, fontWeight: FontWeight.w600)),
-                  ),
-                ]),
-                const SizedBox(height: 6),
-                ListView.separated(
-                  shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
-                  itemCount: _items.length,
-                  separatorBuilder: (_, __) => const SizedBox(height: 10),
-                  itemBuilder: (_, index) => _ItemCard(
-                    entry: _items[index],
-                    index: index,
-                    canRemove: _items.length > 1,
-                    categoryOptions: _categoryOptions,
-                    onRemove: () => _removeItem(index),
-                    onChanged: () => setState(() {}),
-                  ),
-                ),
-              ],
-            ]))),
-
+            Flexible(child: SingleChildScrollView(child: _buildFormContent())),
             const SizedBox(height: 18),
             if (!_canSubmit && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp && _nameCtrl.text.trim().isEmpty)
               _inlineBanner(AppTheme.warning, Icons.info_outline, 'أدخل اسم العميل للمتابعة'),
@@ -872,6 +787,140 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
         ),
       ),
     );
+  }
+
+  Widget _buildFormContent() {
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (_error != null) Container(
+        padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+        child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+      ),
+      // ── 1. Phone-first ──────────────────────────────────
+      const _SectionHeader(icon: Icons.person_outline, label: 'بيانات العميل'),
+      const SizedBox(height: 10),
+      TextField(
+        controller: _phoneCtrl, style: const TextStyle(color: Colors.white),
+        keyboardType: TextInputType.phone,
+        decoration: InputDecoration(
+          labelText: 'رقم الهاتف *',
+          prefixIcon: const Icon(Icons.phone),
+          suffixIcon: _isLookingUp
+            ? const Padding(padding: EdgeInsets.all(12), child: SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2)))
+            : _lookupError  ? const Icon(Icons.wifi_off, color: AppTheme.error)
+            : _isExisting   ? const Icon(Icons.check_circle, color: AppTheme.success)
+            : _phoneCtrl.text.length >= 5 ? const Icon(Icons.person_add, color: AppTheme.accent)
+            : null,
+        ),
+      ),
+      if (_lookupError) _inlineBanner(AppTheme.error, Icons.wifi_off, 'تعذر البحث — تحقق من الاتصال', action: TextButton(onPressed: _onPhoneChanged, style: TextButton.styleFrom(foregroundColor: AppTheme.error, padding: EdgeInsets.zero, minimumSize: const Size(50, 28)), child: const Text('إعادة', style: TextStyle(fontSize: 12)))),
+      if (_isExisting && !_lookupError)     _inlineBanner(AppTheme.success, Icons.check_circle_outline, '✅ عميل موجود'),
+      if (!_isExisting && !_lookupError && _phoneCtrl.text.length >= 5 && !_isLookingUp)
+        _inlineBanner(AppTheme.accent, Icons.person_add_alt_1, '🆕 عميل جديد'),
+      const SizedBox(height: 10),
+      TextField(
+        controller: _nameCtrl,
+        readOnly: _isExisting,
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          labelText: 'اسم العميل *', prefixIcon: const Icon(Icons.person),
+          filled: _isExisting, fillColor: _isExisting ? AppTheme.darkCard.withValues(alpha: 0.5) : null,
+        ),
+      ),
+      if (!_isExisting && _phoneCtrl.text.trim().length >= 5 && !_isLookingUp) ...[
+        const SizedBox(height: 8),
+        LayoutBuilder(builder: (context, constraints) {
+          if (constraints.maxWidth < 400) {
+            return Column(children: [
+              _compactField(_phone2Ctrl, 'رقم ثاني', Icons.phone_outlined),
+              const SizedBox(height: 6),
+              _compactField(_cityCtrl, 'المدينة', Icons.location_city),
+            ]);
+          }
+          return Row(children: [
+            Expanded(child: _compactField(_phone2Ctrl, 'رقم ثاني', Icons.phone_outlined)),
+            const SizedBox(width: 8),
+            Expanded(child: _compactField(_cityCtrl, 'المدينة', Icons.location_city)),
+          ]);
+        }),
+        const SizedBox(height: 6),
+        LayoutBuilder(builder: (context, constraints) {
+          if (constraints.maxWidth < 400) {
+            return Column(children: [
+              _compactField(_areaCtrl, 'المنطقة', Icons.map_outlined),
+              const SizedBox(height: 6),
+              _compactField(_streetCtrl, 'الشارع', Icons.home_outlined),
+            ]);
+          }
+          return Row(children: [
+            Expanded(child: _compactField(_areaCtrl, 'المنطقة', Icons.map_outlined)),
+            const SizedBox(width: 8),
+            Expanded(child: _compactField(_streetCtrl, 'الشارع', Icons.home_outlined)),
+          ]);
+        }),
+        const SizedBox(height: 6),
+        _compactField(_locationUrlCtrl, 'رابط اللوكيشن', Icons.location_on_outlined, type: TextInputType.url),
+      ],
+      const SizedBox(height: 18),
+      // ── 2. Cart link ─────────────────────────────────────
+      const _SectionHeader(icon: Icons.link, label: 'رابط السلة'),
+      const SizedBox(height: 10),
+      TextField(
+        controller: _cartLinkCtrl,
+        style: const TextStyle(color: Colors.white, fontSize: 13),
+        keyboardType: TextInputType.url,
+        decoration: const InputDecoration(
+          labelText: 'رابط السلة المشتركة *',
+          hintText: 'https://shein.top/...',
+          hintStyle: TextStyle(color: Colors.white24),
+          prefixIcon: Icon(Icons.shopping_cart_outlined, size: 18),
+          isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        ),
+      ),
+      const SizedBox(height: 18),
+      // ── 3. Order type ────────────────────────────────────
+      const _SectionHeader(icon: Icons.category_outlined, label: 'نوع الطلب'),
+      const SizedBox(height: 10),
+      Row(children: [
+        Expanded(child: _orderTypeChip('full_cart', 'سلة تامة', Icons.shopping_basket)),
+        const SizedBox(width: 10),
+        Expanded(child: _orderTypeChip('individual_items', 'منتجات متفرقة', Icons.list_alt)),
+      ]),
+      const SizedBox(height: 16),
+      // ── 4a. Full-cart: single total price ────────────────
+      if (_orderType == 'full_cart') ...[
+        _compactField(_totalSalePriceCtrl, 'إجمالي سعر البيع (د.ل) *', Icons.sell_outlined,
+          type: const TextInputType.numberWithOptions(decimal: true)),
+        const SizedBox(height: 4),
+        Text('سيُدخل الأدمن تكلفة الشراء لاحقاً', style: TextStyle(color: Colors.white38, fontSize: 11)),
+      ],
+      // ── 4b. Individual items: dynamic list ───────────────
+      if (_orderType == 'individual_items') ...[
+        Row(children: [
+          const Text('المنتجات', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 14)),
+          const Spacer(),
+          TextButton.icon(
+            onPressed: _addItem,
+            icon: const Icon(Icons.add_circle_outline, size: 18, color: AppTheme.secondary),
+            label: const Text('إضافة منتج', style: TextStyle(color: AppTheme.secondary, fontSize: 13, fontWeight: FontWeight.w600)),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        ListView.separated(
+          shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
+          itemCount: _items.length,
+          separatorBuilder: (_, __) => const SizedBox(height: 10),
+          itemBuilder: (_, index) => _ItemCard(
+            entry: _items[index],
+            index: index,
+            canRemove: _items.length > 1,
+            categoryOptions: _categoryOptions,
+            onRemove: () => _removeItem(index),
+            onChanged: () => setState(() {}),
+          ),
+        ),
+      ],
+    ]);
   }
 
   // ── Helpers ───────────────────────────────────────────────

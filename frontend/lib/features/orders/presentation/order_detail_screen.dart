@@ -256,44 +256,46 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
   }
 
   void _showEditItemDialog(Map<String, dynamic> item) {
-    showDialog(
-      context: context,
-      builder: (_) => _EditItemDialog(
-        orderId: widget.orderId,
-        order: _order!,
-        item: item,
-        onSaved: () async {
-          // _refreshOrder() silently overwrites _order + calls setState so the
-          // FinancialSummaryCard rebuilds the instant the dialog closes.
-          await _refreshOrder();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('✅ تم تحديث المنتج'),
-              backgroundColor: AppTheme.success,
-            ));
-          }
-        },
-      ),
+    final dialog = _EditItemDialog(
+      orderId: widget.orderId,
+      order: _order!,
+      item: item,
+      onSaved: () async {
+        await _refreshOrder();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('✅ تم تحديث المنتج'),
+            backgroundColor: AppTheme.success,
+          ));
+        }
+      },
     );
+    if (isMobile(context)) {
+      Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => dialog));
+    } else {
+      showDialog(context: context, builder: (_) => dialog);
+    }
   }
 
   void _showAddItemDialog() {
-    showDialog(
-      context: context,
-      builder: (ctx) => _AddItemDialog(
-        orderId: widget.orderId,
-        order: _order!,
-        onAdded: () async {
-          await _loadOrder();
-          if (mounted) {
-            ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-              content: Text('✅ تم إضافة المنتج للطلب'),
-              backgroundColor: AppTheme.success,
-            ));
-          }
-        },
-      ),
+    final dialog = _AddItemDialog(
+      orderId: widget.orderId,
+      order: _order!,
+      onAdded: () async {
+        await _loadOrder();
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+            content: Text('✅ تم إضافة المنتج للطلب'),
+            backgroundColor: AppTheme.success,
+          ));
+        }
+      },
     );
+    if (isMobile(context)) {
+      Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => dialog));
+    } else {
+      showDialog(context: context, builder: (_) => dialog);
+    }
   }
 
   Future<void> _orphanItems() async {
@@ -1282,8 +1284,50 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
     final showClothesFields = _selectedCategory == 'Clothes';
     final showBrandField = _selectedCategory == 'Electronic' || _selectedCategory == 'Accessories';
 
+    final formContent = _buildAddItemFormContent(
+      sources: sources,
+      weight: weight,
+      qty: qty,
+      calcShipping: calcShipping,
+      showClothesFields: showClothesFields,
+      showBrandField: showBrandField,
+    );
+    final submitButton = SizedBox(height: 52, child: ElevatedButton.icon(
+      onPressed: _isLoading ? null : _submit,
+      icon: _isLoading
+        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+        : const Icon(Icons.add_shopping_cart, size: 22),
+      label: const Text('إضافة المنتج', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+      style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+    ));
+
+    if (isMobile(context)) {
+      return Scaffold(
+        backgroundColor: AppTheme.darkSurface,
+        appBar: AppBar(
+          backgroundColor: AppTheme.darkSurface,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.close, color: Colors.white38),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          title: const Text('إضافة منتج للطلب', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: formContent,
+        ),
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: submitButton,
+          ),
+        ),
+      );
+    }
+
     return Dialog(
-      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
@@ -1291,210 +1335,213 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            const Text('إضافة منتج للطلب', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
-            const SizedBox(height: 4),
-            const Text('أدخل بيانات المنتج الجديد بالكامل', style: TextStyle(color: Colors.white54, fontSize: 13)),
-            const SizedBox(height: 20),
-            if (_error != null) Container(
-              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 16),
-              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
-              child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
-            ),
-
-            // ── Section 1: تفاصيل المنتج ─────────────────────────────
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppTheme.darkCard,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                const Text('تفاصيل المنتج', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white70)),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _productCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: 'اسم المنتج *',
-                    prefixIcon: Icon(Icons.shopping_bag_outlined),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _skuCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: 'الرقم التسلسلي (الباركود)',
-                    prefixIcon: Icon(Icons.qr_code),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _urlCtrl,
-                  style: const TextStyle(color: Colors.white),
-                  keyboardType: TextInputType.url,
-                  decoration: const InputDecoration(
-                    labelText: 'رابط المنتج',
-                    hintText: 'https://...',
-                    hintStyle: TextStyle(color: Colors.white24),
-                    prefixIcon: Icon(Icons.link),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                DropdownButtonFormField<String>(
-                  value: _selectedCategory,
-                  dropdownColor: AppTheme.darkCard,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: 'فئة المنتج',
-                    prefixIcon: Icon(Icons.category_outlined),
-                  ),
-                  items: _categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
-                  onChanged: (v) => setState(() { _selectedCategory = v; _sizeCtrl.clear(); _colorCtrl.clear(); _brandCtrl.clear(); }),
-                ),
-                if (showClothesFields) ...[
-                  const SizedBox(height: 10),
-                  LayoutBuilder(builder: (context, constraints) {
-                    final sizeField = TextField(
-                      controller: _sizeCtrl,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(labelText: 'المقاس', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
-                    );
-                    final colorField = TextField(
-                      controller: _colorCtrl,
-                      style: const TextStyle(color: Colors.white),
-                      decoration: const InputDecoration(labelText: 'اللون', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
-                    );
-                    if (constraints.maxWidth < 400) {
-                      return Column(children: [sizeField, const SizedBox(height: 8), colorField]);
-                    }
-                    return Row(children: [Expanded(child: sizeField), const SizedBox(width: 10), Expanded(child: colorField)]);
-                  }),
-                ] else if (showBrandField) ...[
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: _brandCtrl,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(
-                      labelText: 'الماركة (Brand)',
-                      prefixIcon: Icon(Icons.branding_watermark_outlined),
-                    ),
-                  ),
-                ],
-              ]),
-            ),
-            const SizedBox(height: 14),
-
-            // ── Section 2: التفاصيل المالية ──────────────────────────
-            Container(
-              padding: const EdgeInsets.all(16),
-              decoration: BoxDecoration(
-                color: AppTheme.darkCard,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white12),
-              ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                const Text('التفاصيل المالية', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white70)),
-                const SizedBox(height: 12),
-                LayoutBuilder(builder: (context, constraints) {
-                  final priceField = TextField(
-                    controller: _priceCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(labelText: 'تكلفة الشراء (\$)', prefixIcon: Icon(Icons.attach_money, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
-                  );
-                  final qtyField = TextField(
-                    controller: _qtyCtrl,
-                    keyboardType: TextInputType.number,
-                    style: const TextStyle(color: Colors.white),
-                    decoration: const InputDecoration(labelText: 'الكمية', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
-                  );
-                  if (constraints.maxWidth < 400) {
-                    return Column(children: [priceField, const SizedBox(height: 8), qtyField]);
-                  }
-                  return Row(children: [Expanded(child: priceField), const SizedBox(width: 10), SizedBox(width: 80, child: qtyField)]);
-                }),
-                const SizedBox(height: 10),
-                // Source dropdown
-                DropdownButtonFormField<String?>(
-                  value: _selectedSourceName,
-                  dropdownColor: AppTheme.darkSurface,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: 'الموقع',
-                    prefixIcon: Icon(Icons.language_outlined, size: 18),
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                  ),
-                  items: [
-                    const DropdownMenuItem<String?>(value: null, child: Text('— بدون موقع —', style: TextStyle(color: Colors.white38))),
-                    ...sources.map((s) {
-                      final sName = s['name'] as String;
-                      final sRate = (s['rate_per_kg'] as num).toDouble();
-                      return DropdownMenuItem<String?>(
-                        value: sName,
-                        child: Text('$sName  (\$$sRate/kg)', style: const TextStyle(color: Colors.white)),
-                      );
-                    }),
-                  ],
-                  onChanged: (v) {
-                    final src = sources.firstWhere(
-                      (s) => s['name'] == v,
-                      orElse: () => <String, dynamic>{},
-                    );
-                    setState(() {
-                      _selectedSourceName = v;
-                      _currentShippingRate = v != null ? (src['rate_per_kg'] as num?)?.toDouble() ?? 0 : 0;
-                    });
-                  },
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _weightCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    labelText: 'الوزن (كغ)',
-                    prefixIcon: const Icon(Icons.scale_outlined, size: 18),
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                    helperText: _currentShippingRate > 0
-                        ? 'شحن محسوب: \$${calcShipping.toStringAsFixed(2)}  ($weight kg × \$$_currentShippingRate × $qty)'
-                        : 'اختر الموقع لحساب تكلفة الشحن تلقائياً',
-                    helperStyle: TextStyle(color: _currentShippingRate > 0 ? AppTheme.secondary : Colors.white38, fontSize: 11),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: _localPriceCtrl,
-                  keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                  inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
-                  style: const TextStyle(color: Colors.white),
-                  decoration: const InputDecoration(
-                    labelText: 'سعر البيع المحلي (د.ل)',
-                    prefixIcon: Icon(Icons.sell_outlined, size: 18),
-                    isDense: true,
-                    contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                  ),
-                ),
-              ]),
-            ),
+            formContent,
             const SizedBox(height: 24),
-            SizedBox(height: 52, child: ElevatedButton.icon(
-              onPressed: _isLoading ? null : _submit,
-              icon: _isLoading
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.add_shopping_cart, size: 22),
-              label: const Text('إضافة المنتج', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-            )),
+            submitButton,
           ]),
         ),
       ),
     );
+  }
+
+  Widget _buildAddItemFormContent({
+    required List<Map<String, dynamic>> sources,
+    required double weight,
+    required int qty,
+    required double calcShipping,
+    required bool showClothesFields,
+    required bool showBrandField,
+  }) {
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      const Text('إضافة منتج للطلب', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700, color: Colors.white)),
+      const SizedBox(height: 4),
+      const Text('أدخل بيانات المنتج الجديد بالكامل', style: TextStyle(color: Colors.white54, fontSize: 13)),
+      const SizedBox(height: 20),
+      if (_error != null) Container(
+        padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 16),
+        decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+        child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+      ),
+      // ── Section 1: تفاصيل المنتج ─────────────────────────────
+      Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.darkCard,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Text('تفاصيل المنتج', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white70)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _productCtrl,
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              labelText: 'اسم المنتج *',
+              prefixIcon: Icon(Icons.shopping_bag_outlined),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _skuCtrl,
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              labelText: 'الرقم التسلسلي (الباركود)',
+              prefixIcon: Icon(Icons.qr_code),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _urlCtrl,
+            style: const TextStyle(color: Colors.white),
+            keyboardType: TextInputType.url,
+            decoration: const InputDecoration(
+              labelText: 'رابط المنتج',
+              hintText: 'https://...',
+              hintStyle: TextStyle(color: Colors.white24),
+              prefixIcon: Icon(Icons.link),
+            ),
+          ),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String>(
+            value: _selectedCategory,
+            dropdownColor: AppTheme.darkCard,
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              labelText: 'فئة المنتج',
+              prefixIcon: Icon(Icons.category_outlined),
+            ),
+            items: _categories.map((c) => DropdownMenuItem(value: c, child: Text(c))).toList(),
+            onChanged: (v) => setState(() { _selectedCategory = v; _sizeCtrl.clear(); _colorCtrl.clear(); _brandCtrl.clear(); }),
+          ),
+          if (showClothesFields) ...[
+            const SizedBox(height: 10),
+            LayoutBuilder(builder: (context, constraints) {
+              final sizeField = TextField(
+                controller: _sizeCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'المقاس', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+              );
+              final colorField = TextField(
+                controller: _colorCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(labelText: 'اللون', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+              );
+              if (constraints.maxWidth < 400) {
+                return Column(children: [sizeField, const SizedBox(height: 8), colorField]);
+              }
+              return Row(children: [Expanded(child: sizeField), const SizedBox(width: 10), Expanded(child: colorField)]);
+            }),
+          ] else if (showBrandField) ...[
+            const SizedBox(height: 10),
+            TextField(
+              controller: _brandCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(
+                labelText: 'الماركة (Brand)',
+                prefixIcon: Icon(Icons.branding_watermark_outlined),
+              ),
+            ),
+          ],
+        ]),
+      ),
+      const SizedBox(height: 14),
+      // ── Section 2: التفاصيل المالية ──────────────────────────
+      Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.darkCard,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: Colors.white12),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Text('التفاصيل المالية', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Colors.white70)),
+          const SizedBox(height: 12),
+          LayoutBuilder(builder: (context, constraints) {
+            final priceField = TextField(
+              controller: _priceCtrl,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'تكلفة الشراء (\$)', prefixIcon: Icon(Icons.attach_money, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+            );
+            final qtyField = TextField(
+              controller: _qtyCtrl,
+              keyboardType: TextInputType.number,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'الكمية', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+            );
+            if (constraints.maxWidth < 400) {
+              return Column(children: [priceField, const SizedBox(height: 8), qtyField]);
+            }
+            return Row(children: [Expanded(child: priceField), const SizedBox(width: 10), SizedBox(width: 80, child: qtyField)]);
+          }),
+          const SizedBox(height: 10),
+          DropdownButtonFormField<String?>(
+            value: _selectedSourceName,
+            dropdownColor: AppTheme.darkSurface,
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              labelText: 'الموقع',
+              prefixIcon: Icon(Icons.language_outlined, size: 18),
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            ),
+            items: [
+              const DropdownMenuItem<String?>(value: null, child: Text('— بدون موقع —', style: TextStyle(color: Colors.white38))),
+              ...sources.map((s) {
+                final sName = s['name'] as String;
+                final sRate = (s['rate_per_kg'] as num).toDouble();
+                return DropdownMenuItem<String?>(
+                  value: sName,
+                  child: Text('$sName  (\$$sRate/kg)', style: const TextStyle(color: Colors.white)),
+                );
+              }),
+            ],
+            onChanged: (v) {
+              final src = sources.firstWhere(
+                (s) => s['name'] == v,
+                orElse: () => <String, dynamic>{},
+              );
+              setState(() {
+                _selectedSourceName = v;
+                _currentShippingRate = v != null ? (src['rate_per_kg'] as num?)?.toDouble() ?? 0 : 0;
+              });
+            },
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _weightCtrl,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+            style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(
+              labelText: 'الوزن (كغ)',
+              prefixIcon: const Icon(Icons.scale_outlined, size: 18),
+              isDense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+              helperText: _currentShippingRate > 0
+                  ? 'شحن محسوب: \$${calcShipping.toStringAsFixed(2)}  ($weight kg × \$$_currentShippingRate × $qty)'
+                  : 'اختر الموقع لحساب تكلفة الشحن تلقائياً',
+              helperStyle: TextStyle(color: _currentShippingRate > 0 ? AppTheme.secondary : Colors.white38, fontSize: 11),
+            ),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _localPriceCtrl,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              labelText: 'سعر البيع المحلي (د.ل)',
+              prefixIcon: Icon(Icons.sell_outlined, size: 18),
+              isDense: true,
+              contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            ),
+          ),
+        ]),
+      ),
+    ]);
   }
 }
 
@@ -2151,8 +2198,53 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     final qty = int.tryParse(_qtyCtrl.text.trim()) ?? 1;
     final calcShipping = weight * _currentShippingRate * qty;
 
+    final formContent = _buildEditItemFormContent(
+      sources: sources,
+      weight: weight,
+      qty: qty,
+      calcShipping: calcShipping,
+      isCancelled: isCancelled,
+    );
+    final saveButton = SizedBox(height: 52, child: ElevatedButton.icon(
+      onPressed: _saving ? null : _save,
+      icon: _saving
+        ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+        : const Icon(Icons.save_rounded, size: 22),
+      label: const Text('حفظ التغييرات', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+      style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+    ));
+
+    if (isMobile(context)) {
+      return Scaffold(
+        backgroundColor: AppTheme.darkSurface,
+        appBar: AppBar(
+          backgroundColor: AppTheme.darkSurface,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.close, color: Colors.white38),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          title: const Row(children: [
+            Icon(Icons.edit_rounded, color: AppTheme.accent, size: 20),
+            SizedBox(width: 8),
+            Text('تعديل المنتج', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w700, color: Colors.white)),
+          ]),
+        ),
+        body: SingleChildScrollView(
+          padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+          child: formContent,
+        ),
+        bottomNavigationBar: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+            child: saveButton,
+          ),
+        ),
+      );
+    }
+
     return Dialog(
-      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
@@ -2160,7 +2252,6 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
         child: SingleChildScrollView(
           padding: const EdgeInsets.all(28),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            // Header
             Row(children: [
               const Icon(Icons.edit_rounded, color: AppTheme.accent, size: 20),
               const SizedBox(width: 8),
@@ -2173,209 +2264,207 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
               ),
             ]),
             const SizedBox(height: 16),
-
-            if (_error != null) Container(
-              padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 12),
-              decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
-              child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
-            ),
-
-            // Status dropdown
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-              decoration: BoxDecoration(
-                color: AppTheme.darkCard,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: isCancelled ? AppTheme.error.withValues(alpha: 0.5) : AppTheme.darkBorder),
-              ),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String>(
-                  value: _selectedStatus, isExpanded: true,
-                  dropdownColor: AppTheme.darkCard,
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                  icon: const Icon(Icons.expand_more, color: Colors.white54),
-                  items: _statusOptions.map((opt) {
-                    final isCancel = opt.$1 == 'cancelled';
-                    return DropdownMenuItem(value: opt.$1,
-                      child: Text(opt.$2, style: TextStyle(color: isCancel ? AppTheme.error : Colors.white, fontWeight: isCancel ? FontWeight.w600 : FontWeight.normal)));
-                  }).toList(),
-                  onChanged: (v) { if (v != null) setState(() => _selectedStatus = v); },
-                ),
-              ),
-            ),
-            if (isCancelled) Container(
-              margin: const EdgeInsets.only(top: 8),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppTheme.error.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppTheme.error.withValues(alpha: 0.25)),
-              ),
-              child: const Row(children: [
-                Icon(Icons.info_outline, color: AppTheme.error, size: 15), SizedBox(width: 8),
-                Expanded(child: Text('هذا المنتج سيُستثنى من حساب التكلفة والتوصيل', style: TextStyle(color: AppTheme.error, fontSize: 12))),
-              ]),
-            ),
-            const SizedBox(height: 16),
-
-            // ── Section 1: تفاصيل المنتج ──────────────────────
-            const Text('تفاصيل المنتج', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white60)),
-            const Divider(color: AppTheme.darkBorder, height: 14),
-            TextField(
-              controller: _nameCtrl, style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'اسم المنتج *', prefixIcon: Icon(Icons.shopping_bag)),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _skuCtrl, style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'الرقم التسلسلي (الباركود)', prefixIcon: Icon(Icons.qr_code)),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _urlCtrl, style: const TextStyle(color: Colors.white), keyboardType: TextInputType.url,
-              decoration: const InputDecoration(labelText: 'رابط المنتج', hintText: 'https://...', hintStyle: TextStyle(color: Colors.white24), prefixIcon: Icon(Icons.link)),
-            ),
-            const SizedBox(height: 12),
-            // Category dropdown
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-              decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.darkBorder)),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String?>(
-                  value: _selectedCategory, isExpanded: true, dropdownColor: AppTheme.darkCard,
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                  icon: const Icon(Icons.expand_more, color: Colors.white54),
-                  hint: const Text('الفئة (اختياري)', style: TextStyle(color: Colors.white38)),
-                  items: [
-                    const DropdownMenuItem<String?>(value: null, child: Text('— بدون فئة —', style: TextStyle(color: Colors.white38))),
-                    ..._categoryOptions.map((opt) => DropdownMenuItem(value: opt.$1, child: Text(opt.$2, style: const TextStyle(color: Colors.white)))),
-                  ],
-                  onChanged: (v) => setState(() => _selectedCategory = v),
-                ),
-              ),
-            ),
-            if (_showAttr1) ...[
-              const SizedBox(height: 12),
-              if (_showAttr2)
-                LayoutBuilder(builder: (context, constraints) {
-                  final attr1Field = TextField(controller: _attr1Ctrl, style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(labelText: _attr1Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
-                  final attr2Field = TextField(controller: _attr2Ctrl, style: const TextStyle(color: Colors.white),
-                    decoration: InputDecoration(labelText: _attr2Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
-                  if (constraints.maxWidth < 400) {
-                    return Column(children: [attr1Field, const SizedBox(height: 8), attr2Field]);
-                  }
-                  return Row(children: [Expanded(child: attr1Field), const SizedBox(width: 12), Expanded(child: attr2Field)]);
-                })
-              else
-                TextField(controller: _attr1Ctrl, style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(labelText: _attr1Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12))),
-            ],
-            const SizedBox(height: 16),
-
-            // ── Section 2: التفاصيل المالية ───────────────────
-            const Text('التفاصيل المالية', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white60)),
-            const Divider(color: AppTheme.darkBorder, height: 14),
-            LayoutBuilder(builder: (context, constraints) {
-              final priceField = TextField(
-                controller: _priceCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'تكلفة الشراء (\$)', prefixIcon: Icon(Icons.attach_money, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
-              );
-              final qtyField = TextField(
-                controller: _qtyCtrl, keyboardType: TextInputType.number,
-                style: const TextStyle(color: Colors.white),
-                decoration: const InputDecoration(labelText: 'الكمية', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
-              );
-              if (constraints.maxWidth < 400) {
-                return Column(children: [priceField, const SizedBox(height: 8), qtyField]);
-              }
-              return Row(children: [Expanded(child: priceField), const SizedBox(width: 10), SizedBox(width: 80, child: qtyField)]);
-            }),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _costUsdCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(
-                labelText: 'التكلفة الفعلية (\$)',
-                hintText: 'بعد الشراء الفعلي',
-                hintStyle: TextStyle(color: Colors.white24),
-                prefixIcon: Icon(Icons.receipt_long_outlined, size: 18),
-                isDense: true,
-                contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-              ),
-            ),
-            const SizedBox(height: 12),
-            // Source dropdown
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-              decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.darkBorder)),
-              child: DropdownButtonHideUnderline(
-                child: DropdownButton<String?>(
-                  value: _selectedSourceName,
-                  isExpanded: true, dropdownColor: AppTheme.darkCard,
-                  style: const TextStyle(color: Colors.white, fontSize: 14),
-                  icon: const Icon(Icons.expand_more, color: Colors.white54),
-                  hint: const Text('الموقع (اختياري)', style: TextStyle(color: Colors.white38)),
-                  items: [
-                    const DropdownMenuItem<String?>(value: null, child: Text('— بدون موقع —', style: TextStyle(color: Colors.white38))),
-                    ...sources.map((s) {
-                      final sName = s['name'] as String;
-                      final sRate = (s['rate_per_kg'] as num).toDouble();
-                      return DropdownMenuItem<String?>(
-                        value: sName,
-                        child: Text('$sName  (\$$sRate/kg)', style: const TextStyle(color: Colors.white)),
-                      );
-                    }),
-                  ],
-                  onChanged: (v) {
-                    final src = sources.firstWhere(
-                      (s) => s['name'] == v,
-                      orElse: () => <String, dynamic>{},
-                    );
-                    setState(() {
-                      _selectedSourceName = v;
-                      _currentShippingRate = v != null ? (src['rate_per_kg'] as num?)?.toDouble() ?? 0 : 0;
-                    });
-                  },
-                ),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _weightCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
-              style: const TextStyle(color: Colors.white),
-              decoration: InputDecoration(
-                labelText: 'الوزن (كيلو)', prefixIcon: const Icon(Icons.scale_outlined, size: 18),
-                isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-                helperText: _currentShippingRate > 0
-                    ? 'شحن محسوب: \$${calcShipping.toStringAsFixed(2)}  ($weight kg × \$$_currentShippingRate × $qty)'
-                    : 'اختر الموقع لحساب تكلفة الشحن تلقائياً',
-                helperStyle: TextStyle(color: _currentShippingRate > 0 ? AppTheme.secondary : Colors.white38, fontSize: 11),
-              ),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _localPriceCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
-              style: const TextStyle(color: Colors.white),
-              decoration: const InputDecoration(labelText: 'سعر البيع المحلي (د.ل)', prefixIcon: Icon(Icons.sell_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
-            ),
+            formContent,
             const SizedBox(height: 24),
-
-            SizedBox(height: 52, child: ElevatedButton.icon(
-              onPressed: _saving ? null : _save,
-              icon: _saving
-                ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Icon(Icons.save_rounded, size: 22),
-              label: const Text('حفظ التغييرات', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-            )),
+            saveButton,
           ]),
         ),
       ),
     );
+  }
+
+  Widget _buildEditItemFormContent({
+    required List<Map<String, dynamic>> sources,
+    required double weight,
+    required int qty,
+    required double calcShipping,
+    required bool isCancelled,
+  }) {
+    return Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      if (_error != null) Container(
+        padding: const EdgeInsets.all(10), margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(color: AppTheme.error.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(8)),
+        child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 13)),
+      ),
+      // Status dropdown
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+        decoration: BoxDecoration(
+          color: AppTheme.darkCard,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: isCancelled ? AppTheme.error.withValues(alpha: 0.5) : AppTheme.darkBorder),
+        ),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String>(
+            value: _selectedStatus, isExpanded: true,
+            dropdownColor: AppTheme.darkCard,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            icon: const Icon(Icons.expand_more, color: Colors.white54),
+            items: _statusOptions.map((opt) {
+              final isCancel = opt.$1 == 'cancelled';
+              return DropdownMenuItem(value: opt.$1,
+                child: Text(opt.$2, style: TextStyle(color: isCancel ? AppTheme.error : Colors.white, fontWeight: isCancel ? FontWeight.w600 : FontWeight.normal)));
+            }).toList(),
+            onChanged: (v) { if (v != null) setState(() => _selectedStatus = v); },
+          ),
+        ),
+      ),
+      if (isCancelled) Container(
+        margin: const EdgeInsets.only(top: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: AppTheme.error.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: AppTheme.error.withValues(alpha: 0.25)),
+        ),
+        child: const Row(children: [
+          Icon(Icons.info_outline, color: AppTheme.error, size: 15), SizedBox(width: 8),
+          Expanded(child: Text('هذا المنتج سيُستثنى من حساب التكلفة والتوصيل', style: TextStyle(color: AppTheme.error, fontSize: 12))),
+        ]),
+      ),
+      const SizedBox(height: 16),
+      // ── Section 1: تفاصيل المنتج ──────────────────────
+      const Text('تفاصيل المنتج', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white60)),
+      const Divider(color: AppTheme.darkBorder, height: 14),
+      TextField(
+        controller: _nameCtrl, style: const TextStyle(color: Colors.white),
+        decoration: const InputDecoration(labelText: 'اسم المنتج *', prefixIcon: Icon(Icons.shopping_bag)),
+      ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _skuCtrl, style: const TextStyle(color: Colors.white),
+        decoration: const InputDecoration(labelText: 'الرقم التسلسلي (الباركود)', prefixIcon: Icon(Icons.qr_code)),
+      ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _urlCtrl, style: const TextStyle(color: Colors.white), keyboardType: TextInputType.url,
+        decoration: const InputDecoration(labelText: 'رابط المنتج', hintText: 'https://...', hintStyle: TextStyle(color: Colors.white24), prefixIcon: Icon(Icons.link)),
+      ),
+      const SizedBox(height: 12),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+        decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.darkBorder)),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String?>(
+            value: _selectedCategory, isExpanded: true, dropdownColor: AppTheme.darkCard,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            icon: const Icon(Icons.expand_more, color: Colors.white54),
+            hint: const Text('الفئة (اختياري)', style: TextStyle(color: Colors.white38)),
+            items: [
+              const DropdownMenuItem<String?>(value: null, child: Text('— بدون فئة —', style: TextStyle(color: Colors.white38))),
+              ..._categoryOptions.map((opt) => DropdownMenuItem(value: opt.$1, child: Text(opt.$2, style: const TextStyle(color: Colors.white)))),
+            ],
+            onChanged: (v) => setState(() => _selectedCategory = v),
+          ),
+        ),
+      ),
+      if (_showAttr1) ...[
+        const SizedBox(height: 12),
+        if (_showAttr2)
+          LayoutBuilder(builder: (context, constraints) {
+            final attr1Field = TextField(controller: _attr1Ctrl, style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(labelText: _attr1Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+            final attr2Field = TextField(controller: _attr2Ctrl, style: const TextStyle(color: Colors.white),
+              decoration: InputDecoration(labelText: _attr2Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12)));
+            if (constraints.maxWidth < 400) {
+              return Column(children: [attr1Field, const SizedBox(height: 8), attr2Field]);
+            }
+            return Row(children: [Expanded(child: attr1Field), const SizedBox(width: 12), Expanded(child: attr2Field)]);
+          })
+        else
+          TextField(controller: _attr1Ctrl, style: const TextStyle(color: Colors.white),
+            decoration: InputDecoration(labelText: _attr1Label, isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12))),
+      ],
+      const SizedBox(height: 16),
+      // ── Section 2: التفاصيل المالية ───────────────────
+      const Text('التفاصيل المالية', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: Colors.white60)),
+      const Divider(color: AppTheme.darkBorder, height: 14),
+      LayoutBuilder(builder: (context, constraints) {
+        final priceField = TextField(
+          controller: _priceCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(labelText: 'تكلفة الشراء (\$)', prefixIcon: Icon(Icons.attach_money, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+        );
+        final qtyField = TextField(
+          controller: _qtyCtrl, keyboardType: TextInputType.number,
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(labelText: 'الكمية', isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+        );
+        if (constraints.maxWidth < 400) {
+          return Column(children: [priceField, const SizedBox(height: 8), qtyField]);
+        }
+        return Row(children: [Expanded(child: priceField), const SizedBox(width: 10), SizedBox(width: 80, child: qtyField)]);
+      }),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _costUsdCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+        style: const TextStyle(color: Colors.white),
+        decoration: const InputDecoration(
+          labelText: 'التكلفة الفعلية (\$)',
+          hintText: 'بعد الشراء الفعلي',
+          hintStyle: TextStyle(color: Colors.white24),
+          prefixIcon: Icon(Icons.receipt_long_outlined, size: 18),
+          isDense: true,
+          contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        ),
+      ),
+      const SizedBox(height: 12),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+        decoration: BoxDecoration(color: AppTheme.darkCard, borderRadius: BorderRadius.circular(10), border: Border.all(color: AppTheme.darkBorder)),
+        child: DropdownButtonHideUnderline(
+          child: DropdownButton<String?>(
+            value: _selectedSourceName,
+            isExpanded: true, dropdownColor: AppTheme.darkCard,
+            style: const TextStyle(color: Colors.white, fontSize: 14),
+            icon: const Icon(Icons.expand_more, color: Colors.white54),
+            hint: const Text('الموقع (اختياري)', style: TextStyle(color: Colors.white38)),
+            items: [
+              const DropdownMenuItem<String?>(value: null, child: Text('— بدون موقع —', style: TextStyle(color: Colors.white38))),
+              ...sources.map((s) {
+                final sName = s['name'] as String;
+                final sRate = (s['rate_per_kg'] as num).toDouble();
+                return DropdownMenuItem<String?>(
+                  value: sName,
+                  child: Text('$sName  (\$$sRate/kg)', style: const TextStyle(color: Colors.white)),
+                );
+              }),
+            ],
+            onChanged: (v) {
+              final src = sources.firstWhere(
+                (s) => s['name'] == v,
+                orElse: () => <String, dynamic>{},
+              );
+              setState(() {
+                _selectedSourceName = v;
+                _currentShippingRate = v != null ? (src['rate_per_kg'] as num?)?.toDouble() ?? 0 : 0;
+              });
+            },
+          ),
+        ),
+      ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _weightCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+        style: const TextStyle(color: Colors.white),
+        decoration: InputDecoration(
+          labelText: 'الوزن (كيلو)', prefixIcon: const Icon(Icons.scale_outlined, size: 18),
+          isDense: true, contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+          helperText: _currentShippingRate > 0
+              ? 'شحن محسوب: \$${calcShipping.toStringAsFixed(2)}  ($weight kg × \$$_currentShippingRate × $qty)'
+              : 'اختر الموقع لحساب تكلفة الشحن تلقائياً',
+          helperStyle: TextStyle(color: _currentShippingRate > 0 ? AppTheme.secondary : Colors.white38, fontSize: 11),
+        ),
+      ),
+      const SizedBox(height: 12),
+      TextField(
+        controller: _localPriceCtrl, keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        inputFormatters: [FilteringTextInputFormatter.allow(RegExp(r'[0-9.,]'))],
+        style: const TextStyle(color: Colors.white),
+        decoration: const InputDecoration(labelText: 'سعر البيع المحلي (د.ل)', prefixIcon: Icon(Icons.sell_outlined, size: 18), isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12)),
+      ),
+    ]);
   }
 }
