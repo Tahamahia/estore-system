@@ -305,7 +305,16 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
 
     return Padding(
       padding: const EdgeInsets.all(24),
-      child: SingleChildScrollView(
+      child: RefreshIndicator(
+        color: AppTheme.primary,
+        onRefresh: () async {
+          ref.read(shippingSourcesProvider.notifier).fetchSources();
+          if (isSuperAdmin) {
+            ref.read(usersProvider.notifier).fetchUsers();
+            await _loadPendingRequests();
+          }
+        },
+        child: SingleChildScrollView(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -387,6 +396,7 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
             ],
           ],
         ),
+      ),
       ),
     );
   }

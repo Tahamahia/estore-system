@@ -200,28 +200,38 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                   if (filtered.isEmpty) {
                     return const Center(child: Text('No orders found', style: TextStyle(color: Colors.white38)));
                   }
-                  return ListView.separated(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: filtered.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.darkBorder),
-                    itemBuilder: (context, index) {
-                      final order = filtered[index];
-                      final id = order['id'] as String? ?? '';
-                      return _OrderTile(
-                        order: order,
-                        bulkMode: _bulkMode,
-                        selected: _selectedIds.contains(id),
-                        onToggle: _bulkMode ? () {
-                          setState(() {
-                            if (_selectedIds.contains(id)) { _selectedIds.remove(id); }
-                            else { _selectedIds.add(id); }
-                          });
-                        } : null,
-                        onTap: !_bulkMode ? () {
-                          context.go('/orders/$id');
-                        } : null,
-                      );
-                    },
+                  return RefreshIndicator(
+                    color: AppTheme.primary,
+                    onRefresh: () => ref.read(ordersProvider.notifier).fetchOrders(
+                      status: (_activeFilter == 'all' || _activeFilter == 'settleable')
+                          ? (_activeFilter == 'settleable' ? 'delivered' : null)
+                          : _activeFilter,
+                      search: _searchText.isEmpty ? null : _searchText,
+                      unsettled: _activeFilter == 'settleable',
+                    ),
+                    child: ListView.separated(
+                      padding: const EdgeInsets.all(16),
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.darkBorder),
+                      itemBuilder: (context, index) {
+                        final order = filtered[index];
+                        final id = order['id'] as String? ?? '';
+                        return _OrderTile(
+                          order: order,
+                          bulkMode: _bulkMode,
+                          selected: _selectedIds.contains(id),
+                          onToggle: _bulkMode ? () {
+                            setState(() {
+                              if (_selectedIds.contains(id)) { _selectedIds.remove(id); }
+                              else { _selectedIds.add(id); }
+                            });
+                          } : null,
+                          onTap: !_bulkMode ? () {
+                            context.go('/orders/$id');
+                          } : null,
+                        );
+                      },
+                    ),
                   );
                 },
               ),

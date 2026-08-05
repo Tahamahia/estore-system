@@ -189,7 +189,10 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
               if (filtered.isEmpty) {
                 return const Center(child: Text('لا يوجد زبائن', style: TextStyle(color: Colors.white38)));
               }
-              return ListView.separated(
+              return RefreshIndicator(
+                color: AppTheme.primary,
+                onRefresh: () async => ref.read(customersProvider.notifier).fetchCustomers(),
+                child: ListView.separated(
                 padding: const EdgeInsets.all(16), itemCount: filtered.length,
                 separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.darkBorder),
                 itemBuilder: (context, index) {
@@ -226,6 +229,7 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
                     ]),
                   );
                 },
+              ),
               );
             },
           ),
