@@ -296,6 +296,7 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
               color: AppTheme.error,
               tooltip: 'حذف الشحنة',
             ),
+            const SizedBox(width: 4),
             // Edit tracking number button
             IconButton(
               onPressed: () => _editTracking(context),

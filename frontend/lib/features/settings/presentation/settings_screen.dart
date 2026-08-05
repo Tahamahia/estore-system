@@ -647,11 +647,13 @@ class _UserTile extends StatelessWidget {
             onPressed: onChangeRole,
             tooltip: 'تغيير الدور',
           ),
+          const SizedBox(width: 4),
           IconButton(
             icon: const Icon(Icons.password_outlined, color: Colors.white54, size: 20),
             onPressed: onResetPassword,
             tooltip: 'إعادة تعيين كلمة المرور',
           ),
+          const SizedBox(width: 4),
           IconButton(
             icon: Icon(
               isActive ? Icons.block_outlined : Icons.check_circle_outline,
@@ -705,6 +707,7 @@ class _SourceTile extends StatelessWidget {
           onPressed: onEdit,
           tooltip: 'تعديل',
         ),
+        const SizedBox(width: 4),
         IconButton(
           icon: const Icon(Icons.delete_outline, color: AppTheme.error, size: 20),
           onPressed: onDelete,
