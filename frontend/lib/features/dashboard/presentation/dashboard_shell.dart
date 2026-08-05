@@ -1,4 +1,3 @@
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,7 +7,7 @@ import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 
-// Named-record nav items — shared by sidebar rail (desktop) and drawer (mobile).
+// Named-record nav items — shared by sidebar rail (desktop).
 // Dart 3.0 records; each element has .path, .icon, .label
 const _kNavItems = [
   (path: '/',                   icon: Icons.dashboard_outlined,              label: 'الرئيسية'),
@@ -22,16 +21,14 @@ const _kNavItems = [
   (path: '/settings',           icon: Icons.settings_outlined,               label: 'الضبط'),
 ];
 
-String _drawerRoleLabel(String role) {
-  const map = {
-    'super_admin': 'مدير النظام',
-    'store_manager': 'مديرة المتجر',
-    'purchaser': 'مسؤولة الشراء',
-    'sorter': 'موظفة المخزن',
-    'driver': 'مندوب',
-  };
-  return map[role] ?? role;
-}
+// Bottom nav — 4 primary tabs + "المزيد" handled separately.
+const _kBottomNavItems = [
+  (path: '/orders',             icon: Icons.receipt_long_outlined,    label: 'الطلبيات'),
+  (path: '/warehouse',          icon: Icons.qr_code_scanner_outlined,  label: 'المخزن'),
+  (path: '/internal-shipments', icon: Icons.local_shipping_outlined,   label: 'الشحنات'),
+  (path: '/customers',          icon: Icons.people_outlined,           label: 'الزبائن'),
+];
+
 
 class DashboardShell extends ConsumerStatefulWidget {
   final Widget child;
@@ -114,6 +111,58 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     );
   }
 
+  int _bottomNavIndex(BuildContext context) {
+    final location = GoRouterState.of(context).uri.toString();
+    for (int i = 0; i < _kBottomNavItems.length; i++) {
+      if (location.startsWith(_kBottomNavItems[i].path)) return i;
+    }
+    return 4; // "المزيد" as neutral fallback for all other routes
+  }
+
+  void _showMoreSheet(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: AppTheme.darkSurface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(height: 8),
+            Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
+            const SizedBox(height: 8),
+            for (final item in [
+              (path: '/',                   icon: Icons.dashboard_outlined,              label: 'الرئيسية'),
+              (path: '/external-shipments', icon: Icons.flight_land_outlined,            label: 'الشحنات الخارجية'),
+              (path: '/in-stock',           icon: Icons.inventory_2_outlined,            label: 'البضاعة الفورية'),
+              (path: '/settlements',        icon: Icons.account_balance_wallet_outlined, label: 'التسويات'),
+              (path: '/settings',           icon: Icons.settings_outlined,               label: 'الضبط'),
+            ])
+              ListTile(
+                leading: Icon(item.icon, color: Colors.white70),
+                title: Text(item.label, style: const TextStyle(color: Colors.white70)),
+                onTap: () { Navigator.pop(sheetCtx); context.go(item.path); },
+              ),
+            const Divider(color: AppTheme.darkBorder, height: 1),
+            ListTile(
+              leading: const Icon(Icons.lock_outline_rounded, color: Colors.white70),
+              title: const Text('تغيير كلمة المرور', style: TextStyle(color: Colors.white70)),
+              onTap: () { Navigator.pop(sheetCtx); _showChangePasswordDialog(context); },
+            ),
+            ListTile(
+              leading: const Icon(Icons.logout_rounded, color: AppTheme.error),
+              title: const Text('تسجيل الخروج', style: TextStyle(color: AppTheme.error)),
+              onTap: () { Navigator.pop(sheetCtx); _handleLogout(); },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
+      ),
+    );
+  }
+
   // ── Shared user popup menu ─────────────────────────────────
   Widget _buildUserMenu(BuildContext context, String userName, String userInitial, Map<String, dynamic>? user) {
     return PopupMenuButton<String>(
@@ -177,13 +226,12 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     final selected = _selectedIndex(context);
     final mobile = isMobile(context);
     final isWide = !mobile && MediaQuery.of(context).size.width > 800;
-    final screenWidth = MediaQuery.of(context).size.width;
 
     final user = ref.watch(currentUserProvider);
     final userName = (user?['full_name'] as String?) ?? (user?['email'] as String?) ?? 'User';
     final userInitial = userName.isNotEmpty ? userName[0].toUpperCase() : 'U';
 
-    // ── Mobile layout: AppBar + Drawer ─────────────────────────
+    // ── Mobile layout: AppBar + bottom NavigationBar ────────────
     if (mobile) {
       return Scaffold(
         backgroundColor: AppTheme.darkBg,
@@ -191,12 +239,7 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
           backgroundColor: AppTheme.darkSurface,
           elevation: 0,
           toolbarHeight: 56,
-          leading: Builder(
-            builder: (ctx) => IconButton(
-              icon: const Icon(Icons.menu_rounded, color: Colors.white),
-              onPressed: () => Scaffold.of(ctx).openDrawer(),
-            ),
-          ),
+          automaticallyImplyLeading: false,
           title: Row(mainAxisSize: MainAxisSize.min, children: [
             Container(
               width: 24, height: 24,
@@ -210,9 +253,10 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
               )),
             ),
             const SizedBox(width: 8),
-            const Text('مخمل', style: TextStyle(
-              color: Colors.white, fontSize: 18, fontWeight: FontWeight.w700,
-            )),
+            Text(
+              selected < _kNavItems.length ? _kNavItems[selected].label : 'مخمل',
+              style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600),
+            ),
           ]),
           actions: [
             IconButton(
@@ -225,80 +269,27 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
             ),
           ],
         ),
-        drawer: Drawer(
-          width: math.min(280.0, screenWidth * 0.82),
+        bottomNavigationBar: NavigationBar(
           backgroundColor: AppTheme.darkSurface,
-          child: Column(children: [
-            // Drawer header
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.fromLTRB(16, 52, 16, 20),
-              decoration: const BoxDecoration(
-                color: Color(0xFF1A1A2E),
-                border: Border(bottom: BorderSide(color: AppTheme.darkBorder)),
-              ),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Container(
-                  width: 48, height: 48,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF6B1A2A),
-                    shape: BoxShape.circle,
-                    boxShadow: [BoxShadow(
-                      color: const Color(0xFF6B1A2A).withValues(alpha: 0.4),
-                      blurRadius: 12, offset: const Offset(0, 4),
-                    )],
-                  ),
-                  child: ClipOval(child: Image.asset(
-                    'assets/images/mukhmal-logo.png',
-                    fit: BoxFit.cover,
-                    errorBuilder: (_, __, ___) => const Center(
-                      child: Text('م', style: TextStyle(color: Colors.white, fontSize: 22, fontWeight: FontWeight.bold)),
-                    ),
-                  )),
-                ),
-                const SizedBox(height: 12),
-                const Text('مخمل', style: TextStyle(fontSize: 17, fontWeight: FontWeight.w700, color: Colors.white)),
-                const SizedBox(height: 4),
-                Text(userName, style: const TextStyle(color: Colors.white70, fontSize: 13)),
-                if (user?['role'] != null) ...[
-                  const SizedBox(height: 2),
-                  Text(_drawerRoleLabel(user!['role'] as String),
-                      style: const TextStyle(color: Colors.white38, fontSize: 12)),
-                ],
-              ]),
+          indicatorColor: AppTheme.primary.withValues(alpha: 0.2),
+          selectedIndex: _bottomNavIndex(context),
+          onDestinationSelected: (i) {
+            if (i < 4) {
+              context.go(_kBottomNavItems[i].path);
+            } else {
+              _showMoreSheet(context);
+            }
+          },
+          destinations: [
+            ..._kBottomNavItems.map((item) => NavigationDestination(
+              icon: Icon(item.icon),
+              label: item.label,
+            )),
+            const NavigationDestination(
+              icon: Icon(Icons.more_horiz),
+              label: 'المزيد',
             ),
-            // Nav tiles
-            Expanded(
-              child: ListView.builder(
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                itemCount: _kNavItems.length,
-                itemBuilder: (context, index) {
-                  final item = _kNavItems[index];
-                  final isSelected = index == selected;
-                  return Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 1),
-                    child: ListTile(
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-                      leading: Icon(item.icon, size: 22,
-                          color: isSelected ? AppTheme.primary : Colors.white54),
-                      title: Text(item.label, style: TextStyle(
-                        color: isSelected ? Colors.white : Colors.white70,
-                        fontWeight: isSelected ? FontWeight.w600 : FontWeight.w400,
-                        fontSize: 14,
-                      )),
-                      selected: isSelected,
-                      selectedTileColor: AppTheme.primary.withValues(alpha: 0.15),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-                      onTap: () {
-                        Navigator.of(context).pop();
-                        context.go(item.path);
-                      },
-                    ),
-                  );
-                },
-              ),
-            ),
-          ]),
+          ],
         ),
         body: widget.child,
       );
