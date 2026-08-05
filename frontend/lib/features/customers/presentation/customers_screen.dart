@@ -115,39 +115,55 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.all(24),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Row(children: [
-          const Text('الزبائن', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white)),
-          const Spacer(),
-          ElevatedButton.icon(onPressed: _showAddDialog, icon: const Icon(Icons.person_add, size: 20), label: const Text('إضافة زبون')),
-        ]),
-        const SizedBox(height: 16),
-        // Tabs: All Customers | Dispatch Status
-        Container(
-          decoration: BoxDecoration(color: AppTheme.darkSurface, borderRadius: BorderRadius.circular(12)),
-          child: TabBar(
-            controller: _tabCtrl,
-            indicator: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
-            indicatorSize: TabBarIndicatorSize.tab,
-            labelColor: AppTheme.primary,
-            unselectedLabelColor: Colors.white54,
-            dividerColor: Colors.transparent,
-            tabs: const [
-              Tab(text: '👥 كل الزبائن'),
-              Tab(text: '🚦 حالة التوصيل'),
-            ],
-          ),
-        ),
-        const SizedBox(height: 16),
-        Expanded(
-          child: TabBarView(controller: _tabCtrl, children: [
-            _buildCustomersList(),
-            _DispatchStatusTab(onWhatsApp: _openWhatsApp),
+    final mobile = isMobile(context);
+    return Stack(
+      children: [
+        Padding(
+          padding: EdgeInsets.fromLTRB(mobile ? 12 : 24, mobile ? 12 : 24, mobile ? 12 : 24, mobile ? 80 : 24),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Row(children: [
+              const Text('الزبائن', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white)),
+              const Spacer(),
+              if (!mobile)
+                ElevatedButton.icon(onPressed: _showAddDialog, icon: const Icon(Icons.person_add, size: 20), label: const Text('إضافة زبون')),
+            ]),
+            const SizedBox(height: 16),
+            Container(
+              decoration: BoxDecoration(color: AppTheme.darkSurface, borderRadius: BorderRadius.circular(12)),
+              child: TabBar(
+                controller: _tabCtrl,
+                indicator: BoxDecoration(color: AppTheme.primary.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(10)),
+                indicatorSize: TabBarIndicatorSize.tab,
+                labelColor: AppTheme.primary,
+                unselectedLabelColor: Colors.white54,
+                dividerColor: Colors.transparent,
+                tabs: const [
+                  Tab(text: '👥 كل الزبائن'),
+                  Tab(text: '🚦 حالة التوصيل'),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            Expanded(
+              child: TabBarView(controller: _tabCtrl, children: [
+                _buildCustomersList(),
+                _DispatchStatusTab(onWhatsApp: _openWhatsApp),
+              ]),
+            ),
           ]),
         ),
-      ]),
+        if (mobile)
+          Positioned(
+            bottom: 16,
+            right: 16,
+            child: FloatingActionButton(
+              onPressed: _showAddDialog,
+              backgroundColor: AppTheme.primary,
+              tooltip: 'إضافة زبون',
+              child: const Icon(Icons.person_add, color: Colors.white),
+            ),
+          ),
+      ],
     );
   }
 

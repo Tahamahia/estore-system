@@ -98,10 +98,13 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
 
   @override
   Widget build(BuildContext context) {
+    final mobile = isMobile(context);
     final ordersState = ref.watch(ordersProvider);
 
-    return Padding(
-      padding: const EdgeInsets.all(24),
+    return Stack(
+      children: [
+      Padding(
+      padding: EdgeInsets.fromLTRB(mobile ? 12 : 24, mobile ? 12 : 24, mobile ? 12 : 24, mobile ? 80 : 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -131,16 +134,18 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
               ),
             ],
-            const SizedBox(width: 12),
-            ElevatedButton.icon(
-              onPressed: _showNewOrderDialog,
-              icon: const Icon(Icons.add, size: 20),
-              label: const Text('New Order'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: AppTheme.primary,
-                padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+            if (!mobile) ...[
+              const SizedBox(width: 12),
+              ElevatedButton.icon(
+                onPressed: _showNewOrderDialog,
+                icon: const Icon(Icons.add, size: 20),
+                label: const Text('New Order'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: AppTheme.primary,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+                ),
               ),
-            ),
+            ],
           ]),
           const SizedBox(height: 20),
 
@@ -251,7 +256,20 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
           ),
         ],
       ),
-    );
+    ),
+    if (mobile)
+      Positioned(
+        bottom: 16,
+        right: 16,
+        child: FloatingActionButton(
+          onPressed: _showNewOrderDialog,
+          backgroundColor: AppTheme.primary,
+          tooltip: 'New Order',
+          child: const Icon(Icons.add, color: Colors.white),
+        ),
+      ),
+    ],
+  );
   }
 
   void _showBulkUpdateDialog() {
