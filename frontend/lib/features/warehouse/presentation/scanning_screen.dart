@@ -157,6 +157,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
         final itemMap = scanResult['item'] as Map<String, dynamic>?;
         final candidatesList = scanResult['candidates'] as List<dynamic>?;
         final orderProgress = scanResult['order_progress'] as Map<String, dynamic>?;
+        final shipmentProgress = scanResult['shipment_progress'] as Map<String, dynamic>?;
         String? custName;
         String? prodName;
         if (found && !ambiguous && !hasError && itemMap != null) {
@@ -174,6 +175,7 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
             errorMsg: hasError ? (scanResult['message'] as String?) : null,
             candidates: ambiguous && !hasError && candidatesList != null ? candidatesList.cast<Map<String, dynamic>>() : null,
             orderProgress: isSuccess ? orderProgress : null,
+            shipmentProgress: isSuccess ? shipmentProgress : null,
           );
         });
         _playAudioCue(isSuccess, bagComplete: orderProgress?['complete'] == true);
@@ -773,6 +775,7 @@ class _ScanResult {
   final String? errorMsg;
   final List<Map<String, dynamic>>? candidates;
   final Map<String, dynamic>? orderProgress;
+  final Map<String, dynamic>? shipmentProgress;
 
   _ScanResult({
     required this.barcode,
@@ -783,6 +786,7 @@ class _ScanResult {
     this.errorMsg,
     this.candidates,
     this.orderProgress,
+    this.shipmentProgress,
   });
 
   _ScanResult copyWith({
@@ -792,6 +796,7 @@ class _ScanResult {
     String? errorMsg,
     List<Map<String, dynamic>>? candidates,
     Map<String, dynamic>? orderProgress,
+    Map<String, dynamic>? shipmentProgress,
   }) {
     return _ScanResult(
       barcode: barcode,
@@ -802,6 +807,7 @@ class _ScanResult {
       errorMsg: errorMsg ?? this.errorMsg,
       candidates: candidates ?? this.candidates,
       orderProgress: orderProgress ?? this.orderProgress,
+      shipmentProgress: shipmentProgress ?? this.shipmentProgress,
     );
   }
 }
@@ -856,6 +862,13 @@ class _ScanTile extends StatelessWidget {
                 valueColor: const AlwaysStoppedAnimation<Color>(AppTheme.success),
                 minHeight: 4,
               ),
+            ),
+          ],
+          if (scan.shipmentProgress != null) ...[
+            const SizedBox(height: 4),
+            Text(
+              'الشحنة: ${scan.shipmentProgress!['arrived']}/${scan.shipmentProgress!['expected']}',
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
             ),
           ],
         ],

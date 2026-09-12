@@ -86,11 +86,34 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
   const sorted = Number((progress as any)?.sorted_items ?? 0);
   const total  = Number((progress as any)?.total_items  ?? 0);
 
+  // If the scanned item was on an external shipment, tell the UI how the
+  // parcel is reconciling: how many of the shipment's live items have
+  // physically arrived so far. Cheap — one small query per scan.
+  let shipmentProgress: { arrived: number; expected: number } | undefined;
+  if (shipmentId) {
+    const row = await c.env.DB.prepare(`
+      SELECT
+        COALESCE(SUM(CASE
+          WHEN status IN ('arrived_warehouse','sorted','ready_dispatch','dispatched','delivered')
+          THEN 1 ELSE 0 END), 0) AS arrived,
+        COALESCE(SUM(CASE
+          WHEN status NOT IN ('cancelled','refunded','in_stock','transferred_to_inventory')
+          THEN 1 ELSE 0 END), 0) AS expected
+      FROM order_items
+      WHERE external_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
+    `).bind(shipmentId, tenantId).first();
+    shipmentProgress = {
+      arrived: Number((row as any)?.arrived ?? 0),
+      expected: Number((row as any)?.expected ?? 0),
+    };
+  }
+
   return c.json({
     found: true,
     ambiguous: false,
     item: { id: item.id, product_name: item.product_name, customer_name: item.customer_name, status: 'sorted' },
     order_progress: { sorted, total, complete: total > 0 && sorted === total },
+    ...(shipmentProgress ? { shipment_progress: shipmentProgress } : {}),
   });
 });
 
