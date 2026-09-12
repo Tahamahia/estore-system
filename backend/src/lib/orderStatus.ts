@@ -68,14 +68,18 @@ export function buildRecomputeExternalShipmentStmt(
 
 /**
  * Derives an internal shipment's status from its per-order deliveries:
- *   - 'delivered' when it has at least one attached order and every attached
- *     (non-deleted) order has status = 'delivered'.
- *   - Otherwise leaves the current status alone (pending / out_for_delivery
- *     are still explicit admin transitions).
+ *   - 'delivered' when the manifest is already 'out_for_delivery' AND no
+ *     attached (non-deleted) order remains in a non-delivered state.
+ *   - Otherwise leaves the current status alone (pending is still an
+ *     explicit admin transition to 'out_for_delivery').
  *
- * Empty manifests (no attached orders) are NOT auto-completed — flipping a
- * brand-new empty manifest to 'delivered' would be a bug, not a feature.
- * Single UPDATE with two EXISTS subqueries — no loop, no per-order round-trip.
+ * Scoping completion to 'out_for_delivery' — not to "has at least one
+ * attached order" — is what handles the all-returned trip correctly: every
+ * order was detached at the door, the manifest has zero attached orders,
+ * but the trip is still over. A pending, still-empty manifest must not
+ * flip; the status guard keeps it pending.
+ *
+ * Single UPDATE with one NOT EXISTS subquery — no loop, no per-order round-trip.
  */
 export function buildRecomputeInternalShipmentStmt(
   db: D1Database,
@@ -85,19 +89,14 @@ export function buildRecomputeInternalShipmentStmt(
   return db.prepare(`
     UPDATE internal_shipments
     SET status = CASE
-          WHEN EXISTS (
-            SELECT 1 FROM orders o
-            WHERE o.internal_shipment_id = internal_shipments.id
-              AND o.tenant_id = internal_shipments.tenant_id
-              AND o.is_deleted = 0
-          )
-          AND NOT EXISTS (
-            SELECT 1 FROM orders o
-            WHERE o.internal_shipment_id = internal_shipments.id
-              AND o.tenant_id = internal_shipments.tenant_id
-              AND o.is_deleted = 0
-              AND o.status != 'delivered'
-          )
+          WHEN status = 'out_for_delivery'
+           AND NOT EXISTS (
+             SELECT 1 FROM orders o
+             WHERE o.internal_shipment_id = internal_shipments.id
+               AND o.tenant_id = internal_shipments.tenant_id
+               AND o.is_deleted = 0
+               AND o.status != 'delivered'
+           )
           THEN 'delivered'
           ELSE status
         END,
