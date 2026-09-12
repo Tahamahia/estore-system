@@ -520,6 +520,11 @@ class _VisualMatchDialogState extends ConsumerState<_VisualMatchDialog> {
   List<Map<String, dynamic>>? _items;
   bool _loading = true;
   String? _error;
+  // Default: only items on physically-received shipments — the common case
+  // is "I have this box, one label torn, which item was it?". The toggle
+  // flips to the legacy unscoped list for the rare case a label got torn
+  // on a still-in-transit item.
+  bool _showAllIncoming = false;
 
   @override
   void initState() {
@@ -528,12 +533,40 @@ class _VisualMatchDialogState extends ConsumerState<_VisualMatchDialog> {
   }
 
   Future<void> _loadItems() async {
+    setState(() { _loading = true; _error = null; });
     try {
-      final items = await ref.read(ordersProvider.notifier).fetchUnsortedItems();
+      final items = await ref.read(ordersProvider.notifier).fetchUnsortedItems(
+        scope: _showAllIncoming ? null : 'received',
+      );
       if (mounted) setState(() { _items = items; _loading = false; });
     } catch (e) {
       if (mounted) setState(() { _error = e.toString(); _loading = false; });
     }
+  }
+
+  /// Group items by shipment_id when in received mode; a single unlabeled
+  /// bucket in the unscoped mode (items don't carry shipment info).
+  /// Preserves the server-side ordering within each bucket.
+  List<_ShipmentBucket> _bucketize(List<Map<String, dynamic>> items) {
+    if (_showAllIncoming) {
+      return [_ShipmentBucket(items: items)];
+    }
+    final buckets = <String, _ShipmentBucket>{};
+    final order = <String>[];
+    for (final it in items) {
+      final sid = (it['shipment_id'] as String?) ?? '__none__';
+      if (!buckets.containsKey(sid)) {
+        buckets[sid] = _ShipmentBucket(
+          shipmentId: sid == '__none__' ? null : sid,
+          trackingNumber: it['shipment_tracking_number'] as String?,
+          receivedAt: it['shipment_received_at'] as String?,
+          items: [],
+        );
+        order.add(sid);
+      }
+      buckets[sid]!.items.add(it);
+    }
+    return order.map((k) => buckets[k]!).toList();
   }
 
   @override
@@ -550,35 +583,100 @@ class _VisualMatchDialogState extends ConsumerState<_VisualMatchDialog> {
             Row(children: [
               const Icon(Icons.visibility_rounded, color: AppTheme.accent),
               const SizedBox(width: 10),
-              const Text('مطابقة بصرية — اضغط على المنتج الذي تراه', style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
-              const Spacer(),
+              const Expanded(child: Text('مطابقة بصرية — اضغط على المنتج الذي تراه',
+                  style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600))),
               IconButton(icon: const Icon(Icons.close, color: Colors.white38), onPressed: () => Navigator.pop(context)),
             ]),
             const SizedBox(height: 4),
-            const Text('يعرض المنتجات المشتراة والمشحونة المتوقع وصولها', style: TextStyle(color: Colors.white38, fontSize: 12)),
-            const SizedBox(height: 16),
+            Text(
+              _showAllIncoming
+                ? 'يعرض كل القطع القادمة (مشتراة/مشحونة/وصلت المستودع)'
+                : 'يعرض قطع الشحنات المستلَمة فعلياً وغير الممسوحة بعد',
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Row(mainAxisSize: MainAxisSize.min, children: [
+                Switch(
+                  value: _showAllIncoming,
+                  onChanged: (v) {
+                    setState(() => _showAllIncoming = v);
+                    _loadItems();
+                  },
+                  activeThumbColor: AppTheme.accent,
+                ),
+                const SizedBox(width: 4),
+                const Text('عرض كل القطع القادمة',
+                    style: TextStyle(color: Colors.white70, fontSize: 12)),
+              ]),
+            ),
+            const SizedBox(height: 8),
             Expanded(
               child: _loading
                 ? const Center(child: CircularProgressIndicator())
                 : _error != null
                   ? Center(child: Text(_error!, style: const TextStyle(color: AppTheme.error)))
                   : (_items == null || _items!.isEmpty)
-                    ? const Center(child: Text('لا توجد منتجات غير مفروزة', style: TextStyle(color: Colors.white38)))
-                    : GridView.builder(
-                        gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(crossAxisCount: 3, childAspectRatio: 0.75, crossAxisSpacing: 10, mainAxisSpacing: 10),
-                        itemCount: _items!.length,
-                        itemBuilder: (ctx, i) {
-                          final item = _items![i];
-                          return _VisualMatchCard(
-                            item: item,
-                            onTap: () => _confirmMatch(item),
-                          );
-                        },
-                      ),
+                    ? Center(child: Text(
+                        _showAllIncoming
+                          ? 'لا توجد منتجات غير مفروزة'
+                          : 'لا توجد شحنات مستلَمة بانتظار الفرز',
+                        style: const TextStyle(color: Colors.white38),
+                        textAlign: TextAlign.center,
+                      ))
+                    : _buildBucketedGrid(),
             ),
           ]),
         ),
       ),
+    );
+  }
+
+  Widget _buildBucketedGrid() {
+    final buckets = _bucketize(_items!);
+    return ListView.builder(
+      itemCount: buckets.length,
+      itemBuilder: (_, i) {
+        final b = buckets[i];
+        return Padding(
+          padding: EdgeInsets.only(top: i == 0 ? 0 : 12),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            // Shipment header — only in received (bucketed) mode
+            if (b.trackingNumber != null || b.receivedAt != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Row(children: [
+                  const Icon(Icons.flight_land_rounded, color: AppTheme.secondary, size: 16),
+                  const SizedBox(width: 8),
+                  Flexible(child: Text(
+                    b.trackingNumber ?? 'شحنة',
+                    style: const TextStyle(color: Colors.white, fontFamily: 'monospace',
+                        fontSize: 13, fontWeight: FontWeight.w700),
+                    overflow: TextOverflow.ellipsis,
+                  )),
+                  if (b.receivedAt != null) ...[
+                    const SizedBox(width: 10),
+                    Text('استُلمت في ${b.receivedAt!.length >= 10 ? b.receivedAt!.substring(0, 10) : b.receivedAt}',
+                        style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                  ],
+                ]),
+              ),
+            GridView.builder(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                crossAxisCount: 3, childAspectRatio: 0.75, crossAxisSpacing: 10, mainAxisSpacing: 10,
+              ),
+              itemCount: b.items.length,
+              itemBuilder: (_, j) {
+                final item = b.items[j];
+                return _VisualMatchCard(item: item, onTap: () => _confirmMatch(item));
+              },
+            ),
+          ]),
+        );
+      },
     );
   }
 
@@ -911,4 +1009,20 @@ class _ScanTile extends StatelessWidget {
       ]),
     );
   }
+}
+
+/// One-shipment bucket for the Visual Match grid. Populated by
+/// _VisualMatchDialogState._bucketize when scope=received; a single
+/// header-less bucket in unscoped mode.
+class _ShipmentBucket {
+  final String? shipmentId;
+  final String? trackingNumber;
+  final String? receivedAt;
+  final List<Map<String, dynamic>> items;
+  _ShipmentBucket({
+    this.shipmentId,
+    this.trackingNumber,
+    this.receivedAt,
+    required this.items,
+  });
 }

@@ -646,10 +646,42 @@ orderRoutes.patch('/items/dispatch', requireRole('super_admin', 'store_manager',
 /**
  * GET /orders/items/unsorted — Items expected but not yet sorted
  * Used by the Visual Match feature when physical barcodes are torn/missing.
- * Returns items with thumbnails for manual identification.
+ *
+ * ?scope=received (recommended default in the UI): only items whose
+ *   external_shipment has received_at set AND manual_status =
+ *   'arrived_at_warehouse' — physically here, not yet scanned. Also
+ *   includes the shipment's tracking_number and received_at so the UI
+ *   can group the grid by shipment.
+ * ?scope omitted / any other value: legacy behaviour — every non-sorted
+ *   item in ('purchased','shipped','arrived_warehouse'). Kept for the
+ *   rare case a label is torn on something not yet received.
  */
 orderRoutes.get('/items/unsorted', async (c) => {
   const tenantId = c.get('tenant_id') as string;
+  const scope = c.req.query('scope');
+
+  if (scope === 'received') {
+    const items = await c.env.DB.prepare(
+      `SELECT oi.id, oi.product_name, oi.product_image_url,
+              oi.color, oi.size, oi.sku, oi.status, oi.order_id,
+              c.full_name AS customer_name, c.id AS customer_id,
+              es.id AS shipment_id,
+              es.tracking_number AS shipment_tracking_number,
+              es.received_at    AS shipment_received_at
+       FROM order_items oi
+       JOIN external_shipments es
+         ON es.id = oi.external_shipment_id
+        AND es.tenant_id = oi.tenant_id
+       JOIN orders o ON oi.order_id = o.id
+       LEFT JOIN customers c ON o.customer_id = c.id
+       WHERE oi.tenant_id = ? AND oi.is_deleted = 0
+         AND oi.status = 'arrived_warehouse'
+         AND es.received_at IS NOT NULL
+         AND es.manual_status = 'arrived_at_warehouse'
+       ORDER BY es.received_at DESC, c.full_name ASC, oi.product_name ASC`
+    ).bind(tenantId).all();
+    return c.json({ data: items.results, total: items.results?.length || 0, scope: 'received' });
+  }
 
   const items = await c.env.DB.prepare(
     `SELECT oi.id, oi.product_name, oi.product_image_url,
@@ -663,7 +695,7 @@ orderRoutes.get('/items/unsorted', async (c) => {
      ORDER BY c.full_name ASC, oi.product_name ASC`
   ).bind(tenantId).all();
 
-  return c.json({ data: items.results, total: items.results?.length || 0 });
+  return c.json({ data: items.results, total: items.results?.length || 0, scope: 'all' });
 });
 
 /**

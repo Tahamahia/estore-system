@@ -113,9 +113,16 @@ class OrdersNotifier extends StateNotifier<AsyncValue<List<Map<String, dynamic>>
     return response.data as Map<String, dynamic>;
   }
 
-  /// Fetch unsorted items for Visual Match feature
-  Future<List<Map<String, dynamic>>> fetchUnsortedItems() async {
-    final response = await _dio.get('/orders/items/unsorted');
+  /// Fetch unsorted items for Visual Match feature.
+  /// When [scope] is 'received' the backend restricts the list to items on
+  /// external shipments that were physically received (received_at set,
+  /// shipment status = arrived_at_warehouse). Omit for the legacy
+  /// unscoped list.
+  Future<List<Map<String, dynamic>>> fetchUnsortedItems({String? scope}) async {
+    final response = await _dio.get(
+      '/orders/items/unsorted',
+      queryParameters: scope != null ? {'scope': scope} : null,
+    );
     final data = response.data as Map<String, dynamic>;
     return List<Map<String, dynamic>>.from(data['data'] ?? []);
   }
