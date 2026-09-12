@@ -150,7 +150,18 @@ settlementRoutes.get('/', async (c) => {
        COALESCE(SUM(COALESCE(ois.item_lyd, o.total_sale_price_lyd, 0)), 0) AS total_lyd_collected,
        COALESCE(SUM(COALESCE(ois.item_usd, o.total_cost_usd, 0)), 0) AS total_usd_cost,
        COUNT(DISTINCT o.id) AS order_count,
-       COALESCE(SUM(ois.live_item_count), 0) AS item_count
+       COALESCE(SUM(ois.live_item_count), 0) AS item_count,
+       COALESCE(SUM(
+         CASE
+           WHEN COALESCE(ois.item_lyd, o.total_sale_price_lyd, 0)
+                - COALESCE(o.deposit_amount, 0)
+                - COALESCE(o.cash_collected, 0) > 0
+           THEN COALESCE(ois.item_lyd, o.total_sale_price_lyd, 0)
+                - COALESCE(o.deposit_amount, 0)
+                - COALESCE(o.cash_collected, 0)
+           ELSE 0
+         END
+       ), 0) AS cash_shortfall
      FROM orders o
      LEFT JOIN order_item_sums ois ON ois.order_id = o.id
      WHERE o.tenant_id = ? AND o.settlement_id IS NOT NULL
@@ -210,6 +221,7 @@ settlementRoutes.get('/:id', async (c) => {
 
   const orders = await c.env.DB.prepare(`
     SELECT o.id, o.status, o.created_at,
+           o.deposit_amount, o.cash_collected,
            c.full_name AS customer_name, c.phone AS customer_phone,
            COUNT(oi.id) AS item_count,
            CASE WHEN COALESCE(SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)), 0) > 0
@@ -217,12 +229,20 @@ settlementRoutes.get('/:id', async (c) => {
                 ELSE COALESCE(o.total_sale_price_lyd, 0) END AS total_lyd
     FROM orders o
     LEFT JOIN customers c ON o.customer_id = c.id
-    LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.is_deleted = 0
+    LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.is_deleted = 0 AND oi.status != 'cancelled'
     WHERE o.settlement_id = ? AND o.tenant_id = ? AND o.is_deleted = 0
     GROUP BY o.id ORDER BY o.created_at ASC
   `).bind(id, tenantId).all();
 
-  return c.json({ ...settlement, orders: orders.results });
+  const cashShortfall = (orders.results as Record<string, unknown>[]).reduce((sum, o) => {
+    const sale = Number(o.total_lyd ?? 0);
+    const deposit = Number(o.deposit_amount ?? 0);
+    const collected = Number(o.cash_collected ?? 0);
+    const diff = sale - deposit - collected;
+    return sum + (diff > 0 ? diff : 0);
+  }, 0);
+
+  return c.json({ ...settlement, cash_shortfall: cashShortfall, orders: orders.results });
 });
 
 // PATCH /settlements/:id — edit name and exchange_rate only

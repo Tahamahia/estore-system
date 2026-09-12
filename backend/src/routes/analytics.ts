@@ -24,6 +24,7 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
     revenueThisWeekResult,
     revenueLastWeekResult,
     pendingPurchaseCountResult,
+    cashWithDriversResult,
   ] = await Promise.all([
     // Total orders
     c.env.DB.prepare(
@@ -108,6 +109,16 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
       `SELECT COUNT(*) as total FROM order_items
        WHERE tenant_id = ? AND is_deleted = 0 AND status = 'pending'`
     ).bind(tenantId).first(),
+
+    // Cash sitting with drivers — sum of cash_collected on orders whose
+    // manifest has not yet recorded a handover.
+    c.env.DB.prepare(
+      `SELECT COALESCE(SUM(o.cash_collected), 0) as total
+       FROM orders o
+       JOIN internal_shipments ins ON ins.id = o.internal_shipment_id
+       WHERE o.tenant_id = ? AND o.is_deleted = 0
+         AND ins.cash_handed_over IS NULL`
+    ).bind(tenantId).first(),
   ]);
 
   // Build status_counts dynamically — no hardcoded stale keys
@@ -126,6 +137,7 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
       unsorted: (unsortedCountResult as any)?.total || 0,
       ready_dispatch: (readyDispatchCountResult as any)?.total || 0,
       pending_purchase: (pendingPurchaseCountResult as any)?.total || 0,
+      cash_with_drivers: (cashWithDriversResult as any)?.total || 0,
     },
     orders_this_week: (ordersThisWeekResult as any)?.total || 0,
     orders_last_week: (ordersLastWeekResult as any)?.total || 0,

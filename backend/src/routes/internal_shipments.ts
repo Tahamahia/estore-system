@@ -14,7 +14,8 @@ internalShipmentRoutes.get('/', async (c) => {
 
   const results = await c.env.DB.prepare(`
     SELECT ins.*,
-           COUNT(o.id) AS order_count
+           COUNT(o.id) AS order_count,
+           COALESCE(SUM(o.cash_collected), 0) AS cash_expected
     FROM internal_shipments ins
     LEFT JOIN orders o
            ON o.internal_shipment_id = ins.id AND o.is_deleted = 0
@@ -62,9 +63,9 @@ internalShipmentRoutes.post('/', requireRole('super_admin', 'store_manager'), as
 
   const stmts = [
     c.env.DB.prepare(`
-      INSERT INTO internal_shipments (id, tenant_id, delivery_company, notes)
-      VALUES (?, ?, ?, ?)
-    `).bind(body.id, tenantId, body.delivery_company || null, body.notes || null),
+      INSERT INTO internal_shipments (id, tenant_id, delivery_company, driver_name, notes)
+      VALUES (?, ?, ?, ?, ?)
+    `).bind(body.id, tenantId, body.delivery_company || null, body.driver_name?.trim() || null, body.notes || null),
   ];
 
   const orderIds: string[] = body.order_ids ?? [];
@@ -93,19 +94,30 @@ internalShipmentRoutes.get('/:id', async (c) => {
 
   const orders = await c.env.DB.prepare(`
     SELECT o.id, o.status, o.created_at,
+           o.total_sale_price_lyd,
+           o.deposit_amount,
+           o.deposit_note,
+           o.cash_collected,
+           o.cash_collected_at,
            c.full_name  AS customer_name,
            c.phone      AS customer_phone,
            c.city       AS customer_city,
            c.area       AS customer_area,
-           COUNT(oi.id) AS item_count
+           COUNT(oi.id) AS item_count,
+           COALESCE(SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)), 0) AS items_sale_total_lyd
     FROM orders o
     LEFT JOIN customers c  ON o.customer_id = c.id
-    LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.is_deleted = 0
+    LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.is_deleted = 0 AND oi.status != 'cancelled'
     WHERE o.internal_shipment_id = ? AND o.tenant_id = ? AND o.is_deleted = 0
     GROUP BY o.id
   `).bind(id, tenantId).all();
 
-  return c.json({ ...shipment, orders: orders.results });
+  const cashExpected = (orders.results as Record<string, unknown>[]).reduce(
+    (sum, o) => sum + Number(o.cash_collected ?? 0),
+    0
+  );
+
+  return c.json({ ...shipment, cash_expected: cashExpected, orders: orders.results });
 });
 
 // PATCH /internal-shipments/:id — update status with item-level cascade
@@ -127,6 +139,7 @@ internalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager')
   const values: unknown[] = [];
   if (body.status           !== undefined) { setClauses.push('status = ?');           values.push(body.status); }
   if (body.delivery_company !== undefined) { setClauses.push('delivery_company = ?'); values.push(body.delivery_company); }
+  if (body.driver_name      !== undefined) { setClauses.push('driver_name = ?');      values.push(body.driver_name?.trim() || null); }
   if (body.notes            !== undefined) { setClauses.push('notes = ?');            values.push(body.notes); }
 
   const updateShipmentStmt = c.env.DB.prepare(
@@ -144,7 +157,7 @@ internalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager')
     const orderIds = affected.results.map((r) => (r as Record<string, unknown>).id as string);
 
     const recomputeStmts = orderIds.map((oid) => buildRecomputeOrderStatusStmt(c.env.DB, oid, tenantId));
-    await c.env.DB.batch([
+    const batchStmts: D1PreparedStatement[] = [
       updateShipmentStmt,
       c.env.DB.prepare(`
         UPDATE order_items
@@ -156,13 +169,125 @@ internalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager')
           AND status NOT IN ('cancelled','refunded','transferred_to_inventory','in_stock')
       `).bind(itemStatus, id, tenantId, tenantId),
       ...recomputeStmts,
-    ]);
+    ];
+
+    // On delivery, seed cash_collected = sale_total − deposit_amount for each
+    // order on this manifest that hasn't already had cash recorded.
+    // Single UPDATE with a correlated subquery — no per-order loop.
+    if (body.status === 'delivered') {
+      batchStmts.push(
+        c.env.DB.prepare(`
+          UPDATE orders
+          SET cash_collected = MAX(
+                COALESCE(orders.total_sale_price_lyd,
+                         (SELECT COALESCE(SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)), 0)
+                            FROM order_items oi
+                            WHERE oi.order_id = orders.id
+                              AND oi.tenant_id = orders.tenant_id
+                              AND oi.is_deleted = 0
+                              AND oi.status != 'cancelled'),
+                         0)
+                - COALESCE(orders.deposit_amount, 0),
+                0
+              ),
+              cash_collected_at = datetime('now'),
+              updated_at = datetime('now')
+          WHERE internal_shipment_id = ?
+            AND tenant_id = ?
+            AND cash_collected = 0
+            AND is_deleted = 0
+        `).bind(id, tenantId)
+      );
+    }
+
+    await c.env.DB.batch(batchStmts);
   } else {
     await updateShipmentStmt.run();
   }
 
   return c.json({ message: 'Updated', id });
 });
+
+// PATCH /internal-shipments/:id/orders/:orderId/cash
+// Correct the cash_collected for a single order on this manifest.
+// Used when the driver returned a partial payment or a door discount was given.
+internalShipmentRoutes.patch(
+  '/:id/orders/:orderId/cash',
+  requireRole('super_admin', 'store_manager'),
+  async (c) => {
+    const tenantId = c.get('tenant_id') as string;
+    const shipmentId = c.req.param('id');
+    const orderId = c.req.param('orderId');
+    const body = await c.req.json<{ cash_collected: number }>();
+
+    if (body.cash_collected === undefined || body.cash_collected === null || isNaN(Number(body.cash_collected))) {
+      return c.json({ error: 'Bad Request', message: 'cash_collected is required (number)' }, 400);
+    }
+    if (Number(body.cash_collected) < 0) {
+      return c.json({ error: 'Bad Request', message: 'cash_collected لا يمكن أن يكون سالباً' }, 400);
+    }
+
+    const order = await c.env.DB.prepare(
+      `SELECT id FROM orders
+       WHERE id = ? AND tenant_id = ? AND internal_shipment_id = ? AND is_deleted = 0`
+    ).bind(orderId, tenantId, shipmentId).first();
+    if (!order) return c.json({ error: 'Not Found', message: 'Order not on this manifest' }, 404);
+
+    await c.env.DB.prepare(
+      `UPDATE orders
+       SET cash_collected = ?, cash_collected_at = datetime('now'), updated_at = datetime('now')
+       WHERE id = ? AND tenant_id = ?`
+    ).bind(Number(body.cash_collected), orderId, tenantId).run();
+
+    return c.json({ message: 'Updated', id: orderId, cash_collected: Number(body.cash_collected) });
+  }
+);
+
+// PATCH /internal-shipments/:id/handover — driver hands cash back to the store
+// Returns the expected total (sum of cash_collected on the manifest) so the UI
+// can show a shortfall/surplus vs. what was handed over.
+internalShipmentRoutes.patch(
+  '/:id/handover',
+  requireRole('super_admin', 'store_manager'),
+  async (c) => {
+    const tenantId = c.get('tenant_id') as string;
+    const id = c.req.param('id');
+    const body = await c.req.json<{ cash_handed_over: number }>();
+
+    if (body.cash_handed_over === undefined || body.cash_handed_over === null || isNaN(Number(body.cash_handed_over))) {
+      return c.json({ error: 'Bad Request', message: 'cash_handed_over is required (number)' }, 400);
+    }
+    if (Number(body.cash_handed_over) < 0) {
+      return c.json({ error: 'Bad Request', message: 'cash_handed_over لا يمكن أن يكون سالباً' }, 400);
+    }
+
+    const shipment = await c.env.DB.prepare(
+      `SELECT id FROM internal_shipments WHERE id = ? AND tenant_id = ?`
+    ).bind(id, tenantId).first();
+    if (!shipment) return c.json({ error: 'Not Found' }, 404);
+
+    const expectedRow = await c.env.DB.prepare(
+      `SELECT COALESCE(SUM(cash_collected), 0) AS cash_expected
+       FROM orders
+       WHERE internal_shipment_id = ? AND tenant_id = ? AND is_deleted = 0`
+    ).bind(id, tenantId).first();
+    const cashExpected = Number((expectedRow as Record<string, unknown>)?.cash_expected ?? 0);
+
+    await c.env.DB.prepare(
+      `UPDATE internal_shipments
+       SET cash_handed_over = ?, cash_handed_over_at = datetime('now'), updated_at = datetime('now')
+       WHERE id = ? AND tenant_id = ?`
+    ).bind(Number(body.cash_handed_over), id, tenantId).run();
+
+    return c.json({
+      message: 'Handover recorded',
+      id,
+      cash_handed_over: Number(body.cash_handed_over),
+      cash_expected: cashExpected,
+      difference: Number(body.cash_handed_over) - cashExpected,
+    });
+  }
+);
 
 // POST /internal-shipments/:id/attach — add more orders to an existing manifest
 internalShipmentRoutes.post('/:id/attach', requireRole('super_admin', 'store_manager'), async (c) => {

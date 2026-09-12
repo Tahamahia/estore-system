@@ -133,6 +133,8 @@ orderRoutes.post('/', async (c) => {
     order_type = 'individual_items',
     total_sale_price_lyd,
     total_cost_usd,
+    deposit_amount,
+    deposit_note,
     items = [],
   } = body;
 
@@ -148,6 +150,18 @@ orderRoutes.post('/', async (c) => {
     return c.json({ error: 'Bad Request', message: 'items are required for individual_items orders' }, 400);
   }
 
+  if (deposit_amount !== undefined && deposit_amount !== null && Number(deposit_amount) < 0) {
+    return c.json({ error: 'Bad Request', message: 'العربون لا يمكن أن يكون سالباً' }, 400);
+  }
+  if (
+    order_type === 'full_cart' &&
+    total_sale_price_lyd !== undefined && total_sale_price_lyd !== null &&
+    deposit_amount !== undefined && deposit_amount !== null &&
+    Number(deposit_amount) > Number(total_sale_price_lyd)
+  ) {
+    return c.json({ error: 'Bad Request', message: 'العربون لا يمكن أن يتجاوز سعر البيع الإجمالي' }, 400);
+  }
+
   // Start a batch transaction
   const stmts: D1PreparedStatement[] = [];
 
@@ -156,13 +170,15 @@ orderRoutes.post('/', async (c) => {
     c.env.DB.prepare(
       `INSERT INTO orders (id, tenant_id, customer_id, platform, platform_order_id,
        pegged_exchange_rate, currency, cart_link, order_type, total_sale_price_lyd, total_cost_usd,
+       deposit_amount, deposit_note,
        status, notes, created_by, created_at, updated_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, datetime('now'), datetime('now'), 1)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, datetime('now'), datetime('now'), 1)`
     ).bind(
       id, tenantId, customer_id, platform || null, platform_order_id || null,
       pegged_exchange_rate || null, currency || 'USD',
       cart_link.trim(), order_type,
       total_sale_price_lyd ?? null, total_cost_usd ?? null,
+      deposit_amount ?? 0, deposit_note?.trim() || null,
       notes || null, userId
     )
   );
@@ -837,10 +853,14 @@ orderRoutes.patch('/:id', async (c) => {
     return c.json({ error: 'Bad Request', message: 'version field required for OCC' }, 400);
   }
 
+  if (updates.deposit_amount !== undefined && updates.deposit_amount !== null && Number(updates.deposit_amount) < 0) {
+    return c.json({ error: 'Bad Request', message: 'العربون لا يمكن أن يكون سالباً' }, 400);
+  }
+
   // Build dynamic SET clause
   const setClauses: string[] = [];
   const values: any[] = [];
-  const allowedFields = ['notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign', 'shipping_rate_per_kg', 'cart_link', 'order_type', 'total_sale_price_lyd', 'total_cost_usd'];
+  const allowedFields = ['notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign', 'shipping_rate_per_kg', 'cart_link', 'order_type', 'total_sale_price_lyd', 'total_cost_usd', 'deposit_amount', 'deposit_note'];
 
   for (const field of allowedFields) {
     if (updates[field] !== undefined) {
