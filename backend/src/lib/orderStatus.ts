@@ -65,3 +65,43 @@ export function buildRecomputeExternalShipmentStmt(
     WHERE id = ? AND tenant_id = ?
   `).bind(shipmentId, tenantId);
 }
+
+/**
+ * Derives an internal shipment's status from its per-order deliveries:
+ *   - 'delivered' when it has at least one attached order and every attached
+ *     (non-deleted) order has status = 'delivered'.
+ *   - Otherwise leaves the current status alone (pending / out_for_delivery
+ *     are still explicit admin transitions).
+ *
+ * Empty manifests (no attached orders) are NOT auto-completed — flipping a
+ * brand-new empty manifest to 'delivered' would be a bug, not a feature.
+ * Single UPDATE with two EXISTS subqueries — no loop, no per-order round-trip.
+ */
+export function buildRecomputeInternalShipmentStmt(
+  db: D1Database,
+  shipmentId: string,
+  tenantId: string,
+): D1PreparedStatement {
+  return db.prepare(`
+    UPDATE internal_shipments
+    SET status = CASE
+          WHEN EXISTS (
+            SELECT 1 FROM orders o
+            WHERE o.internal_shipment_id = internal_shipments.id
+              AND o.tenant_id = internal_shipments.tenant_id
+              AND o.is_deleted = 0
+          )
+          AND NOT EXISTS (
+            SELECT 1 FROM orders o
+            WHERE o.internal_shipment_id = internal_shipments.id
+              AND o.tenant_id = internal_shipments.tenant_id
+              AND o.is_deleted = 0
+              AND o.status != 'delivered'
+          )
+          THEN 'delivered'
+          ELSE status
+        END,
+        updated_at = datetime('now')
+    WHERE id = ? AND tenant_id = ?
+  `).bind(shipmentId, tenantId);
+}
