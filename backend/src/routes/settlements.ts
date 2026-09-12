@@ -147,16 +147,16 @@ settlementRoutes.get('/', async (c) => {
      )
      SELECT
        o.settlement_id,
-       COALESCE(SUM(COALESCE(ois.item_lyd, o.total_sale_price_lyd, 0)), 0) AS total_lyd_collected,
-       COALESCE(SUM(COALESCE(ois.item_usd, o.total_cost_usd, 0)), 0) AS total_usd_cost,
+       COALESCE(SUM(COALESCE(o.total_sale_price_lyd, ois.item_lyd, 0)), 0) AS total_lyd_collected,
+       COALESCE(SUM(COALESCE(o.total_cost_usd, ois.item_usd, 0)), 0) AS total_usd_cost,
        COUNT(DISTINCT o.id) AS order_count,
        COALESCE(SUM(ois.live_item_count), 0) AS item_count,
        COALESCE(SUM(
          CASE
-           WHEN COALESCE(ois.item_lyd, o.total_sale_price_lyd, 0)
+           WHEN COALESCE(o.total_sale_price_lyd, ois.item_lyd, 0)
                 - COALESCE(o.deposit_amount, 0)
                 - COALESCE(o.cash_collected, 0) > 0
-           THEN COALESCE(ois.item_lyd, o.total_sale_price_lyd, 0)
+           THEN COALESCE(o.total_sale_price_lyd, ois.item_lyd, 0)
                 - COALESCE(o.deposit_amount, 0)
                 - COALESCE(o.cash_collected, 0)
            ELSE 0
@@ -224,9 +224,11 @@ settlementRoutes.get('/:id', async (c) => {
            o.deposit_amount, o.cash_collected,
            c.full_name AS customer_name, c.phone AS customer_phone,
            COUNT(oi.id) AS item_count,
-           CASE WHEN COALESCE(SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)), 0) > 0
-                THEN COALESCE(SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)), 0)
-                ELSE COALESCE(o.total_sale_price_lyd, 0) END AS total_lyd
+           COALESCE(
+             o.total_sale_price_lyd,
+             SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)),
+             0
+           ) AS total_lyd
     FROM orders o
     LEFT JOIN customers c ON o.customer_id = c.id
     LEFT JOIN order_items oi ON oi.order_id = o.id AND oi.is_deleted = 0 AND oi.status != 'cancelled'
