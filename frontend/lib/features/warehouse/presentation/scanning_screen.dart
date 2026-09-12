@@ -612,7 +612,7 @@ class _VisualMatchCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final imgUrl = (item['product_image_url'] ?? item['product_thumb_url'] ?? '').toString();
+    final imgUrl = (item['product_image_url'] ?? '').toString();
     return InkWell(
       onTap: onTap, borderRadius: BorderRadius.circular(12),
       child: Container(

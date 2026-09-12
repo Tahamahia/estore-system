@@ -125,8 +125,6 @@ orderRoutes.post('/', async (c) => {
     customer_id,
     platform,
     platform_order_id,
-    pegged_exchange_rate,
-    currency,
     notes,
     // New ERP fields
     cart_link,
@@ -169,13 +167,12 @@ orderRoutes.post('/', async (c) => {
   stmts.push(
     c.env.DB.prepare(
       `INSERT INTO orders (id, tenant_id, customer_id, platform, platform_order_id,
-       pegged_exchange_rate, currency, cart_link, order_type, total_sale_price_lyd, total_cost_usd,
+       cart_link, order_type, total_sale_price_lyd, total_cost_usd,
        deposit_amount, deposit_note,
        status, notes, created_by, created_at, updated_at, version)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, datetime('now'), datetime('now'), 1)`
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, datetime('now'), datetime('now'), 1)`
     ).bind(
       id, tenantId, customer_id, platform || null, platform_order_id || null,
-      pegged_exchange_rate || null, currency || 'USD',
       cart_link.trim(), order_type,
       total_sale_price_lyd ?? null, total_cost_usd ?? null,
       deposit_amount ?? 0, deposit_note?.trim() || null,
@@ -191,7 +188,7 @@ orderRoutes.post('/', async (c) => {
     if (item.quantity !== undefined && item.quantity <= 0) {
       return c.json({ error: 'Bad Request', message: `الكمية يجب أن تكون أكبر من صفر (${item.product_name})` }, 400);
     }
-    const numericFields = ['unit_price_foreign', 'unit_price_local', 'cost_usd', 'sale_price_lyd', 'weight', 'shipping_rate_per_kg'];
+    const numericFields = ['unit_price_foreign', 'unit_price_local', 'cost_usd', 'weight', 'shipping_rate_per_kg'];
     for (const field of numericFields) {
       if (item[field] !== undefined && item[field] !== null && Number(item[field]) < 0) {
         return c.json({ error: 'Bad Request', message: `القيمة "${field}" لا يمكن أن تكون سالبة (${item.product_name})` }, 400);
@@ -201,23 +198,21 @@ orderRoutes.post('/', async (c) => {
       c.env.DB.prepare(
         `INSERT INTO order_items (id, tenant_id, order_id, product_name, product_url,
          product_image_url, quantity, unit_price_foreign, unit_price_local,
-         color, size, sku, category, attributes, sale_price_lyd, cost_usd,
-         item_category, notes, status, created_at, updated_at, version)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
+         color, size, sku, category, attributes, cost_usd,
+         notes, status, created_at, updated_at, version)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
       ).bind(
         item.id, tenantId, id,
-        item.product_name || item.name,
+        item.product_name,
         item.product_url || null,
         item.product_image_url || null,
         item.quantity || 1,
         item.unit_price_foreign || 0,
-        item.unit_price_local || item.sale_price_lyd || 0,
+        item.unit_price_local || 0,
         item.color || null, item.size || null, item.sku || null,
         item.category || null,
         item.attributes ? (typeof item.attributes === 'string' ? item.attributes : JSON.stringify(item.attributes)) : null,
-        item.sale_price_lyd ?? null,
         item.cost_usd ?? null,
-        item.category || item.item_category || null,
         item.notes || null
       )
     );
@@ -657,7 +652,7 @@ orderRoutes.get('/items/unsorted', async (c) => {
   const tenantId = c.get('tenant_id') as string;
 
   const items = await c.env.DB.prepare(
-    `SELECT oi.id, oi.product_name, oi.product_image_url, oi.product_thumb_url,
+    `SELECT oi.id, oi.product_name, oi.product_image_url,
             oi.color, oi.size, oi.sku, oi.status, oi.order_id,
             c.full_name as customer_name, c.id as customer_id
      FROM order_items oi
@@ -758,7 +753,7 @@ orderRoutes.post('/:id/items', async (c) => {
   const orderId = c.req.param('id');
   const body = await c.req.json();
 
-  const { id, product_name, product_url, product_image_url, quantity, unit_price_foreign, unit_price_local, shipping_cost_foreign, color, size, sku, notes, item_category, weight, brand, source_name, shipping_rate_per_kg } = body;
+  const { id, product_name, product_url, product_image_url, quantity, unit_price_foreign, unit_price_local, color, size, sku, notes, category, weight, brand, source_name, shipping_rate_per_kg } = body;
 
   if (!id || !product_name) {
     return c.json({ error: 'Bad Request', message: 'id and product_name are required' }, 400);
@@ -775,7 +770,7 @@ orderRoutes.post('/:id/items', async (c) => {
   if (quantity !== undefined && quantity <= 0) {
     return c.json({ error: 'Bad Request', message: 'الكمية يجب أن تكون أكبر من صفر' }, 400);
   }
-  const numericItemFields = ['unit_price_foreign', 'unit_price_local', 'cost_usd', 'sale_price_lyd', 'weight', 'shipping_rate_per_kg'];
+  const numericItemFields = ['unit_price_foreign', 'unit_price_local', 'cost_usd', 'weight', 'shipping_rate_per_kg'];
   for (const field of numericItemFields) {
     if (body[field] !== undefined && body[field] !== null && Number(body[field]) < 0) {
       return c.json({ error: 'Bad Request', message: `القيمة "${field}" لا يمكن أن تكون سالبة` }, 400);
@@ -784,16 +779,16 @@ orderRoutes.post('/:id/items', async (c) => {
 
   await c.env.DB.prepare(
     `INSERT INTO order_items (id, tenant_id, order_id, product_name, product_url,
-     product_image_url, quantity, unit_price_foreign, unit_price_local, shipping_cost_foreign,
-     color, size, sku, item_category, weight, brand, notes, source_name, shipping_rate_per_kg,
+     product_image_url, quantity, unit_price_foreign, unit_price_local,
+     color, size, sku, category, weight, brand, notes, source_name, shipping_rate_per_kg,
      status, created_at, updated_at, version)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', datetime('now'), datetime('now'), 1)`
   ).bind(
     id, tenantId, orderId, product_name, product_url || null,
     product_image_url || null, quantity || 1,
-    unit_price_foreign || 0, unit_price_local || 0, shipping_cost_foreign || 0,
+    unit_price_foreign || 0, unit_price_local || 0,
     color || null, size || null, sku || null,
-    item_category || null, weight || 0, brand || null, notes || null,
+    category || null, weight || 0, brand || null, notes || null,
     source_name || null, shipping_rate_per_kg || 0
   ).run();
 
@@ -818,15 +813,15 @@ orderRoutes.patch('/:id/items/:itemId', async (c) => {
   if (updates.quantity !== undefined && updates.quantity <= 0) {
     return c.json({ error: 'Bad Request', message: 'الكمية يجب أن تكون أكبر من صفر' }, 400);
   }
-  const numericPatchFields = ['unit_price_foreign', 'unit_price_local', 'cost_usd', 'sale_price_lyd', 'weight', 'shipping_rate_per_kg'];
+  const numericPatchFields = ['unit_price_foreign', 'unit_price_local', 'cost_usd', 'weight', 'shipping_rate_per_kg'];
   for (const field of numericPatchFields) {
     if (updates[field] !== undefined && updates[field] !== null && Number(updates[field]) < 0) {
       return c.json({ error: 'Bad Request', message: `القيمة "${field}" لا يمكن أن تكون سالبة` }, 400);
     }
   }
 
-  const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'unit_price_local', 'shipping_cost_foreign', 'quantity', 'size', 'color', 'sku', 'status', 'item_category', 'weight', 'brand', 'source_name', 'shipping_rate_per_kg', 'category', 'attributes', 'sale_price_lyd', 'cost_usd'];
-  const floatFields = new Set(['unit_price_foreign', 'unit_price_local', 'shipping_cost_foreign', 'weight', 'shipping_rate_per_kg', 'sale_price_lyd', 'cost_usd']);
+  const allowedFields = ['product_name', 'product_url', 'unit_price_foreign', 'unit_price_local', 'quantity', 'size', 'color', 'sku', 'status', 'weight', 'brand', 'source_name', 'shipping_rate_per_kg', 'category', 'attributes', 'cost_usd'];
+  const floatFields = new Set(['unit_price_foreign', 'unit_price_local', 'weight', 'shipping_rate_per_kg', 'cost_usd']);
   const setClauses: string[] = [];
   const values: any[] = [];
 
@@ -1074,7 +1069,7 @@ orderRoutes.patch('/:id', async (c) => {
   // Build dynamic SET clause
   const setClauses: string[] = [];
   const values: any[] = [];
-  const allowedFields = ['notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign', 'shipping_rate_per_kg', 'cart_link', 'order_type', 'total_sale_price_lyd', 'total_cost_usd', 'deposit_amount', 'deposit_note', 'source_name'];
+  const allowedFields = ['notes', 'shipping_rate_per_kg', 'cart_link', 'order_type', 'total_sale_price_lyd', 'total_cost_usd', 'deposit_amount', 'deposit_note', 'source_name'];
 
   for (const field of allowedFields) {
     if (updates[field] !== undefined) {
@@ -1137,7 +1132,7 @@ orderRoutes.delete('/:id', requireRole('super_admin', 'store_manager'), async (c
 
 /**
  * POST /orders/:id/orphan-items — Cancel order and move all purchased items to in-stock inventory.
- * Costs (purchase_price, shipping_cost_foreign) are preserved as sunk costs for settlement.
+ * Live cost fields (unit_price_foreign, cost_usd, weight, shipping_rate_per_kg) are preserved as sunk costs for settlement.
  */
 orderRoutes.post('/:id/orphan-items', requireRole('super_admin', 'store_manager'), async (c) => {
   const tenantId = c.get('tenant_id') as string;

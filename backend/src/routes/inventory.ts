@@ -27,8 +27,8 @@ inventoryRoutes.get('/in-stock', async (c) => {
   ).bind(...allBindings).first<{ total: number }>();
 
   const results = await c.env.DB.prepare(`
-    SELECT id, product_name, product_url, product_image_url, product_thumb_url,
-           sku, brand, item_category, color, size, quantity,
+    SELECT id, product_name, product_url, product_image_url,
+           sku, brand, category, color, size, quantity,
            unit_price_foreign, cost_usd, weight, shipping_rate_per_kg,
            unit_price_local, status, updated_at, written_off_settlement_id
     FROM order_items
@@ -114,5 +114,5 @@ inventoryRoutes.patch('/in-stock/:item_id/reassign', requireRole('super_admin', 
     buildRecomputeOrderStatusStmt(c.env.DB, targetOrderId as string, tenantId),
   ]);
 
-  return c.json({ message: 'Item reassigned as pure-profit', item_id: itemId, order_id: targetOrderId, net_profit: new_selling_price });
+  return c.json({ message: 'Item reassigned as pure-profit', item_id: itemId, order_id: targetOrderId, unit_price_local: new_selling_price });
 });

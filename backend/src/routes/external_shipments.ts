@@ -319,7 +319,7 @@ externalShipmentRoutes.get('/:id', async (c) => {
   if (!shipment) return c.json({ error: 'Not Found' }, 404);
 
   const items = await c.env.DB.prepare(`
-    SELECT oi.id, oi.product_name, oi.sku, oi.item_uid, oi.status,
+    SELECT oi.id, oi.product_name, oi.sku, oi.status,
            oi.quantity, oi.order_id,
            c.full_name AS customer_name
     FROM order_items oi

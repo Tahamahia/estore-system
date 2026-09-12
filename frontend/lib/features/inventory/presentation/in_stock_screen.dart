@@ -193,7 +193,7 @@ class _InStockItemCard extends StatelessWidget {
     final perUnit = costUsd > 0 ? costUsd : unitForeign;
     final sunkCost = (perUnit + weight * rate) * qty;
     final isWrittenOff = item['written_off_settlement_id'] != null;
-    final imageUrl = item['product_thumb_url'] as String? ?? item['product_image_url'] as String?;
+    final imageUrl = item['product_image_url'] as String?;
 
     return Container(
       decoration: BoxDecoration(

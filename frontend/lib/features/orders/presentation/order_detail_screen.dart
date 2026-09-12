@@ -1254,7 +1254,7 @@ class _AddItemDialogState extends ConsumerState<_AddItemDialog> {
         if (_localPriceCtrl.text.trim().isNotEmpty)
           'unit_price_local': _parseDouble(_localPriceCtrl.text),
         'quantity': int.tryParse(_qtyCtrl.text.trim()) ?? 1,
-        if (_selectedCategory != null) 'item_category': _selectedCategory,
+        if (_selectedCategory != null) 'category': _selectedCategory,
         if (_sizeCtrl.text.trim().isNotEmpty) 'size': _sizeCtrl.text.trim(),
         if (_colorCtrl.text.trim().isNotEmpty) 'color': _colorCtrl.text.trim(),
         if (_brandCtrl.text.trim().isNotEmpty) 'brand': _brandCtrl.text.trim(),
@@ -1613,7 +1613,7 @@ class _OrderItemCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final productName = item['product_name'] as String? ?? 'منتج غير معروف';
-    final imgUrl = (item['product_image_url'] ?? item['product_thumb_url'] ?? item['product_url'] ?? '').toString();
+    final imgUrl = (item['product_image_url'] ?? item['product_url'] ?? '').toString();
     final size = item['size'] as String?;
     final color = item['color'] as String?;
     final sku = item['sku'] as String?;
@@ -1982,7 +1982,7 @@ class _FinancialSummaryCard extends StatelessWidget {
       final itemRate = (item['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
       itemsCostUsd += ((item['unit_price_foreign'] as num?)?.toDouble() ?? 0) * qty;
       shippingUsd += ((item['weight'] as num?)?.toDouble() ?? 0) * itemRate * qty;
-      totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? (item['sale_price_lyd'] as num?)?.toDouble() ?? 0) * qty;
+      totalLocal += ((item['unit_price_local'] as num?)?.toDouble() ?? 0) * qty;
       itemsCostUsdActual += ((item['cost_usd'] as num?)?.toDouble() ?? 0) * qty;
     }
 
@@ -2219,7 +2219,7 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
     final qty  = (widget.item['quantity'] as num?)?.toInt() ?? 1;
     _qtyCtrl   = TextEditingController(text: qty.toString());
     // Category: prefer new lowercase key, fall back to legacy key with mapping
-    final rawCat = (widget.item['category'] ?? widget.item['item_category']) as String?;
+    final rawCat = widget.item['category'] as String?;
     _selectedCategory = rawCat != null
         ? (_categoryOptions.any((o) => o.$1 == rawCat)
             ? rawCat
@@ -2292,9 +2292,8 @@ class _EditItemDialogState extends ConsumerState<_EditItemDialog> {
             'unit_price_local': _parseDouble(_localPriceCtrl.text),
           'quantity':     int.tryParse(_qtyCtrl.text.trim()) ?? 1,
           if (_selectedCategory != null) ...{
-            'category':      _selectedCategory,
-            'item_category': _selectedCategory,
-            'attributes':    jsonEncode(_toAttributes()),
+            'category':   _selectedCategory,
+            'attributes': jsonEncode(_toAttributes()),
           },
           'status':       _selectedStatus,
           'version':      widget.item['version'],

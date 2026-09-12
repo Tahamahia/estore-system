@@ -185,7 +185,10 @@ class InvoiceGenerator {
                 final sku = item['sku'] as String?;
                 final unitLocal = (item['unit_price_local'] as num?)?.toDouble() ?? 0;
                 final unitForeign = (item['unit_price_foreign'] as num?)?.toDouble() ?? 0;
-                final unitShipping = (item['shipping_cost_foreign'] as num?)?.toDouble() ?? 0;
+                // Per-unit shipping = weight × rate.
+                final weight = (item['weight'] as num?)?.toDouble() ?? 0;
+                final shippingRate = (item['shipping_rate_per_kg'] as num?)?.toDouble() ?? 0;
+                final unitShipping = weight * shippingRate;
                 final isCancelled = (item['status'] as String?) == 'cancelled';
                 final lineTotal = unitLocal > 0 ? (unitLocal * qty).toStringAsFixed(0) : '-';
 

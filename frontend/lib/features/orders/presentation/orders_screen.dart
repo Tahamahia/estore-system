@@ -689,11 +689,8 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
             return {
               'id':            const Uuid().v4(),
               'product_name':  i.nameCtrl.text.trim(),
-              'name':          i.nameCtrl.text.trim(),
-              'sale_price_lyd': double.tryParse(i.salePriceCtrl.text.trim()),
               'unit_price_local': double.tryParse(i.salePriceCtrl.text.trim()) ?? 0,
-              if (i.category != null) 'category':      i.category,
-              if (i.category != null) 'item_category': i.category,
+              if (i.category != null) 'category': i.category,
               if (attrs.isNotEmpty) 'attributes': jsonEncode(attrs),
             };
           }).toList()
