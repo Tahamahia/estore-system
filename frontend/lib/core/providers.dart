@@ -268,6 +268,22 @@ class ExternalShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String
     await _dio.delete('/external-shipments/$id');
     await fetchShipments();
   }
+
+  /// Physical event: the boxes are here. Advances every still-'shipped' item
+  /// on the shipment to arrived_warehouse and settles the shipment status.
+  Future<void> receiveShipment(String id) async {
+    await _dio.post('/external-shipments/$id/receive');
+    await fetchShipments();
+  }
+
+  Future<Map<String, dynamic>> fetchReconciliation(String id) async {
+    final res = await _dio.get('/external-shipments/$id/reconciliation');
+    return res.data as Map<String, dynamic>;
+  }
+
+  Future<void> markItemLost(String shipmentId, String itemId) async {
+    await _dio.post('/external-shipments/$shipmentId/items/$itemId/mark-lost');
+  }
 }
 
 // ─── Internal Shipments Provider ──────────────────────────
