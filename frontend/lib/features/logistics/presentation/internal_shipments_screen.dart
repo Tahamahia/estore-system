@@ -158,7 +158,10 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
     final m = widget.manifest;
     final status = m['status'] as String? ?? 'pending';
     final company = m['delivery_company'] as String? ?? 'شركة غير محددة';
+    final driverName = (m['driver_name'] as String?)?.trim();
     final orderCount = (m['order_count'] as num?)?.toInt() ?? 0;
+    final cashExpected = (m['cash_expected'] as num?)?.toDouble() ?? 0;
+    final cashHandedOver = (m['cash_handed_over'] as num?)?.toDouble();
     final color = _statusColor(status);
     final createdAt = (m['created_at'] as String? ?? '').length >= 10
       ? (m['created_at'] as String).substring(0, 10)
@@ -183,7 +186,11 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
             const SizedBox(width: 14),
             Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(company, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15)),
-              Text('$orderCount طلب · $createdAt', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+              Text(
+                [if (driverName != null && driverName.isNotEmpty) 'المندوب: $driverName', '$orderCount طلب', createdAt]
+                  .where((s) => s.isNotEmpty).join(' · '),
+                style: const TextStyle(color: Colors.white54, fontSize: 12),
+              ),
             ])),
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
@@ -207,6 +214,21 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
               : _PipelineBar(currentStatus: status, onAdvance: _setStatus),
           ),
 
+        // Cash row (only when delivered)
+        if (status == 'delivered')
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            decoration: BoxDecoration(border: Border(top: BorderSide(color: AppTheme.darkBorder))),
+            child: Row(children: [
+              const Icon(Icons.payments_outlined, color: Colors.white54, size: 15),
+              const SizedBox(width: 6),
+              Text('متوقع: ${cashExpected.toStringAsFixed(0)} د.ل',
+                style: const TextStyle(color: Colors.white70, fontSize: 12)),
+              const Spacer(),
+              _handoverChip(cashHandedOver, cashExpected),
+            ]),
+          ),
+
         // Footer
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -225,6 +247,31 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
           ]),
         ),
       ]),
+    );
+  }
+
+  Widget _handoverChip(double? handed, double expected) {
+    if (handed == null) {
+      return Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: BoxDecoration(color: AppTheme.warning.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+        child: const Text('لم يُسلَّم الكاش',
+          style: TextStyle(color: AppTheme.warning, fontSize: 11, fontWeight: FontWeight.w600)),
+      );
+    }
+    final diff = handed - expected;
+    final shortfall = diff < -0.5;
+    final surplus = diff > 0.5;
+    final bg = shortfall ? AppTheme.error : AppTheme.success;
+    final label = shortfall
+      ? 'تم تسليم ${handed.toStringAsFixed(0)} د.ل (ناقص ${(-diff).toStringAsFixed(0)})'
+      : surplus
+        ? 'تم تسليم ${handed.toStringAsFixed(0)} د.ل (زائد ${diff.toStringAsFixed(0)})'
+        : 'تم تسليم ${handed.toStringAsFixed(0)} د.ل';
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: BoxDecoration(color: bg.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+      child: Text(label, style: TextStyle(color: bg, fontSize: 11, fontWeight: FontWeight.w600)),
     );
   }
 }
@@ -308,6 +355,7 @@ class _CreateManifestDialog extends ConsumerStatefulWidget {
 
 class _CreateManifestDialogState extends ConsumerState<_CreateManifestDialog> {
   final _companyCtrl = TextEditingController();
+  final _driverCtrl  = TextEditingController();
   final _notesCtrl   = TextEditingController();
   List<Map<String, dynamic>>? _availableOrders;
   final Set<String> _selectedOrderIds = {};
@@ -319,7 +367,7 @@ class _CreateManifestDialogState extends ConsumerState<_CreateManifestDialog> {
   void initState() { super.initState(); _loadOrders(); }
 
   @override
-  void dispose() { _companyCtrl.dispose(); _notesCtrl.dispose(); super.dispose(); }
+  void dispose() { _companyCtrl.dispose(); _driverCtrl.dispose(); _notesCtrl.dispose(); super.dispose(); }
 
   Future<void> _loadOrders() async {
     setState(() { _loadingOrders = true; _error = null; });
@@ -338,6 +386,7 @@ class _CreateManifestDialogState extends ConsumerState<_CreateManifestDialog> {
       await ref.read(internalShipmentsProvider.notifier).createShipment({
         'id': const Uuid().v4(),
         'delivery_company': _companyCtrl.text.trim(),
+        if (_driverCtrl.text.trim().isNotEmpty) 'driver_name': _driverCtrl.text.trim(),
         if (_notesCtrl.text.trim().isNotEmpty) 'notes': _notesCtrl.text.trim(),
         if (_selectedOrderIds.isNotEmpty) 'order_ids': _selectedOrderIds.toList(),
       });
@@ -377,6 +426,12 @@ class _CreateManifestDialogState extends ConsumerState<_CreateManifestDialog> {
               controller: _companyCtrl,
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(labelText: 'شركة التوصيل *', prefixIcon: Icon(Icons.business_rounded)),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _driverCtrl,
+              style: const TextStyle(color: Colors.white),
+              decoration: const InputDecoration(labelText: 'اسم المندوب (اختياري)', prefixIcon: Icon(Icons.person_outline)),
             ),
             const SizedBox(height: 12),
             TextField(
@@ -477,6 +532,117 @@ class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
     }
   }
 
+  Future<void> _showHandoverDialog() async {
+    final expected = (_manifest!['cash_expected'] as num?)?.toDouble() ?? 0;
+    final ctrl = TextEditingController(text: expected.toStringAsFixed(0));
+    final result = await showDialog<double>(
+      context: context,
+      builder: (ctx) {
+        double entered = expected;
+        return StatefulBuilder(builder: (dctx, setLocal) {
+          final diff = entered - expected;
+          final shortfall = diff < -0.5;
+          return AlertDialog(
+            backgroundColor: AppTheme.darkSurface,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            title: const Text('تسليم الكاش', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+            content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Text('متوقع من المندوب: ${expected.toStringAsFixed(0)} د.ل',
+                style: const TextStyle(color: Colors.white70, fontSize: 13)),
+              const SizedBox(height: 12),
+              TextField(
+                controller: ctrl,
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'الكاش المسلَّم (د.ل)',
+                  prefixIcon: Icon(Icons.payments_outlined),
+                ),
+                onChanged: (v) => setLocal(() => entered = double.tryParse(v.trim().replaceAll(',', '.')) ?? 0),
+              ),
+              if (shortfall) ...[
+                const SizedBox(height: 10),
+                Text('ناقص ${(-diff).toStringAsFixed(0)} د.ل',
+                  style: const TextStyle(color: AppTheme.error, fontWeight: FontWeight.w700)),
+              ],
+            ]),
+            actions: [
+              TextButton(onPressed: () => Navigator.of(dctx).pop(), child: const Text('إلغاء', style: TextStyle(color: Colors.white54))),
+              ElevatedButton(
+                onPressed: () => Navigator.of(dctx).pop(entered),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+                child: const Text('تأكيد'),
+              ),
+            ],
+          );
+        });
+      },
+    );
+    ctrl.dispose();
+    if (result == null || !mounted) return;
+    try {
+      await ref.read(internalShipmentsProvider.notifier).recordHandover(widget.manifestId, result);
+      widget.onRefresh();
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('تم تسجيل تسليم الكاش'),
+          backgroundColor: AppTheme.success,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      }
+    }
+  }
+
+  Future<void> _editOrderCash(Map<String, dynamic> order) async {
+    final orderId = order['id'] as String;
+    final current = (order['cash_collected'] as num?)?.toDouble() ?? 0;
+    final ctrl = TextEditingController(text: current.toStringAsFixed(0));
+    final result = await showDialog<double>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('تعديل المبلغ المحصَّل', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          keyboardType: const TextInputType.numberWithOptions(decimal: true),
+          style: const TextStyle(color: Colors.white),
+          decoration: const InputDecoration(
+            labelText: 'المحصَّل (د.ل)',
+            prefixIcon: Icon(Icons.payments_outlined),
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dctx).pop(), child: const Text('إلغاء', style: TextStyle(color: Colors.white54))),
+          ElevatedButton(
+            onPressed: () {
+              final v = double.tryParse(ctrl.text.trim().replaceAll(',', '.'));
+              Navigator.of(dctx).pop(v);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (result == null || !mounted) return;
+    try {
+      await ref.read(internalShipmentsProvider.notifier).updateOrderCash(widget.manifestId, orderId, result);
+      widget.onRefresh();
+      await _load();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      }
+    }
+  }
+
   Future<void> _returnOrder(String orderId) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -559,6 +725,49 @@ class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
                     IconButton(icon: const Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.of(context).pop()),
                   ]),
                   const SizedBox(height: 16),
+                  if ((_manifest!['driver_name'] as String?)?.trim().isNotEmpty ?? false)
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 8),
+                      child: Row(children: [
+                        const Icon(Icons.person_outline, color: Colors.white54, size: 15),
+                        const SizedBox(width: 6),
+                        Text('المندوب: ${(_manifest!['driver_name'] as String).trim()}',
+                          style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                      ]),
+                    ),
+                  if ((_manifest!['status'] as String? ?? '') == 'delivered')
+                    Padding(
+                      padding: const EdgeInsets.only(bottom: 12),
+                      child: Row(children: [
+                        Expanded(child: Text(
+                          'متوقع: ${((_manifest!['cash_expected'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)} د.ل',
+                          style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+                        )),
+                        if (_manifest!['cash_handed_over'] == null)
+                          ElevatedButton.icon(
+                            onPressed: _showHandoverDialog,
+                            icon: const Icon(Icons.payments_outlined, size: 16),
+                            label: const Text('تسليم الكاش', style: TextStyle(fontSize: 12)),
+                            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+                          )
+                        else
+                          Builder(builder: (_) {
+                            final handed = (_manifest!['cash_handed_over'] as num).toDouble();
+                            final expected = (_manifest!['cash_expected'] as num?)?.toDouble() ?? 0;
+                            final diff = handed - expected;
+                            final shortfall = diff < -0.5;
+                            final bg = shortfall ? AppTheme.error : AppTheme.success;
+                            final label = shortfall
+                              ? 'تم تسليم ${handed.toStringAsFixed(0)} (ناقص ${(-diff).toStringAsFixed(0)})'
+                              : 'تم تسليم ${handed.toStringAsFixed(0)} د.ل';
+                            return Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                              decoration: BoxDecoration(color: bg.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+                              child: Text(label, style: TextStyle(color: bg, fontSize: 11, fontWeight: FontWeight.w600)),
+                            );
+                          }),
+                      ]),
+                    ),
                   const Divider(color: AppTheme.darkBorder),
                   const SizedBox(height: 12),
                   const Text('الطلبات في هذا المانيفست', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
@@ -581,15 +790,37 @@ class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
                           final location = [city, area].where((s) => s.isNotEmpty).join(' - ');
                           final itemCount = (order['item_count'] as num?)?.toInt() ?? 0;
                           final status = order['status'] as String? ?? '';
+                          final cashCollected = (order['cash_collected'] as num?)?.toDouble() ?? 0;
                           final manifestStatus = _manifest!['status'] as String? ?? '';
                           final canReturn = manifestStatus != 'delivered';
+                          final isDelivered = status == 'delivered';
                           return ListTile(
                             contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 2),
                             title: Text(name, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-                            subtitle: Text(
-                              [if (phone.isNotEmpty) phone, if (location.isNotEmpty) location, '$itemCount منتج'].join(' · '),
-                              style: const TextStyle(color: Colors.white38, fontSize: 12),
-                            ),
+                            subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(
+                                [if (phone.isNotEmpty) phone, if (location.isNotEmpty) location, '$itemCount منتج'].join(' · '),
+                                style: const TextStyle(color: Colors.white38, fontSize: 12),
+                              ),
+                              if (isDelivered)
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 4),
+                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
+                                    const Icon(Icons.payments_outlined, size: 12, color: AppTheme.success),
+                                    const SizedBox(width: 4),
+                                    Text('قبض: ${cashCollected.toStringAsFixed(0)} د.ل',
+                                      style: const TextStyle(color: AppTheme.success, fontSize: 11, fontWeight: FontWeight.w600)),
+                                    const SizedBox(width: 4),
+                                    IconButton(
+                                      icon: const Icon(Icons.edit_outlined, size: 13, color: Colors.white54),
+                                      tooltip: 'تعديل المحصَّل',
+                                      onPressed: () => _editOrderCash(order),
+                                      padding: EdgeInsets.zero,
+                                      constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+                                    ),
+                                  ]),
+                                ),
+                            ]),
                             trailing: Row(mainAxisSize: MainAxisSize.min, children: [
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

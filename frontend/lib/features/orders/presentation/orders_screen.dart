@@ -562,6 +562,8 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
   final _cartLinkCtrl       = TextEditingController();
   String _orderType         = 'individual_items';
   final _totalSalePriceCtrl = TextEditingController();
+  final _depositCtrl        = TextEditingController();
+  final _depositNoteCtrl    = TextEditingController();
   final List<_ItemEntry> _items = [_ItemEntry()];
 
   // ── UI state ──────────────────────────────────────────────
@@ -609,6 +611,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
     _phoneCtrl.dispose(); _nameCtrl.dispose(); _phone2Ctrl.dispose();
     _cityCtrl.dispose(); _areaCtrl.dispose(); _streetCtrl.dispose();
     _locationUrlCtrl.dispose(); _cartLinkCtrl.dispose(); _totalSalePriceCtrl.dispose();
+    _depositCtrl.dispose(); _depositNoteCtrl.dispose();
     for (final item in _items) { item.dispose(); }
     super.dispose();
   }
@@ -696,6 +699,7 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
           }).toList()
         : <Map<String, dynamic>>[];
 
+      final depositAmount = double.tryParse(_depositCtrl.text.trim());
       await ref.read(ordersProvider.notifier).createOrder({
         'id':          orderId,
         'customer_id': customerId,
@@ -704,6 +708,8 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
         'platform':    'manual',
         if (_orderType == 'full_cart' && _totalSalePriceCtrl.text.trim().isNotEmpty)
           'total_sale_price_lyd': double.tryParse(_totalSalePriceCtrl.text.trim()),
+        if (depositAmount != null && depositAmount > 0) 'deposit_amount': depositAmount,
+        if (_depositNoteCtrl.text.trim().isNotEmpty) 'deposit_note': _depositNoteCtrl.text.trim(),
         'items': orderItems,
       });
       widget.onCreated();
@@ -895,6 +901,14 @@ class _NewOrderDialogState extends ConsumerState<_NewOrderDialog> {
           isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         ),
       ),
+      const SizedBox(height: 18),
+      // ── 2b. Deposit (optional) ───────────────────────────
+      const _SectionHeader(icon: Icons.payments_outlined, label: 'العربون (اختياري)'),
+      const SizedBox(height: 10),
+      _compactField(_depositCtrl, 'عربون مدفوع (د.ل)', Icons.payments_outlined,
+        type: const TextInputType.numberWithOptions(decimal: true)),
+      const SizedBox(height: 8),
+      _compactField(_depositNoteCtrl, 'ملاحظة العربون (اختياري)', Icons.note_outlined),
       const SizedBox(height: 18),
       // ── 3. Order type ────────────────────────────────────
       const _SectionHeader(icon: Icons.category_outlined, label: 'نوع الطلب'),

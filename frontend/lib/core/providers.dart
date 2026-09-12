@@ -326,6 +326,22 @@ class InternalShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String
   Future<void> returnOrder(String shipmentId, String orderId) async {
     await _dio.post('/internal-shipments/$shipmentId/orders/$orderId/return');
   }
+
+  Future<Map<String, dynamic>> recordHandover(String shipmentId, double cashHandedOver) async {
+    final response = await _dio.patch(
+      '/internal-shipments/$shipmentId/handover',
+      data: {'cash_handed_over': cashHandedOver},
+    );
+    await fetchShipments();
+    return response.data as Map<String, dynamic>;
+  }
+
+  Future<void> updateOrderCash(String shipmentId, String orderId, double cashCollected) async {
+    await _dio.patch(
+      '/internal-shipments/$shipmentId/orders/$orderId/cash',
+      data: {'cash_collected': cashCollected},
+    );
+  }
 }
 
 // ─── Warehouse Scanner Provider ────────────────────────────

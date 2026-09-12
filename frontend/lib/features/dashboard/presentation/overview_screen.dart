@@ -106,6 +106,7 @@ class OverviewScreen extends ConsumerWidget {
     final pendingPurchase = (actionItems['pending_purchase'] as num?)?.toInt() ?? 0;
     final unsorted = (actionItems['unsorted'] as num?)?.toInt() ?? 0;
     final readyDispatch = (actionItems['ready_dispatch'] as num?)?.toInt() ?? 0;
+    final cashWithDrivers = (actionItems['cash_with_drivers'] as num?)?.toDouble() ?? 0;
 
     final alerts = <_ActionAlert>[];
     if (pendingPurchase > 0) {
@@ -130,6 +131,15 @@ class OverviewScreen extends ConsumerWidget {
         color: AppTheme.success,
         label: 'جاهزة للتوصيل',
         count: readyDispatch,
+      ));
+    }
+    if (cashWithDrivers > 0) {
+      alerts.add(_ActionAlert(
+        icon: Icons.payments_outlined,
+        color: AppTheme.warning,
+        label: 'كاش مع المناديب لم يُسلَّم بعد',
+        count: 0,
+        valueLabel: '${cashWithDrivers.toStringAsFixed(0)} د.ل',
       ));
     }
 
@@ -235,7 +245,8 @@ class _ActionAlert extends StatelessWidget {
   final Color color;
   final String label;
   final int count;
-  const _ActionAlert({required this.icon, required this.color, required this.label, required this.count});
+  final String? valueLabel;
+  const _ActionAlert({required this.icon, required this.color, required this.label, required this.count, this.valueLabel});
 
   @override
   Widget build(BuildContext context) {
@@ -256,7 +267,7 @@ class _ActionAlert extends StatelessWidget {
             color: color.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(20),
           ),
-          child: Text('$count', style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 14)),
+          child: Text(valueLabel ?? '$count', style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 14)),
         ),
       ]),
     );

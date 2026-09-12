@@ -1739,6 +1739,8 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
   late final TextEditingController _cartLinkCtrl;
   late final TextEditingController _totalCostUsdCtrl;
   late final TextEditingController _totalSalePriceLydCtrl;
+  late final TextEditingController _depositCtrl;
+  late final TextEditingController _depositNoteCtrl;
   bool _saving = false;
   String? _error;
 
@@ -1751,6 +1753,9 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
     _totalCostUsdCtrl = TextEditingController(text: costUsd != null && costUsd > 0 ? costUsd.toString() : '');
     final saleLyd = (widget.order['total_sale_price_lyd'] as num?)?.toDouble();
     _totalSalePriceLydCtrl = TextEditingController(text: saleLyd != null && saleLyd > 0 ? saleLyd.toStringAsFixed(0) : '');
+    final deposit = (widget.order['deposit_amount'] as num?)?.toDouble();
+    _depositCtrl = TextEditingController(text: deposit != null && deposit > 0 ? deposit.toStringAsFixed(0) : '');
+    _depositNoteCtrl = TextEditingController(text: widget.order['deposit_note'] as String? ?? '');
   }
 
   @override
@@ -1759,6 +1764,8 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
     _cartLinkCtrl.dispose();
     _totalCostUsdCtrl.dispose();
     _totalSalePriceLydCtrl.dispose();
+    _depositCtrl.dispose();
+    _depositNoteCtrl.dispose();
     super.dispose();
   }
 
@@ -1841,6 +1848,31 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
               ),
               const SizedBox(height: 14),
             ],
+            Row(children: [
+              Expanded(child: TextField(
+                controller: _depositCtrl,
+                style: const TextStyle(color: Colors.white),
+                keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                decoration: const InputDecoration(
+                  labelText: 'العربون (د.ل)',
+                  prefixIcon: Icon(Icons.payments_outlined, size: 18),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+              const SizedBox(width: 12),
+              Expanded(child: TextField(
+                controller: _depositNoteCtrl,
+                style: const TextStyle(color: Colors.white),
+                decoration: const InputDecoration(
+                  labelText: 'ملاحظة العربون',
+                  prefixIcon: Icon(Icons.note_outlined, size: 18),
+                  isDense: true,
+                  contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                ),
+              )),
+            ]),
+            const SizedBox(height: 14),
             TextField(
               controller: _notesCtrl,
               style: const TextStyle(color: Colors.white),
@@ -1869,6 +1901,13 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
                       ? null
                       : double.tryParse(saleText.replaceAll(',', '.'));
                 }
+                final depositText = _depositCtrl.text.trim();
+                updates['deposit_amount'] = depositText.isEmpty
+                    ? 0
+                    : (double.tryParse(depositText.replaceAll(',', '.')) ?? 0);
+                updates['deposit_note'] = _depositNoteCtrl.text.trim().isEmpty
+                    ? null
+                    : _depositNoteCtrl.text.trim();
                 try {
                   final nav = Navigator.of(context);
                   await widget.onSave(updates);
@@ -1957,14 +1996,70 @@ class _FinancialSummaryCard extends StatelessWidget {
           const Center(
             child: Text('في انتظار تحديد سعر البيع', style: TextStyle(color: Colors.white38, fontSize: 13)),
           )
-        else
+        else ...[
           _FinancialRow(
             label: orderTotalSaleLyd != null ? 'سعر البيع (يدوي) (د.ل)' : 'سعر البيع (من المنتجات) (د.ل)',
             value: '${displaySaleLyd.toStringAsFixed(0)} د.ل',
             bold: true,
           ),
+          ..._buildCashRows(displaySaleLyd),
+        ],
       ]),
     );
+  }
+
+  List<Widget> _buildCashRows(double saleLyd) {
+    final deposit = (order['deposit_amount'] as num?)?.toDouble() ?? 0;
+    final collected = (order['cash_collected'] as num?)?.toDouble() ?? 0;
+    final depositNote = (order['deposit_note'] as String?)?.trim();
+    final remaining = saleLyd - deposit;
+    final rows = <Widget>[];
+
+    if (deposit > 0) {
+      rows.add(const SizedBox(height: 6));
+      rows.add(_FinancialRow(
+        label: depositNote != null && depositNote.isNotEmpty
+            ? 'العربون المدفوع ($depositNote)'
+            : 'العربون المدفوع',
+        value: '${deposit.toStringAsFixed(0)} د.ل',
+      ));
+    }
+
+    if (deposit > 0 || collected > 0) {
+      rows.add(const SizedBox(height: 6));
+      rows.add(_FinancialRow(
+        label: 'المتبقي عند التسليم',
+        value: '${remaining.toStringAsFixed(0)} د.ل',
+      ));
+    }
+
+    if (collected > 0) {
+      final shortfall = saleLyd - deposit - collected;
+      rows.add(const SizedBox(height: 6));
+      rows.add(Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+        const Text('المحصّل من المندوب', style: TextStyle(color: Colors.white54, fontSize: 13)),
+        Row(mainAxisSize: MainAxisSize.min, children: [
+          Text('${collected.toStringAsFixed(0)} د.ل',
+            style: const TextStyle(color: AppTheme.success, fontWeight: FontWeight.w700, fontSize: 14),
+          ),
+          if (shortfall > 0.5) ...[
+            const SizedBox(width: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: AppTheme.error.withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text('ناقص ${shortfall.toStringAsFixed(0)}',
+                style: const TextStyle(color: AppTheme.error, fontSize: 11, fontWeight: FontWeight.w700),
+              ),
+            ),
+          ],
+        ]),
+      ]));
+    }
+
+    return rows;
   }
 }
 
