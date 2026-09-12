@@ -400,6 +400,39 @@ final dashboardProvider = FutureProvider<Map<String, dynamic>>((ref) async {
   return response.data as Map<String, dynamic>;
 });
 
+// ─── Purchasing Queue Provider ────────────────────────────
+// Backs the nightly-buying "Purchasing" screen. Fetches every still-pending
+// item grouped per-order and issues a single bulk purchase-data save.
+final purchasingProvider =
+    StateNotifierProvider<PurchasingNotifier, AsyncValue<Map<String, dynamic>>>((ref) {
+  return PurchasingNotifier(ref);
+});
+
+class PurchasingNotifier
+    extends StateNotifier<AsyncValue<Map<String, dynamic>>> {
+  final Ref _ref;
+  PurchasingNotifier(this._ref) : super(const AsyncValue.loading());
+
+  Dio get _dio => _ref.read(dioProvider);
+
+  Future<void> fetchQueue() async {
+    state = const AsyncValue.loading();
+    try {
+      final response = await _dio.get('/orders/purchase-queue');
+      state = AsyncValue.data(response.data as Map<String, dynamic>);
+    } catch (e, st) {
+      state = AsyncValue.error(e, st);
+    }
+  }
+
+  /// Sends the bulk save. Returns the API response so callers can react to
+  /// updated/orders_recomputed counts (or catch 409 for a version mismatch).
+  Future<Map<String, dynamic>> savePurchases(Map<String, dynamic> payload) async {
+    final response = await _dio.patch('/orders/items/purchase', data: payload);
+    return response.data as Map<String, dynamic>;
+  }
+}
+
 // ─── Shipping Sources Provider ────────────────────────────
 final shippingSourcesProvider = StateNotifierProvider<ShippingSourcesNotifier, AsyncValue<List<Map<String, dynamic>>>>((ref) {
   return ShippingSourcesNotifier(ref);

@@ -14,6 +14,7 @@ import '../features/customers/presentation/customers_screen.dart';
 import '../features/settlements/presentation/settlements_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
 import '../features/inventory/presentation/in_stock_screen.dart';
+import '../features/purchasing/presentation/purchasing_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   // Watch auth state for redirects
@@ -64,6 +65,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/orders',
             name: 'orders',
             builder: (context, state) => const OrdersScreen(),
+          ),
+          GoRoute(
+            path: '/purchasing',
+            name: 'purchasing',
+            builder: (context, state) => const PurchasingScreen(),
           ),
           GoRoute(
             path: '/orders/:id',

@@ -12,6 +12,7 @@ import 'package:estore_app/core/utils/dialog_utils.dart';
 const _kNavItems = [
   (path: '/',                   icon: Icons.dashboard_outlined,              label: 'الرئيسية'),
   (path: '/orders',             icon: Icons.receipt_long_outlined,           label: 'الطلبيات'),
+  (path: '/purchasing',         icon: Icons.shopping_cart_checkout,          label: 'الشراء'),
   (path: '/warehouse',          icon: Icons.qr_code_scanner_outlined,        label: 'المخزن'),
   (path: '/external-shipments', icon: Icons.flight_land_outlined,            label: 'الشحنات الخارجية'),
   (path: '/internal-shipments', icon: Icons.local_shipping_outlined,         label: 'الشحنات الداخلية'),
@@ -135,6 +136,7 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
             const SizedBox(height: 8),
             for (final item in [
               (path: '/',                   icon: Icons.dashboard_outlined,              label: 'الرئيسية'),
+              (path: '/purchasing',         icon: Icons.shopping_cart_checkout,          label: 'الشراء'),
               (path: '/external-shipments', icon: Icons.flight_land_outlined,            label: 'الشحنات الخارجية'),
               (path: '/in-stock',           icon: Icons.inventory_2_outlined,            label: 'البضاعة الفورية'),
               (path: '/settlements',        icon: Icons.account_balance_wallet_outlined, label: 'التسويات'),
