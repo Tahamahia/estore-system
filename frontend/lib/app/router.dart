@@ -15,6 +15,7 @@ import '../features/settlements/presentation/settlements_screen.dart';
 import '../features/settings/presentation/settings_screen.dart';
 import '../features/inventory/presentation/in_stock_screen.dart';
 import '../features/purchasing/presentation/purchasing_screen.dart';
+import '../features/driver/presentation/driver_screen.dart';
 
 final routerProvider = Provider<GoRouter>((ref) {
   // Watch auth state for redirects
@@ -34,7 +35,7 @@ final routerProvider = Provider<GoRouter>((ref) {
           case 'sorter':
             return '/warehouse';
           case 'driver':
-            return '/internal-shipments';
+            return '/driver';
           default:
             return '/';
         }
@@ -112,6 +113,11 @@ final routerProvider = Provider<GoRouter>((ref) {
             path: '/in-stock',
             name: 'inStock',
             builder: (context, state) => const InStockScreen(),
+          ),
+          GoRoute(
+            path: '/driver',
+            name: 'driver',
+            builder: (context, state) => const DriverScreen(),
           ),
         ],
       ),

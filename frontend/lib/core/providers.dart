@@ -383,6 +383,12 @@ class InternalShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String
   }
 }
 
+/// Driver-scope feed. FutureProvider so pull-to-refresh is
+/// `ref.invalidate(driverManifestsProvider)` — no state notifier boilerplate.
+final driverManifestsProvider = FutureProvider<List<Map<String, dynamic>>>((ref) async {
+  return ref.read(internalShipmentsProvider.notifier).fetchMine();
+});
+
 // ─── Warehouse Scanner Provider ────────────────────────────
 final scanResultProvider = StateNotifierProvider<ScanNotifier, AsyncValue<Map<String, dynamic>?>>((ref) {
   return ScanNotifier(ref);

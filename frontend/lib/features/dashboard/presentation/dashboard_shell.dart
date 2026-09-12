@@ -232,6 +232,52 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     final user = ref.watch(currentUserProvider);
     final userName = (user?['full_name'] as String?) ?? (user?['email'] as String?) ?? 'User';
     final userInitial = userName.isNotEmpty ? userName[0].toUpperCase() : 'U';
+    final role = user?['role'] as String?;
+
+    // ── Driver-only chrome: no side rail, no bottom nav. Just an AppBar
+    // with the logo, the driver's name, and a logout icon. The driver
+    // screen is the only surface a driver ever needs.
+    if (role == 'driver') {
+      return Scaffold(
+        backgroundColor: AppTheme.darkBg,
+        appBar: AppBar(
+          backgroundColor: AppTheme.darkSurface,
+          elevation: 0,
+          toolbarHeight: 56,
+          automaticallyImplyLeading: false,
+          title: Row(mainAxisSize: MainAxisSize.min, children: [
+            Container(
+              width: 24, height: 24,
+              decoration: const BoxDecoration(color: Color(0xFF6B1A2A), shape: BoxShape.circle),
+              child: ClipOval(child: Image.asset(
+                'assets/images/mukhmal-logo.png',
+                fit: BoxFit.cover,
+                errorBuilder: (_, __, ___) => const Center(
+                  child: Text('م', style: TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold)),
+                ),
+              )),
+            ),
+            const SizedBox(width: 10),
+            Flexible(
+              child: Text(
+                userName,
+                style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600),
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ]),
+          actions: [
+            IconButton(
+              tooltip: 'تسجيل الخروج',
+              icon: const Icon(Icons.logout_rounded, color: Colors.white54),
+              onPressed: _handleLogout,
+            ),
+            const SizedBox(width: 4),
+          ],
+        ),
+        body: widget.child,
+      );
+    }
 
     // ── Mobile layout: AppBar + bottom NavigationBar ────────────
     if (mobile) {
