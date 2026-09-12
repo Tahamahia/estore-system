@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:estore_app/app/theme.dart';
+import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 
@@ -18,18 +19,40 @@ class _SettlementsScreenState extends ConsumerState<SettlementsScreen> {
     Future.microtask(() => ref.read(settlementsProvider.notifier).fetchSettlements());
   }
 
+  void _showNewSettlement() {
+    final flow = _NewSettlementFlow(
+      onCreated: () => ref.read(settlementsProvider.notifier).fetchSettlements(),
+    );
+    if (isMobile(context)) {
+      Navigator.of(context).push(MaterialPageRoute(fullscreenDialog: true, builder: (_) => flow));
+    } else {
+      showDialog(context: context, builder: (_) => flow);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(settlementsProvider);
+    final mobile = isMobile(context);
 
-    return Padding(
-      padding: const EdgeInsets.all(24),
+    return Stack(children: [
+      Padding(
+      padding: EdgeInsets.fromLTRB(mobile ? 12 : 24, mobile ? 12 : 24, mobile ? 12 : 24, mobile ? 80 : 24),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(children: [
             const Text('التسويات المالية', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white)),
             const Spacer(),
+            if (!mobile) ...[
+              ElevatedButton.icon(
+                onPressed: _showNewSettlement,
+                icon: const Icon(Icons.add, size: 18),
+                label: const Text('تسوية جديدة'),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+              ),
+              const SizedBox(width: 8),
+            ],
             IconButton(
               icon: const Icon(Icons.refresh, color: Colors.white54),
               tooltip: 'تحديث',
@@ -93,7 +116,19 @@ class _SettlementsScreenState extends ConsumerState<SettlementsScreen> {
           ),
         ],
       ),
-    );
+      ),
+      if (mobile)
+        Positioned(
+          bottom: 16,
+          right: 16,
+          child: FloatingActionButton.extended(
+            onPressed: _showNewSettlement,
+            backgroundColor: AppTheme.success,
+            icon: const Icon(Icons.add, color: Colors.white),
+            label: const Text('تسوية جديدة', style: TextStyle(color: Colors.white)),
+          ),
+        ),
+    ]);
   }
 }
 
@@ -196,6 +231,7 @@ class _SettlementCardState extends ConsumerState<_SettlementCard> {
     final writeOffUsd = (s['total_write_off_usd'] as num?)?.toDouble() ?? 0;
     final writeOffCount = (s['write_off_item_count'] as num?)?.toInt() ?? 0;
     final orderCount = (s['order_count'] as num?)?.toInt() ?? 0;
+    final cashShortfall = (s['cash_shortfall'] as num?)?.toDouble() ?? 0;
 
     final boughtUsd = exchangeRate > 0 ? totalLyd / exchangeRate : 0.0;
     final netProfit = boughtUsd - totalUsdCost - writeOffUsd;
@@ -363,6 +399,15 @@ class _SettlementCardState extends ConsumerState<_SettlementCard> {
               ]),
             ]),
           ),
+          if (cashShortfall > 0.5) ...[
+            const SizedBox(height: 10),
+            Row(children: [
+              const Icon(Icons.warning_amber_rounded, color: AppTheme.error, size: 16),
+              const SizedBox(width: 8),
+              Text('نقص في التحصيل: ${cashShortfall.toStringAsFixed(0)} د.ل',
+                  style: const TextStyle(color: AppTheme.error, fontSize: 13, fontWeight: FontWeight.w700)),
+            ]),
+          ],
         ]),
       ),
     );
@@ -438,22 +483,33 @@ class _SettlementDetailDialogState extends ConsumerState<_SettlementDetailDialog
                       final customerName = o['customer_name'] as String? ?? '—';
                       final itemCount = (o['item_count'] as num?)?.toInt() ?? 0;
                       final totalLyd = (o['total_lyd'] as num?)?.toDouble() ?? 0;
+                      final orderShortfall = (o['cash_shortfall'] as num?)?.toDouble() ?? 0;
+                      final short = orderShortfall > 0.5;
                       return Padding(
                         padding: const EdgeInsets.symmetric(vertical: 10),
-                        child: Row(children: [
+                        child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
                           Container(
                             padding: const EdgeInsets.all(8),
                             decoration: BoxDecoration(
-                              color: AppTheme.success.withValues(alpha: 0.12),
+                              color: (short ? AppTheme.error : AppTheme.success).withValues(alpha: 0.12),
                               borderRadius: BorderRadius.circular(10),
                             ),
-                            child: const Icon(Icons.receipt_outlined, color: AppTheme.success, size: 18),
+                            child: Icon(
+                              short ? Icons.warning_amber_rounded : Icons.receipt_outlined,
+                              color: short ? AppTheme.error : AppTheme.success,
+                              size: 18,
+                            ),
                           ),
                           const SizedBox(width: 12),
                           Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                             Text(shortId, style: const TextStyle(color: AppTheme.secondary, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
                             const SizedBox(height: 2),
                             Text(customerName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
+                            if (short) ...[
+                              const SizedBox(height: 2),
+                              Text('نقص ${orderShortfall.toStringAsFixed(0)} د.ل',
+                                  style: const TextStyle(color: AppTheme.error, fontSize: 11, fontWeight: FontWeight.w700)),
+                            ],
                           ])),
                           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                             Text('$itemCount منتج', style: const TextStyle(color: Colors.white54, fontSize: 12)),
@@ -588,6 +644,324 @@ class _EditSettlementDialogState extends State<_EditSettlementDialog> {
         ),
       ),
     );
+  }
+}
+
+// ─── New Settlement flow — full-screen on mobile, dialog on desktop ───
+// Loads GET /orders?status=delivered&unsettled=true&limit=200 and lists them
+// pre-checked with a select-all toggle and a live footer. Name is pre-filled
+// with "تسوية <شهر بالعربي> <سنة>" so a common case is one-tap ready.
+class _NewSettlementFlow extends ConsumerStatefulWidget {
+  final VoidCallback onCreated;
+  const _NewSettlementFlow({required this.onCreated});
+  @override
+  ConsumerState<_NewSettlementFlow> createState() => _NewSettlementFlowState();
+}
+
+class _NewSettlementFlowState extends ConsumerState<_NewSettlementFlow> {
+  final _nameCtrl = TextEditingController();
+  final _rateCtrl = TextEditingController();
+  bool _writeOff = false;
+  bool _submitting = false;
+  String? _error;
+  bool _loadingOrders = true;
+  List<Map<String, dynamic>> _eligibleOrders = [];
+  final Set<String> _selectedIds = {};
+  late Future<int> _inStockCountFuture;
+
+  static const _monthsAr = [
+    'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
+    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر',
+  ];
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    _nameCtrl.text = 'تسوية ${_monthsAr[now.month - 1]} ${now.year}';
+    _inStockCountFuture = _fetchInStockCount();
+    _loadEligible();
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    _rateCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<int> _fetchInStockCount() async {
+    try {
+      final dio = ref.read(dioProvider);
+      final res = await dio.get('/inventory/in-stock', queryParameters: {'limit': 1, 'page': 1});
+      return ((res.data as Map<String, dynamic>)['total'] as num?)?.toInt() ?? 0;
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  Future<void> _loadEligible() async {
+    setState(() { _loadingOrders = true; _error = null; });
+    try {
+      final dio = ref.read(dioProvider);
+      final res = await dio.get('/orders', queryParameters: {
+        'status': 'delivered',
+        'unsettled': 'true',
+        'limit': 200,
+      });
+      final list = List<Map<String, dynamic>>.from(
+        (res.data as Map<String, dynamic>)['data'] ?? const [],
+      );
+      if (!mounted) return;
+      setState(() {
+        _eligibleOrders = list;
+        _selectedIds
+          ..clear()
+          ..addAll(list.map((o) => o['id'] as String));
+        _loadingOrders = false;
+      });
+    } catch (e) {
+      if (mounted) setState(() { _error = '$e'; _loadingOrders = false; });
+    }
+  }
+
+  double _saleTotal(Map<String, dynamic> o) {
+    final items = (o['items_sale_total_lyd'] as num?)?.toDouble() ?? 0;
+    if (items > 0) return items;
+    return (o['total_sale_price_lyd'] as num?)?.toDouble() ?? 0;
+  }
+
+  Future<void> _submit() async {
+    final name = _nameCtrl.text.trim();
+    final rate = double.tryParse(_rateCtrl.text.trim());
+    if (name.isEmpty) { setState(() => _error = 'اسم الدفعة مطلوب'); return; }
+    if (rate == null || rate <= 0) { setState(() => _error = 'سعر الصرف يجب أن يكون رقماً موجباً'); return; }
+    if (_selectedIds.isEmpty) { setState(() => _error = 'اختر طلبيات على الأقل'); return; }
+    setState(() { _submitting = true; _error = null; });
+    try {
+      await ref.read(settlementsProvider.notifier).createSettlement(
+        name: name,
+        exchangeRate: rate,
+        orderIds: _selectedIds.toList(),
+        writeOff: _writeOff,
+      );
+      widget.onCreated();
+      if (mounted) Navigator.of(context).pop();
+    } catch (e) {
+      if (mounted) setState(() { _submitting = false; _error = '$e'; });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final body = _buildBody();
+    if (isMobile(context)) {
+      return Scaffold(
+        backgroundColor: AppTheme.darkSurface,
+        appBar: AppBar(
+          backgroundColor: AppTheme.darkSurface,
+          elevation: 0,
+          leading: IconButton(
+            icon: const Icon(Icons.close, color: Colors.white70),
+            onPressed: () => Navigator.of(context).pop(),
+          ),
+          title: const Text('تسوية جديدة',
+              style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+        ),
+        body: Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), child: body),
+      );
+    }
+    return Dialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+      backgroundColor: AppTheme.darkSurface,
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: dialogMaxWidth(context, desktopMax: 560),
+          maxHeight: dialogMaxHeight(context, cap: 760),
+        ),
+        child: Padding(padding: const EdgeInsets.all(20), child: body),
+      ),
+    );
+  }
+
+  Widget _buildBody() {
+    final totalSelected = _eligibleOrders
+        .where((o) => _selectedIds.contains(o['id']))
+        .fold<double>(0, (sum, o) => sum + _saleTotal(o));
+    final allSelected = _eligibleOrders.isNotEmpty && _selectedIds.length == _eligibleOrders.length;
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      TextField(
+        controller: _nameCtrl,
+        style: const TextStyle(color: Colors.white),
+        decoration: const InputDecoration(
+          labelText: 'اسم الدفعة *',
+          prefixIcon: Icon(Icons.label_outline),
+        ),
+      ),
+      const SizedBox(height: 10),
+      TextField(
+        controller: _rateCtrl,
+        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        style: const TextStyle(color: Colors.white),
+        decoration: const InputDecoration(
+          labelText: 'سعر الصرف (د.ل / \$) *',
+          hintText: 'مثال: 5.85',
+          hintStyle: TextStyle(color: Colors.white24),
+          prefixIcon: Icon(Icons.currency_exchange_outlined),
+        ),
+      ),
+      const SizedBox(height: 10),
+      // Write-off toggle + live in-stock hint
+      Container(
+        decoration: BoxDecoration(
+          color: AppTheme.darkCard,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: _writeOff ? AppTheme.warning.withValues(alpha: 0.4) : AppTheme.darkBorder),
+        ),
+        child: CheckboxListTile(
+          value: _writeOff,
+          onChanged: (v) => setState(() => _writeOff = v ?? false),
+          activeColor: AppTheme.warning,
+          title: const Text('شطب البضاعة الفورية غير المباعة في هذه التسوية',
+              style: TextStyle(color: Colors.white, fontSize: 13)),
+          controlAffinity: ListTileControlAffinity.leading,
+          contentPadding: const EdgeInsets.symmetric(horizontal: 8),
+          dense: true,
+        ),
+      ),
+      const SizedBox(height: 6),
+      FutureBuilder<int>(
+        future: _inStockCountFuture,
+        builder: (ctx, snap) {
+          final count = snap.data ?? 0;
+          if (_writeOff) {
+            return Text('سيتم شطب $count منتج كخسارة',
+                style: const TextStyle(color: AppTheme.warning, fontSize: 12));
+          }
+          return const Text('لن يتم شطب أي بضاعة فورية',
+              style: TextStyle(color: Colors.white38, fontSize: 12));
+        },
+      ),
+      const SizedBox(height: 14),
+      Row(children: [
+        const Text('الطلبات المسلَّمة غير المسوّاة',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+        const Spacer(),
+        if (_eligibleOrders.isNotEmpty)
+          TextButton.icon(
+            onPressed: () => setState(() {
+              if (allSelected) {
+                _selectedIds.clear();
+              } else {
+                _selectedIds
+                  ..clear()
+                  ..addAll(_eligibleOrders.map((o) => o['id'] as String));
+              }
+            }),
+            icon: Icon(allSelected ? Icons.deselect : Icons.select_all, size: 16),
+            label: Text(allSelected ? 'إلغاء الاختيار' : 'اختيار الكل',
+                style: const TextStyle(fontSize: 12)),
+            style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
+          ),
+      ]),
+      const SizedBox(height: 6),
+      Expanded(
+        child: _loadingOrders
+            ? const Center(child: CircularProgressIndicator())
+            : _eligibleOrders.isEmpty
+                ? const Center(
+                    child: Text('لا توجد طلبيات مسلَّمة بانتظار التسوية',
+                        style: TextStyle(color: Colors.white38, fontSize: 13)),
+                  )
+                : Container(
+                    decoration: BoxDecoration(
+                      color: AppTheme.darkCard.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppTheme.darkBorder),
+                    ),
+                    child: ListView.builder(
+                      itemCount: _eligibleOrders.length,
+                      itemBuilder: (_, i) {
+                        final o = _eligibleOrders[i];
+                        final id = o['id'] as String;
+                        final checked = _selectedIds.contains(id);
+                        final customer = o['customer_name'] as String? ?? '—';
+                        final shortId = id.length > 8
+                            ? id.substring(0, 8).toUpperCase()
+                            : id.toUpperCase();
+                        final total = _saleTotal(o);
+                        final createdAt = (o['created_at'] as String? ?? '').length >= 10
+                            ? (o['created_at'] as String).substring(0, 10)
+                            : '';
+                        return CheckboxListTile(
+                          value: checked,
+                          onChanged: (v) => setState(() {
+                            if (v == true) {
+                              _selectedIds.add(id);
+                            } else {
+                              _selectedIds.remove(id);
+                            }
+                          }),
+                          activeColor: AppTheme.primary,
+                          dense: true,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+                          title: Text(customer,
+                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+                          subtitle: Text(
+                            [shortId, createdAt].where((s) => s.isNotEmpty).join(' · '),
+                            style: const TextStyle(color: Colors.white38, fontSize: 11),
+                          ),
+                          secondary: Text('${total.toStringAsFixed(0)} د.ل',
+                              style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+                        );
+                      },
+                    ),
+                  ),
+      ),
+      const SizedBox(height: 10),
+      // Live footer: N طلبية · إجمالي X د.ل
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: AppTheme.primary.withValues(alpha: 0.12),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
+        ),
+        child: Row(children: [
+          Text('${_selectedIds.length} طلبية',
+              style: const TextStyle(color: AppTheme.primary, fontSize: 13, fontWeight: FontWeight.w700)),
+          const Spacer(),
+          Text('إجمالي ${totalSelected.toStringAsFixed(0)} د.ل',
+              style: const TextStyle(color: AppTheme.primary, fontSize: 13, fontWeight: FontWeight.w700)),
+        ]),
+      ),
+      if (_error != null) ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: AppTheme.error.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(6),
+          ),
+          child: Text(_error!, style: const TextStyle(color: AppTheme.error, fontSize: 12)),
+        ),
+      ],
+      const SizedBox(height: 12),
+      SizedBox(
+        height: 48,
+        child: ElevatedButton.icon(
+          onPressed: (_submitting || _selectedIds.isEmpty) ? null : _submit,
+          icon: _submitting
+              ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : const Icon(Icons.check, size: 20),
+          label: Text(_submitting ? 'جاري الإنشاء...' : 'إنشاء التسوية'),
+          style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+        ),
+      ),
+    ]);
   }
 }
 

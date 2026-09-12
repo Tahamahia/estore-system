@@ -236,15 +236,25 @@ settlementRoutes.get('/:id', async (c) => {
     GROUP BY o.id ORDER BY o.created_at ASC
   `).bind(id, tenantId).all();
 
-  const cashShortfall = (orders.results as Record<string, unknown>[]).reduce((sum, o) => {
+  // Compute per-order cash_shortfall and roll up to an aggregate for the
+  // settlement. Shortfall = max(sale − deposit − cash_collected, 0). Any
+  // overpayment is treated as zero shortfall (it does not offset another
+  // order's shortfall). Both fields returned so the UI can render per-order
+  // rows and the card total without recomputing.
+  const ordersWithShortfall = (orders.results as Record<string, unknown>[]).map((o) => {
     const sale = Number(o.total_lyd ?? 0);
     const deposit = Number(o.deposit_amount ?? 0);
     const collected = Number(o.cash_collected ?? 0);
     const diff = sale - deposit - collected;
-    return sum + (diff > 0 ? diff : 0);
-  }, 0);
+    const shortfall = diff > 0 ? diff : 0;
+    return { ...o, cash_shortfall: shortfall };
+  });
+  const cashShortfall = ordersWithShortfall.reduce(
+    (sum, o) => sum + Number(o.cash_shortfall ?? 0),
+    0,
+  );
 
-  return c.json({ ...settlement, cash_shortfall: cashShortfall, orders: orders.results });
+  return c.json({ ...settlement, cash_shortfall: cashShortfall, orders: ordersWithShortfall });
 });
 
 // PATCH /settlements/:id — edit name and exchange_rate only
