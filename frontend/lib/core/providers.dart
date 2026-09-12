@@ -358,6 +358,29 @@ class InternalShipmentsNotifier extends StateNotifier<AsyncValue<List<Map<String
       data: {'cash_collected': cashCollected},
     );
   }
+
+  /// Marks ONE order on the manifest delivered. Backend cascades its items
+  /// to delivered, seeds cash_collected (or uses the optional override),
+  /// recomputes the order, and recomputes the manifest (which will settle
+  /// to 'delivered' once every attached order is done).
+  Future<void> markOrderDelivered(
+    String shipmentId,
+    String orderId, {
+    double? cashCollected,
+  }) async {
+    await _dio.patch(
+      '/internal-shipments/$shipmentId/orders/$orderId/delivered',
+      data: cashCollected == null ? {} : {'cash_collected': cashCollected},
+    );
+  }
+
+  /// Driver-scope feed. Backend filters by users.full_name when the caller
+  /// is a driver; admin roles see every open manifest for preview.
+  Future<List<Map<String, dynamic>>> fetchMine() async {
+    final response = await _dio.get('/internal-shipments/mine');
+    final data = response.data as Map<String, dynamic>;
+    return List<Map<String, dynamic>>.from(data['data'] ?? []);
+  }
 }
 
 // ─── Warehouse Scanner Provider ────────────────────────────

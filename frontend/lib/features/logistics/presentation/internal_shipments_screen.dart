@@ -94,22 +94,28 @@ class _InternalShipmentsScreenState extends ConsumerState<InternalShipmentsScree
   }
 }
 
-// ─── Status definitions ─────────────────────────────────────
-const _kStatuses = [
-  ('pending',               'في الانتظار',        AppTheme.accent),
-  ('at_delivery_warehouse', 'مستودع التوصيل',     AppTheme.warning),
-  ('out_for_delivery',      'في الطريق للزبون',   AppTheme.primary),
-  ('delivered',             'تم الاستلام',         AppTheme.success),
-];
-
+// ─── Status labels ──────────────────────────────────────────
+// The manifest status is now DERIVED: 'delivered' is set automatically the
+// moment every attached order is delivered (see buildRecomputeInternalShipmentStmt).
+// Admins only ever explicitly move pending → out_for_delivery.
 Color _statusColor(String status) {
-  for (final s in _kStatuses) { if (s.$1 == status) return s.$3; }
-  return Colors.white38;
+  switch (status) {
+    case 'delivered':             return AppTheme.success;
+    case 'out_for_delivery':      return AppTheme.primary;
+    case 'at_delivery_warehouse': return AppTheme.warning;
+    case 'returned':              return AppTheme.error;
+    default:                      return AppTheme.accent;
+  }
 }
 
 String _statusLabel(String status) {
-  for (final s in _kStatuses) { if (s.$1 == status) return s.$2; }
-  return status;
+  switch (status) {
+    case 'delivered':             return 'مكتمل';
+    case 'out_for_delivery':      return 'خرج للتوصيل';
+    case 'at_delivery_warehouse': return 'مستودع التوصيل';
+    case 'returned':              return 'مُرجَع';
+    default:                      return 'في الانتظار';
+  }
 }
 
 // ─── Manifest Card ──────────────────────────────────────────
@@ -124,12 +130,12 @@ class _ManifestCard extends ConsumerStatefulWidget {
 class _ManifestCardState extends ConsumerState<_ManifestCard> {
   bool _updating = false;
 
-  Future<void> _setStatus(String newStatus) async {
+  Future<void> _dispatch() async {
     setState(() => _updating = true);
     try {
       await ref.read(internalShipmentsProvider.notifier).updateShipment(
         widget.manifest['id'] as String,
-        {'status': newStatus},
+        {'status': 'out_for_delivery'},
       );
       widget.onRefresh();
     } catch (e) {
@@ -143,14 +149,34 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
     }
   }
 
-  void _showDetail() {
-    showDialog(
-      context: context,
-      builder: (_) => _ManifestDetailDialog(
-        manifestId: widget.manifest['id'] as String,
-        onRefresh: widget.onRefresh,
-      ),
-    );
+  void _openDetail() {
+    final id = widget.manifest['id'] as String;
+    if (isMobile(context)) {
+      Navigator.of(context).push(MaterialPageRoute(
+        fullscreenDialog: true,
+        builder: (_) => _ManifestDetailPage(manifestId: id, onRefresh: widget.onRefresh),
+      ));
+    } else {
+      showDialog(
+        context: context,
+        builder: (_) => Dialog(
+          insetPadding: const EdgeInsets.symmetric(horizontal: 40, vertical: 24),
+          backgroundColor: AppTheme.darkSurface,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxWidth: dialogMaxWidth(context, desktopMax: 560),
+              maxHeight: dialogMaxHeight(context, cap: 720),
+            ),
+            child: _ManifestDetailPage(
+              manifestId: id,
+              onRefresh: widget.onRefresh,
+              embedded: true,
+            ),
+          ),
+        ),
+      );
+    }
   }
 
   @override
@@ -204,17 +230,27 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
           ]),
         ),
 
-        // Status pipeline
-        if (status != 'delivered')
+        // One explicit admin transition: pending → out_for_delivery.
+        // Everything after that (delivered, cash) is derived from per-door events.
+        if (status == 'pending' || status == 'at_delivery_warehouse')
           Container(
-            padding: const EdgeInsets.fromLTRB(16, 8, 16, 12),
+            padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
             decoration: BoxDecoration(border: Border(top: BorderSide(color: AppTheme.darkBorder))),
-            child: _updating
-              ? const Center(child: SizedBox(height: 32, child: CircularProgressIndicator(strokeWidth: 2)))
-              : _PipelineBar(currentStatus: status, onAdvance: _setStatus),
+            child: SizedBox(
+              width: double.infinity,
+              height: 36,
+              child: ElevatedButton.icon(
+                onPressed: _updating ? null : _dispatch,
+                icon: _updating
+                  ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Icon(Icons.local_shipping_outlined, size: 16),
+                label: const Text('خرج للتوصيل'),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+              ),
+            ),
           ),
 
-        // Cash row (only when delivered)
+        // Cash row (only when the manifest has settled to delivered)
         if (status == 'delivered')
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
@@ -234,12 +270,12 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           decoration: BoxDecoration(border: Border(top: BorderSide(color: AppTheme.darkBorder))),
           child: Row(children: [
-            Icon(Icons.receipt_long_outlined, color: Colors.white38, size: 15),
+            const Icon(Icons.receipt_long_outlined, color: Colors.white38, size: 15),
             const SizedBox(width: 6),
             Text('$orderCount طلب', style: const TextStyle(color: Colors.white54, fontSize: 12)),
             const Spacer(),
             TextButton.icon(
-              onPressed: _showDetail,
+              onPressed: _openDetail,
               icon: const Icon(Icons.open_in_new, size: 15),
               label: const Text('التفاصيل', style: TextStyle(fontSize: 12)),
               style: TextButton.styleFrom(foregroundColor: AppTheme.primary),
@@ -276,76 +312,9 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
   }
 }
 
-// ─── Pipeline Bar ───────────────────────────────────────────
-class _PipelineBar extends StatelessWidget {
-  final String currentStatus;
-  final void Function(String) onAdvance;
-  const _PipelineBar({required this.currentStatus, required this.onAdvance});
-
-  @override
-  Widget build(BuildContext context) {
-    const pipeline = ['pending', 'at_delivery_warehouse', 'out_for_delivery'];
-    final currentIdx = pipeline.indexOf(currentStatus);
-
-    return Column(children: [
-      Row(children: [
-        for (int i = 0; i < pipeline.length; i++) ...[
-          Expanded(
-            child: GestureDetector(
-              onTap: i > currentIdx ? () => onAdvance(pipeline[i]) : null,
-              child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: i <= currentIdx
-                    ? _statusColor(pipeline[i]).withValues(alpha: 0.2)
-                    : AppTheme.darkCard,
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                    color: i <= currentIdx
-                      ? _statusColor(pipeline[i]).withValues(alpha: 0.5)
-                      : AppTheme.darkBorder,
-                  ),
-                ),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Icon(
-                    i < currentIdx ? Icons.check_circle_rounded
-                      : i == currentIdx ? Icons.radio_button_checked
-                      : Icons.radio_button_unchecked,
-                    size: 16,
-                    color: i <= currentIdx ? _statusColor(pipeline[i]) : Colors.white24,
-                  ),
-                  const SizedBox(height: 2),
-                  Text(_statusLabel(pipeline[i]), style: TextStyle(
-                    color: i <= currentIdx ? Colors.white : Colors.white24,
-                    fontSize: 10, fontWeight: i == currentIdx ? FontWeight.w600 : FontWeight.w400,
-                  ), textAlign: TextAlign.center),
-                ]),
-              ),
-            ),
-          ),
-          if (i < pipeline.length - 1)
-            Container(width: 4, height: 2, color: Colors.white12),
-        ],
-      ]),
-      const SizedBox(height: 10),
-      // Action buttons for terminal states
-      Row(children: [
-        Expanded(child: OutlinedButton.icon(
-          onPressed: () => onAdvance('delivered'),
-          icon: const Icon(Icons.check_circle_outline, size: 16, color: AppTheme.success),
-          label: const Text('تم الاستلام', style: TextStyle(color: AppTheme.success, fontSize: 12)),
-          style: OutlinedButton.styleFrom(
-            side: const BorderSide(color: AppTheme.success),
-            padding: const EdgeInsets.symmetric(vertical: 8),
-          ),
-        )),
-      ]),
-    ]);
-  }
-}
-
 // ─── Create Manifest Dialog ─────────────────────────────────
+// Kept short (company + driver + notes only). Attaching orders happens
+// inline inside the manifest detail — no nested-dialog attach flow.
 class _CreateManifestDialog extends ConsumerStatefulWidget {
   final VoidCallback onCreated;
   const _CreateManifestDialog({required this.onCreated});
@@ -357,27 +326,11 @@ class _CreateManifestDialogState extends ConsumerState<_CreateManifestDialog> {
   final _companyCtrl = TextEditingController();
   final _driverCtrl  = TextEditingController();
   final _notesCtrl   = TextEditingController();
-  List<Map<String, dynamic>>? _availableOrders;
-  final Set<String> _selectedOrderIds = {};
-  bool _loadingOrders = true;
   bool _submitting = false;
   String? _error;
 
   @override
-  void initState() { super.initState(); _loadOrders(); }
-
-  @override
   void dispose() { _companyCtrl.dispose(); _driverCtrl.dispose(); _notesCtrl.dispose(); super.dispose(); }
-
-  Future<void> _loadOrders() async {
-    setState(() { _loadingOrders = true; _error = null; });
-    try {
-      final orders = await ref.read(internalShipmentsProvider.notifier).fetchAvailableOrders();
-      if (mounted) setState(() { _availableOrders = orders; _loadingOrders = false; });
-    } catch (e) {
-      if (mounted) setState(() { _loadingOrders = false; _error = '$e'; });
-    }
-  }
 
   Future<void> _submit() async {
     if (_companyCtrl.text.trim().isEmpty) { setState(() => _error = 'اسم شركة التوصيل مطلوب'); return; }
@@ -388,7 +341,6 @@ class _CreateManifestDialogState extends ConsumerState<_CreateManifestDialog> {
         'delivery_company': _companyCtrl.text.trim(),
         if (_driverCtrl.text.trim().isNotEmpty) 'driver_name': _driverCtrl.text.trim(),
         if (_notesCtrl.text.trim().isNotEmpty) 'notes': _notesCtrl.text.trim(),
-        if (_selectedOrderIds.isNotEmpty) 'order_ids': _selectedOrderIds.toList(),
       });
       widget.onCreated();
       if (mounted) Navigator.of(context).pop();
@@ -403,10 +355,10 @@ class _CreateManifestDialogState extends ConsumerState<_CreateManifestDialog> {
       backgroundColor: AppTheme.darkSurface,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 520), maxHeight: dialogMaxHeight(context, cap: 680)),
+        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 440)),
         child: Padding(
           padding: const EdgeInsets.all(24),
-          child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
             Row(children: [
               Container(
                 padding: const EdgeInsets.all(10),
@@ -439,65 +391,16 @@ class _CreateManifestDialogState extends ConsumerState<_CreateManifestDialog> {
               style: const TextStyle(color: Colors.white),
               decoration: const InputDecoration(labelText: 'ملاحظات', prefixIcon: Icon(Icons.notes_rounded)),
             ),
-            const SizedBox(height: 16),
-            Row(children: [
-              const Text('الطلبات الجاهزة للتوصيل', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-              const Spacer(),
-              if (_selectedOrderIds.isNotEmpty)
-                Text('${_selectedOrderIds.length} محدد', style: const TextStyle(color: AppTheme.primary, fontSize: 12, fontWeight: FontWeight.w600)),
-            ]),
-            const SizedBox(height: 8),
-            Expanded(
-              child: Container(
-                decoration: BoxDecoration(
-                  color: AppTheme.darkCard.withValues(alpha: 0.5),
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: AppTheme.darkBorder),
-                ),
-                child: _loadingOrders
-                  ? const Center(child: CircularProgressIndicator())
-                  : (_availableOrders?.isEmpty ?? true)
-                    ? const Center(child: Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Text('لا توجد طلبات جاهزة للتوصيل\n(يجب أن تكون بحالة "sorted" أو "ready_dispatch")',
-                          style: TextStyle(color: Colors.white38, fontSize: 13), textAlign: TextAlign.center),
-                      ))
-                    : ListView.builder(
-                        itemCount: _availableOrders!.length,
-                        itemBuilder: (ctx, i) {
-                          final order = _availableOrders![i];
-                          final id = order['id'] as String;
-                          final isChecked = _selectedOrderIds.contains(id);
-                          final name = order['customer_name'] as String? ?? '—';
-                          final city = order['customer_city'] as String? ?? '';
-                          final area = order['customer_area'] as String? ?? '';
-                          final location = [city, area].where((s) => s.isNotEmpty).join(' - ');
-                          final itemCount = (order['item_count'] as num?)?.toInt() ?? 0;
-
-                          return CheckboxListTile(
-                            value: isChecked,
-                            onChanged: (v) => setState(() => v! ? _selectedOrderIds.add(id) : _selectedOrderIds.remove(id)),
-                            activeColor: AppTheme.primary,
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 0),
-                            title: Text(name, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-                            subtitle: Text(
-                              [if (location.isNotEmpty) location, '$itemCount منتج'].join(' · '),
-                              style: const TextStyle(color: Colors.white38, fontSize: 12),
-                            ),
-                          );
-                        },
-                      ),
-              ),
-            ),
-            const SizedBox(height: 16),
+            const SizedBox(height: 20),
             SizedBox(height: 48, child: ElevatedButton(
               onPressed: _submitting ? null : _submit,
               child: _submitting
                 ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : Text(_selectedOrderIds.isEmpty
-                    ? 'إنشاء مانيفست (بدون طلبات)'
-                    : 'إنشاء مانيفست (${_selectedOrderIds.length} طلب)'),
+                : const Text('إنشاء المانيفست'),
             )),
+            const SizedBox(height: 6),
+            const Text('يمكنك ربط الطلبات من داخل المانيفست بعد إنشائه.',
+                style: TextStyle(color: Colors.white38, fontSize: 11), textAlign: TextAlign.center),
           ]),
         ),
       ),
@@ -505,19 +408,33 @@ class _CreateManifestDialogState extends ConsumerState<_CreateManifestDialog> {
   }
 }
 
-// ─── Manifest Detail Dialog ─────────────────────────────────
-class _ManifestDetailDialog extends ConsumerStatefulWidget {
+// ─── Manifest Detail — full-screen on mobile, dialog on desktop ───
+class _ManifestDetailPage extends ConsumerStatefulWidget {
   final String manifestId;
   final VoidCallback onRefresh;
-  const _ManifestDetailDialog({required this.manifestId, required this.onRefresh});
+  /// When true, the widget renders inside an existing Dialog and skips its
+  /// own Scaffold/AppBar so the desktop dialog stays compact.
+  final bool embedded;
+  const _ManifestDetailPage({
+    required this.manifestId,
+    required this.onRefresh,
+    this.embedded = false,
+  });
   @override
-  ConsumerState<_ManifestDetailDialog> createState() => _ManifestDetailDialogState();
+  ConsumerState<_ManifestDetailPage> createState() => _ManifestDetailPageState();
 }
 
-class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
+class _ManifestDetailPageState extends ConsumerState<_ManifestDetailPage> {
   Map<String, dynamic>? _manifest;
   bool _loading = true;
   String? _error;
+
+  // Inline attach section state (Phase-3 pattern from external shipments).
+  bool _attachOpen = false;
+  List<Map<String, dynamic>>? _availableOrders;
+  final Set<String> _selectedOrderIds = {};
+  bool _attachLoading = false;
+  bool _attaching = false;
 
   @override
   void initState() { super.initState(); _load(); }
@@ -532,6 +449,55 @@ class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
     }
   }
 
+  // ── Attach flow (inline, no nested dialog) ──────────────
+  Future<void> _toggleAttach() async {
+    setState(() => _attachOpen = !_attachOpen);
+    if (_attachOpen && _availableOrders == null) {
+      setState(() => _attachLoading = true);
+      try {
+        final orders = await ref.read(internalShipmentsProvider.notifier).fetchAvailableOrders();
+        if (mounted) setState(() { _availableOrders = orders; _attachLoading = false; });
+      } catch (e) {
+        if (mounted) {
+          setState(() => _attachLoading = false);
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+        }
+      }
+    }
+  }
+
+  Future<void> _attachSelected() async {
+    if (_selectedOrderIds.isEmpty) return;
+    setState(() => _attaching = true);
+    try {
+      final count = _selectedOrderIds.length;
+      await ref.read(internalShipmentsProvider.notifier).attachOrders(
+        widget.manifestId, _selectedOrderIds.toList(),
+      );
+      widget.onRefresh();
+      if (!mounted) return;
+      setState(() {
+        _selectedOrderIds.clear();
+        _availableOrders = null; // force refetch next time
+        _attachOpen = false;
+      });
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('تم ربط $count طلبية بالمانيفست'),
+          backgroundColor: AppTheme.success,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      }
+    } finally {
+      if (mounted) setState(() => _attaching = false);
+    }
+  }
+
+  // ── Handover / per-order edits / per-order return + delivered ──
   Future<void> _showHandoverDialog() async {
     final expected = (_manifest!['cash_expected'] as num?)?.toDouble() ?? 0;
     final ctrl = TextEditingController(text: expected.toStringAsFixed(0));
@@ -643,6 +609,75 @@ class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
     }
   }
 
+  Future<void> _markOrderDelivered(Map<String, dynamic> order) async {
+    final orderId = order['id'] as String;
+    // Compute the default cash to seed (sale - deposit if the backend can't
+    // derive it locally). Backend does the seed itself; we just show it.
+    final expected = _defaultCashFor(order);
+    final ctrl = TextEditingController(text: expected.toStringAsFixed(0));
+    final result = await showDialog<double?>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('تأكيد التسليم', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          Text('المتوقع من الزبون: ${expected.toStringAsFixed(0)} د.ل',
+              style: const TextStyle(color: Colors.white70, fontSize: 13)),
+          const SizedBox(height: 12),
+          TextField(
+            controller: ctrl,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              labelText: 'المحصَّل عند الباب (د.ل)',
+              prefixIcon: Icon(Icons.payments_outlined),
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.of(dctx).pop(), child: const Text('إلغاء', style: TextStyle(color: Colors.white54))),
+          ElevatedButton(
+            onPressed: () {
+              final v = double.tryParse(ctrl.text.trim().replaceAll(',', '.'));
+              Navigator.of(dctx).pop(v);
+            },
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
+            child: const Text('تأكيد التسليم'),
+          ),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (result == null || !mounted) return;
+    try {
+      await ref.read(internalShipmentsProvider.notifier).markOrderDelivered(
+        widget.manifestId, orderId, cashCollected: result,
+      );
+      widget.onRefresh();
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('تم تسجيل التسليم'),
+          backgroundColor: AppTheme.success,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$e'), backgroundColor: AppTheme.error));
+      }
+    }
+  }
+
+  double _defaultCashFor(Map<String, dynamic> order) {
+    final sale = (order['total_sale_price_lyd'] as num?)?.toDouble()
+        ?? (order['items_sale_total_lyd'] as num?)?.toDouble() ?? 0;
+    final deposit = (order['deposit_amount'] as num?)?.toDouble() ?? 0;
+    final diff = sale - deposit;
+    return diff < 0 ? 0 : diff;
+  }
+
   Future<void> _returnOrder(String orderId) async {
     final confirm = await showDialog<bool>(
       context: context,
@@ -670,15 +705,14 @@ class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
     if (!context.mounted || confirm != true) return;
     try {
       await ref.read(internalShipmentsProvider.notifier).returnOrder(widget.manifestId, orderId);
-      if (!mounted) return;
-      setState(() {
-        final orders = _manifest!['orders'] as List<dynamic>;
-        orders.removeWhere((o) => (o as Map<String, dynamic>)['id'] == orderId);
-      });
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-        content: Text('تم تحويل الطلبية للبضاعة الفورية'),
-        backgroundColor: AppTheme.success,
-      ));
+      widget.onRefresh();
+      await _load();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('تم تحويل الطلبية للبضاعة الفورية'),
+          backgroundColor: AppTheme.success,
+        ));
+      }
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(
@@ -690,162 +724,323 @@ class _ManifestDetailDialogState extends ConsumerState<_ManifestDetailDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return Dialog(
-      insetPadding: EdgeInsets.symmetric(horizontal: isMobile(context) ? 8 : 40, vertical: 24),
+    final body = _loading
+      ? const Center(child: CircularProgressIndicator())
+      : _error != null
+        ? Center(child: Text(_error!, style: const TextStyle(color: AppTheme.error)))
+        : _buildBody();
+
+    if (widget.embedded) {
+      return Padding(padding: const EdgeInsets.all(20), child: body);
+    }
+    // Full-screen page (mobile route)
+    return Scaffold(
       backgroundColor: AppTheme.darkSurface,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-      child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: dialogMaxWidth(context, desktopMax: 520), maxHeight: dialogMaxHeight(context, cap: 580)),
-        child: Padding(
-          padding: const EdgeInsets.all(24),
-          child: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-              ? Center(child: Text(_error!, style: const TextStyle(color: AppTheme.error)))
-              : Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-                  Row(children: [
-                    const Icon(Icons.local_shipping_rounded, color: AppTheme.primary, size: 22),
-                    const SizedBox(width: 10),
-                    Expanded(child: Text(
-                      _manifest!['delivery_company'] as String? ?? '—',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
-                    )),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: _statusColor(_manifest!['status'] as String? ?? 'pending').withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: Text(
-                        _statusLabel(_manifest!['status'] as String? ?? 'pending'),
-                        style: TextStyle(color: _statusColor(_manifest!['status'] as String? ?? 'pending'), fontSize: 12, fontWeight: FontWeight.w600),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    IconButton(icon: const Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.of(context).pop()),
-                  ]),
-                  const SizedBox(height: 16),
-                  if ((_manifest!['driver_name'] as String?)?.trim().isNotEmpty ?? false)
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 8),
-                      child: Row(children: [
-                        const Icon(Icons.person_outline, color: Colors.white54, size: 15),
-                        const SizedBox(width: 6),
-                        Text('المندوب: ${(_manifest!['driver_name'] as String).trim()}',
-                          style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                      ]),
-                    ),
-                  if ((_manifest!['status'] as String? ?? '') == 'delivered')
-                    Padding(
-                      padding: const EdgeInsets.only(bottom: 12),
-                      child: Row(children: [
-                        Expanded(child: Text(
-                          'متوقع: ${((_manifest!['cash_expected'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)} د.ل',
-                          style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
-                        )),
-                        if (_manifest!['cash_handed_over'] == null)
-                          ElevatedButton.icon(
-                            onPressed: _showHandoverDialog,
-                            icon: const Icon(Icons.payments_outlined, size: 16),
-                            label: const Text('تسليم الكاش', style: TextStyle(fontSize: 12)),
-                            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
-                          )
-                        else
-                          Builder(builder: (_) {
-                            final handed = (_manifest!['cash_handed_over'] as num).toDouble();
-                            final expected = (_manifest!['cash_expected'] as num?)?.toDouble() ?? 0;
-                            final diff = handed - expected;
-                            final shortfall = diff < -0.5;
-                            final bg = shortfall ? AppTheme.error : AppTheme.success;
-                            final label = shortfall
-                              ? 'تم تسليم ${handed.toStringAsFixed(0)} (ناقص ${(-diff).toStringAsFixed(0)})'
-                              : 'تم تسليم ${handed.toStringAsFixed(0)} د.ل';
-                            return Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                              decoration: BoxDecoration(color: bg.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
-                              child: Text(label, style: TextStyle(color: bg, fontSize: 11, fontWeight: FontWeight.w600)),
-                            );
-                          }),
-                      ]),
-                    ),
-                  const Divider(color: AppTheme.darkBorder),
-                  const SizedBox(height: 12),
-                  const Text('الطلبات في هذا المانيفست', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                  const SizedBox(height: 8),
-                  Expanded(
-                    child: Builder(builder: (ctx) {
-                      final orders = (_manifest!['orders'] as List<dynamic>?) ?? [];
-                      if (orders.isEmpty) {
-                        return const Center(child: Text('لا توجد طلبات مرتبطة', style: TextStyle(color: Colors.white38)));
-                      }
-                      return ListView.separated(
-                        itemCount: orders.length,
-                        separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.darkBorder),
-                        itemBuilder: (_, i) {
-                          final order = orders[i] as Map<String, dynamic>;
-                          final name = order['customer_name'] as String? ?? '—';
-                          final phone = order['customer_phone'] as String? ?? '';
-                          final city = order['customer_city'] as String? ?? '';
-                          final area = order['customer_area'] as String? ?? '';
-                          final location = [city, area].where((s) => s.isNotEmpty).join(' - ');
-                          final itemCount = (order['item_count'] as num?)?.toInt() ?? 0;
-                          final status = order['status'] as String? ?? '';
-                          final cashCollected = (order['cash_collected'] as num?)?.toDouble() ?? 0;
-                          final manifestStatus = _manifest!['status'] as String? ?? '';
-                          final canReturn = manifestStatus != 'delivered';
-                          final isDelivered = status == 'delivered';
-                          return ListTile(
-                            contentPadding: const EdgeInsets.symmetric(horizontal: 0, vertical: 2),
-                            title: Text(name, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-                            subtitle: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Text(
-                                [if (phone.isNotEmpty) phone, if (location.isNotEmpty) location, '$itemCount منتج'].join(' · '),
-                                style: const TextStyle(color: Colors.white38, fontSize: 12),
-                              ),
-                              if (isDelivered)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 4),
-                                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                                    const Icon(Icons.payments_outlined, size: 12, color: AppTheme.success),
-                                    const SizedBox(width: 4),
-                                    Text('قبض: ${cashCollected.toStringAsFixed(0)} د.ل',
-                                      style: const TextStyle(color: AppTheme.success, fontSize: 11, fontWeight: FontWeight.w600)),
-                                    const SizedBox(width: 4),
-                                    IconButton(
-                                      icon: const Icon(Icons.edit_outlined, size: 13, color: Colors.white54),
-                                      tooltip: 'تعديل المحصَّل',
-                                      onPressed: () => _editOrderCash(order),
-                                      padding: EdgeInsets.zero,
-                                      constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
-                                    ),
-                                  ]),
-                                ),
-                            ]),
-                            trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-                              Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                decoration: BoxDecoration(color: _statusColor(status).withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
-                                child: Text(_statusLabel(status), style: TextStyle(color: _statusColor(status), fontSize: 11)),
-                              ),
-                              if (canReturn) ...[
-                                const SizedBox(width: 4),
-                                IconButton(
-                                  icon: const Icon(Icons.reply_rounded, size: 16, color: AppTheme.error),
-                                  tooltip: 'راجع → فوري',
-                                  onPressed: () => _returnOrder(order['id'] as String),
-                                  padding: EdgeInsets.zero,
-                                  constraints: const BoxConstraints(),
-                                ),
-                              ],
-                            ]),
-                          );
-                        },
-                      );
-                    }),
-                  ),
-                ]),
+      appBar: AppBar(
+        backgroundColor: AppTheme.darkSurface,
+        elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.close, color: Colors.white70),
+          onPressed: () => Navigator.of(context).pop(),
+        ),
+        title: Text(_manifest?['delivery_company'] as String? ?? 'المانيفست',
+            style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w600)),
+      ),
+      body: Padding(padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12), child: body),
+    );
+  }
+
+  Widget _buildBody() {
+    final m = _manifest!;
+    final status = m['status'] as String? ?? 'pending';
+    final statusColor = _statusColor(status);
+    final orders = (m['orders'] as List<dynamic>?) ?? [];
+    final driverName = (m['driver_name'] as String?)?.trim();
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+      // Header row (only in embedded mode — full-screen has an AppBar)
+      if (widget.embedded)
+        Row(children: [
+          const Icon(Icons.local_shipping_rounded, color: AppTheme.primary, size: 22),
+          const SizedBox(width: 10),
+          Expanded(child: Text(
+            m['delivery_company'] as String? ?? '—',
+            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 16),
+          )),
+          IconButton(icon: const Icon(Icons.close, color: Colors.white54), onPressed: () => Navigator.of(context).pop()),
+        ]),
+      if (widget.embedded) const SizedBox(height: 8),
+      // Derived badge + subtitle
+      Row(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+          decoration: BoxDecoration(
+            color: statusColor.withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: statusColor.withValues(alpha: 0.4)),
+          ),
+          child: Text(_statusLabel(status),
+              style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w600)),
+        ),
+        const SizedBox(width: 8),
+        const Expanded(child: Text('حالة "مكتمل" تُحسب تلقائياً من التسليمات',
+            style: TextStyle(color: Colors.white38, fontSize: 11))),
+      ]),
+      if (driverName != null && driverName.isNotEmpty) ...[
+        const SizedBox(height: 6),
+        Row(children: [
+          const Icon(Icons.person_outline, color: Colors.white54, size: 15),
+          const SizedBox(width: 6),
+          Text('المندوب: $driverName', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+        ]),
+      ],
+      if (status == 'delivered')
+        Padding(
+          padding: const EdgeInsets.only(top: 12),
+          child: Row(children: [
+            Expanded(child: Text(
+              'متوقع: ${((m['cash_expected'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)} د.ل',
+              style: const TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
+            )),
+            if (m['cash_handed_over'] == null)
+              ElevatedButton.icon(
+                onPressed: _showHandoverDialog,
+                icon: const Icon(Icons.payments_outlined, size: 16),
+                label: const Text('تسليم الكاش', style: TextStyle(fontSize: 12)),
+                style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+              )
+            else
+              Builder(builder: (_) {
+                final handed = (m['cash_handed_over'] as num).toDouble();
+                final expected = (m['cash_expected'] as num?)?.toDouble() ?? 0;
+                final diff = handed - expected;
+                final shortfall = diff < -0.5;
+                final bg = shortfall ? AppTheme.error : AppTheme.success;
+                final label = shortfall
+                  ? 'تم تسليم ${handed.toStringAsFixed(0)} (ناقص ${(-diff).toStringAsFixed(0)})'
+                  : 'تم تسليم ${handed.toStringAsFixed(0)} د.ل';
+                return Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  decoration: BoxDecoration(color: bg.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
+                  child: Text(label, style: TextStyle(color: bg, fontSize: 11, fontWeight: FontWeight.w600)),
+                );
+              }),
+          ]),
+        ),
+      const SizedBox(height: 14),
+      // Inline attach (Phase-3 pattern)
+      InkWell(
+        onTap: _toggleAttach,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppTheme.darkCard,
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(color: AppTheme.darkBorder),
+          ),
+          child: Row(children: [
+            const Icon(Icons.attach_file_rounded, color: AppTheme.secondary, size: 18),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('ربط طلبيات',
+                style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600))),
+            Icon(_attachOpen ? Icons.expand_less : Icons.expand_more, color: Colors.white54, size: 20),
+          ]),
         ),
       ),
+      if (_attachOpen) _buildAttachInline(),
+      const SizedBox(height: 12),
+      const Divider(color: AppTheme.darkBorder),
+      const SizedBox(height: 8),
+      const Text('الطلبات', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+      const SizedBox(height: 6),
+      Expanded(
+        child: orders.isEmpty
+          ? const Center(child: Text('لا توجد طلبات مرتبطة',
+              style: TextStyle(color: Colors.white38, fontSize: 13)))
+          : ListView.separated(
+              itemCount: orders.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 6),
+              itemBuilder: (_, i) => _OrderRow(
+                order: orders[i] as Map<String, dynamic>,
+                manifestStatus: status,
+                onDelivered: () => _markOrderDelivered(orders[i] as Map<String, dynamic>),
+                onReturn: () => _returnOrder((orders[i] as Map<String, dynamic>)['id'] as String),
+                onEditCash: () => _editOrderCash(orders[i] as Map<String, dynamic>),
+              ),
+            ),
+      ),
+    ]);
+  }
+
+  Widget _buildAttachInline() {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.darkCard.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: AppTheme.darkBorder),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        const Text('الطلبات الجاهزة للتوصيل (sorted أو ready_dispatch)، غير مربوطة بعد',
+            style: TextStyle(color: Colors.white38, fontSize: 11)),
+        const SizedBox(height: 8),
+        if (_attachLoading)
+          const Padding(padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(child: CircularProgressIndicator(strokeWidth: 2)))
+        else if ((_availableOrders?.isEmpty ?? true))
+          const Padding(padding: EdgeInsets.all(12),
+              child: Text('لا توجد طلبات جاهزة',
+                  style: TextStyle(color: Colors.white38, fontSize: 12), textAlign: TextAlign.center))
+        else ...[
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 220),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: _availableOrders!.length,
+              itemBuilder: (_, i) {
+                final order = _availableOrders![i];
+                final orderId = order['id'] as String;
+                final name = order['customer_name'] as String? ?? '—';
+                final city = order['customer_city'] as String? ?? '';
+                final area = order['customer_area'] as String? ?? '';
+                final location = [city, area].where((s) => s.isNotEmpty).join(' - ');
+                final itemCount = (order['item_count'] as num?)?.toInt() ?? 0;
+                final isChecked = _selectedOrderIds.contains(orderId);
+                return CheckboxListTile(
+                  dense: true,
+                  value: isChecked,
+                  onChanged: (v) => setState(() => v! ? _selectedOrderIds.add(orderId) : _selectedOrderIds.remove(orderId)),
+                  activeColor: AppTheme.primary,
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 4, vertical: 0),
+                  title: Text(name,
+                      style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.w500)),
+                  subtitle: Text([if (location.isNotEmpty) location, '$itemCount منتج'].join(' · '),
+                      style: const TextStyle(color: Colors.white38, fontSize: 11)),
+                );
+              },
+            ),
+          ),
+          const SizedBox(height: 8),
+          SizedBox(height: 40, child: ElevatedButton(
+            onPressed: (_selectedOrderIds.isEmpty || _attaching) ? null : _attachSelected,
+            child: _attaching
+              ? const SizedBox(width: 16, height: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+              : Text(_selectedOrderIds.isEmpty ? 'اختر طلبيات' : 'ربط ${_selectedOrderIds.length} طلبية'),
+          )),
+        ],
+      ]),
+    );
+  }
+}
+
+// ─── Per-order row inside the manifest detail ─────────────
+class _OrderRow extends StatelessWidget {
+  final Map<String, dynamic> order;
+  final String manifestStatus;
+  final VoidCallback onDelivered;
+  final VoidCallback onReturn;
+  final VoidCallback onEditCash;
+  const _OrderRow({
+    required this.order,
+    required this.manifestStatus,
+    required this.onDelivered,
+    required this.onReturn,
+    required this.onEditCash,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final name = order['customer_name'] as String? ?? '—';
+    final phone = order['customer_phone'] as String? ?? '';
+    final city = order['customer_city'] as String? ?? '';
+    final area = order['customer_area'] as String? ?? '';
+    final location = [city, area].where((s) => s.isNotEmpty).join(' - ');
+    final itemCount = (order['item_count'] as num?)?.toInt() ?? 0;
+    final status = order['status'] as String? ?? '';
+    final cashCollected = (order['cash_collected'] as num?)?.toDouble() ?? 0;
+    final isDelivered = status == 'delivered';
+    final isCancelled = status == 'cancelled';
+    final canAct = manifestStatus == 'out_for_delivery' && !isDelivered && !isCancelled;
+
+    Color chipBg;
+    Color chipFg;
+    String chipLabel;
+    if (isDelivered) {
+      chipBg = AppTheme.success; chipFg = AppTheme.success; chipLabel = 'مكتمل';
+    } else if (isCancelled) {
+      chipBg = AppTheme.error; chipFg = AppTheme.error; chipLabel = 'مُرجَع';
+    } else {
+      chipBg = AppTheme.accent; chipFg = AppTheme.accent; chipLabel = 'بانتظار التسليم';
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: AppTheme.darkSurface,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: chipBg.withValues(alpha: 0.25)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Row(children: [
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+            const SizedBox(height: 2),
+            Text(
+              [if (phone.isNotEmpty) phone, if (location.isNotEmpty) location, '$itemCount منتج'].join(' · '),
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+          ])),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(color: chipBg.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(6)),
+            child: Text(chipLabel, style: TextStyle(color: chipFg, fontSize: 11, fontWeight: FontWeight.w600)),
+          ),
+        ]),
+        if (isDelivered) ...[
+          const SizedBox(height: 6),
+          Row(children: [
+            const Icon(Icons.payments_outlined, size: 13, color: AppTheme.success),
+            const SizedBox(width: 4),
+            Text('قبض: ${cashCollected.toStringAsFixed(0)} د.ل',
+                style: const TextStyle(color: AppTheme.success, fontSize: 11, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 4),
+            IconButton(
+              icon: const Icon(Icons.edit_outlined, size: 13, color: Colors.white54),
+              tooltip: 'تعديل المحصَّل',
+              onPressed: onEditCash,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 24, minHeight: 24),
+            ),
+          ]),
+        ],
+        if (canAct) ...[
+          const SizedBox(height: 8),
+          Row(children: [
+            Expanded(child: ElevatedButton.icon(
+              onPressed: onDelivered,
+              icon: const Icon(Icons.check_circle_outline, size: 16),
+              label: const Text('تم التسليم', style: TextStyle(fontSize: 12)),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: AppTheme.success,
+                padding: const EdgeInsets.symmetric(vertical: 8),
+              ),
+            )),
+            const SizedBox(width: 6),
+            OutlinedButton.icon(
+              onPressed: onReturn,
+              icon: const Icon(Icons.reply_rounded, size: 15, color: AppTheme.error),
+              label: const Text('راجع → فوري',
+                  style: TextStyle(color: AppTheme.error, fontSize: 12)),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: AppTheme.error.withValues(alpha: 0.5)),
+                padding: const EdgeInsets.symmetric(vertical: 8, horizontal: 10),
+              ),
+            ),
+          ]),
+        ],
+      ]),
     );
   }
 }
