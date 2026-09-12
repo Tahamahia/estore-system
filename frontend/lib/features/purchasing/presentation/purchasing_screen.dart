@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:url_launcher/url_launcher.dart';
+import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
@@ -118,6 +119,25 @@ class _PurchasingScreenState extends ConsumerState<PurchasingScreen> {
         setState(() => _saving = false);
         return;
       }
+      // Snapshot the distinct order_ids these items belong to BEFORE we
+      // refetch — after the refetch the drafts are gone and the /purchasing
+      // response no longer includes items that were just marked purchased.
+      final data = ref.read(purchasingProvider).valueOrNull;
+      final itemToOrder = <String, String>{};
+      if (data != null) {
+        for (final o in (data['orders'] as List<dynamic>? ?? [])) {
+          final order = o as Map<String, dynamic>;
+          final oid = order['order_id'] as String;
+          for (final it in (order['items'] as List<dynamic>? ?? [])) {
+            itemToOrder[(it as Map<String, dynamic>)['id'] as String] = oid;
+          }
+        }
+      }
+      final savedOrderIds = <String>{
+        for (final it in items)
+          if (itemToOrder[it['id']] != null) itemToOrder[it['id']]!,
+      };
+
       final result = await ref.read(purchasingProvider.notifier).savePurchases({
         'items': items,
         'mark_purchased': _markPurchased,
@@ -135,6 +155,12 @@ class _PurchasingScreenState extends ConsumerState<PurchasingScreen> {
         draft?.dispose();
       }
       await ref.read(purchasingProvider.notifier).fetchQueue();
+
+      // PART C: after a purchased-marked save, offer to create an external
+      // shipment straight from here so the buyer doesn't have to jump screens.
+      if (_markPurchased && savedOrderIds.isNotEmpty && mounted) {
+        await _promptExternalShipment(savedOrderIds.toList());
+      }
     } on DioException catch (e) {
       final status = e.response?.statusCode;
       final data = e.response?.data;
@@ -160,6 +186,72 @@ class _PurchasingScreenState extends ConsumerState<PurchasingScreen> {
       }
     } finally {
       if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _promptExternalShipment(List<String> orderIds) async {
+    final trackingCtrl = TextEditingController();
+    final tracking = await showDialog<String?>(
+      context: context,
+      builder: (dctx) => AlertDialog(
+        backgroundColor: AppTheme.darkSurface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        title: const Text('شحن مباشر من الموقع؟',
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w700)),
+        content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+          const Text(
+            'هل شحن الموقع هذه القطع في طرد واحد؟ أدخل رقم التتبع لإنشاء شحنة خارجية مباشرة.',
+            style: TextStyle(color: Colors.white70, fontSize: 13),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: trackingCtrl,
+            autofocus: true,
+            style: const TextStyle(color: Colors.white),
+            decoration: const InputDecoration(
+              labelText: 'رقم التتبع',
+              prefixIcon: Icon(Icons.qr_code_2, size: 18),
+            ),
+          ),
+        ]),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dctx).pop(null),
+            child: const Text('تخطي', style: TextStyle(color: Colors.white54)),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.of(dctx).pop(trackingCtrl.text.trim()),
+            style: ElevatedButton.styleFrom(backgroundColor: AppTheme.primary),
+            child: const Text('إنشاء الشحنة'),
+          ),
+        ],
+      ),
+    );
+    trackingCtrl.dispose();
+
+    if (tracking == null || tracking.isEmpty || !mounted) return;
+    try {
+      final shipmentId = const Uuid().v4();
+      final notifier = ref.read(externalShipmentsProvider.notifier);
+      await notifier.createShipment({'id': shipmentId, 'tracking_number': tracking});
+      await notifier.attachOrders(shipmentId, orderIds);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('تم إنشاء الشحنة $tracking وربط ${orderIds.length} طلبية'),
+          backgroundColor: AppTheme.success,
+        ));
+      }
+    } on DioException catch (e) {
+      final data = e.response?.data;
+      final msg = data is Map<String, dynamic>
+          ? (data['message'] as String? ?? data['error'] as String? ?? 'فشل إنشاء الشحنة')
+          : 'فشل إنشاء الشحنة';
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(msg),
+          backgroundColor: AppTheme.error,
+        ));
+      }
     }
   }
 
