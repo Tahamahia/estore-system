@@ -867,7 +867,7 @@ class _ScanTile extends StatelessWidget {
           if (scan.shipmentProgress != null) ...[
             const SizedBox(height: 4),
             Text(
-              'الشحنة: ${scan.shipmentProgress!['arrived']}/${scan.shipmentProgress!['expected']}',
+              'الشحنة: ${scan.shipmentProgress!['confirmed']}/${scan.shipmentProgress!['expected']}',
               style: const TextStyle(color: Colors.white38, fontSize: 11),
             ),
           ],
