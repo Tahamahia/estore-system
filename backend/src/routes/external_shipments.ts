@@ -1,7 +1,37 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { requireRole } from '../middleware/tenant';
-import { buildRecomputeOrderStatusStmt } from '../lib/orderStatus';
+import { buildRecomputeOrderStatusStmt, buildRecomputeExternalShipmentStmt } from '../lib/orderStatus';
+
+// Reconciliation SQL fragment reused by GET / list, GET /:id detail, and the
+// dedicated /reconciliation endpoint. All three read from order_items joined
+// per external shipment. Kept in one place so the counts can never drift.
+const RECON_COUNTS_SQL = `
+  COALESCE((
+    SELECT COUNT(*) FROM order_items oi
+    WHERE oi.external_shipment_id = es.id AND oi.tenant_id = es.tenant_id
+      AND oi.is_deleted = 0
+      AND oi.status NOT IN ('cancelled','refunded','in_stock','transferred_to_inventory')
+  ), 0) AS expected_count,
+  COALESCE((
+    SELECT COUNT(*) FROM order_items oi
+    WHERE oi.external_shipment_id = es.id AND oi.tenant_id = es.tenant_id
+      AND oi.is_deleted = 0
+      AND oi.status IN ('arrived_warehouse','sorted','ready_dispatch','dispatched','delivered')
+  ), 0) AS arrived_count,
+  COALESCE((
+    SELECT COUNT(*) FROM order_items oi
+    WHERE oi.external_shipment_id = es.id AND oi.tenant_id = es.tenant_id
+      AND oi.is_deleted = 0
+      AND oi.status IN ('sorted','ready_dispatch','dispatched','delivered')
+  ), 0) AS sorted_count,
+  COALESCE((
+    SELECT COUNT(*) FROM order_items oi
+    WHERE oi.external_shipment_id = es.id AND oi.tenant_id = es.tenant_id
+      AND oi.is_deleted = 0
+      AND oi.status = 'shipped'
+  ), 0) AS missing_count
+`;
 
 export const externalShipmentRoutes = new Hono<AppEnv>();
 
@@ -215,7 +245,8 @@ externalShipmentRoutes.get('/', async (c) => {
 
   const results = await c.env.DB.prepare(`
     SELECT es.*,
-           COUNT(oi.id) AS item_count
+           COUNT(oi.id) AS item_count,
+           ${RECON_COUNTS_SQL}
     FROM external_shipments es
     LEFT JOIN order_items oi
            ON oi.external_shipment_id = es.id AND oi.is_deleted = 0
@@ -272,9 +303,11 @@ externalShipmentRoutes.get('/:id', async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
 
-  const shipment = await c.env.DB.prepare(
-    `SELECT * FROM external_shipments WHERE id = ? AND tenant_id = ?`
-  ).bind(id, tenantId).first();
+  const shipment = await c.env.DB.prepare(`
+    SELECT es.*, ${RECON_COUNTS_SQL}
+    FROM external_shipments es
+    WHERE es.id = ? AND es.tenant_id = ?
+  `).bind(id, tenantId).first();
   if (!shipment) return c.json({ error: 'Not Found' }, 404);
 
   const items = await c.env.DB.prepare(`
@@ -290,11 +323,19 @@ externalShipmentRoutes.get('/:id', async (c) => {
   return c.json({ ...shipment, items: items.results });
 });
 
-// PATCH /external-shipments/:id — update; cascade to items on arrived_at_warehouse
+// PATCH /external-shipments/:id — update editable fields only.
+// manual_status is derived from items; clients cannot set it.
 externalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
   const body = await c.req.json();
+
+  if (body.manual_status !== undefined) {
+    return c.json({
+      error: 'Bad Request',
+      message: 'حالة الشحنة تُحسب تلقائياً من قطعها',
+    }, 400);
+  }
 
   const existing = await c.env.DB.prepare(
     `SELECT id FROM external_shipments WHERE id = ? AND tenant_id = ?`
@@ -304,43 +345,136 @@ externalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager',
   const setClauses: string[] = [`updated_at = datetime('now')`];
   const values: unknown[] = [];
   if (body.tracking_number !== undefined) { setClauses.push('tracking_number = ?'); values.push(body.tracking_number); }
-  if (body.manual_status   !== undefined) { setClauses.push('manual_status = ?');   values.push(body.manual_status); }
-  if (body.courier_code    !== undefined) { setClauses.push('courier_code = ?');     values.push(body.courier_code); }
-  if (body.notes           !== undefined) { setClauses.push('notes = ?');            values.push(body.notes); }
-  if (body.api_status      !== undefined) { setClauses.push('api_status = ?');       values.push(body.api_status); }
+  if (body.courier_code    !== undefined) { setClauses.push('courier_code = ?');    values.push(body.courier_code); }
+  if (body.notes           !== undefined) { setClauses.push('notes = ?');           values.push(body.notes); }
+  if (body.api_status      !== undefined) { setClauses.push('api_status = ?');      values.push(body.api_status); }
 
   if (setClauses.length === 1) return c.json({ error: 'No fields to update' }, 400);
 
-  if (body.manual_status === 'arrived_at_warehouse') {
-    // Collect distinct order_ids before updating so we can recompute each order's status
-    const affected = await c.env.DB.prepare(`
-      SELECT DISTINCT order_id FROM order_items
-      WHERE external_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
-        AND status NOT IN ('cancelled', 'refunded')
-    `).bind(id, tenantId).all();
-    const orderIds = affected.results.map((r) => (r as Record<string, unknown>).order_id as string);
-
-    const recomputeStmts = orderIds.map((oid) => buildRecomputeOrderStatusStmt(c.env.DB, oid, tenantId));
-    await c.env.DB.batch([
-      c.env.DB.prepare(
-        `UPDATE external_shipments SET ${setClauses.join(', ')} WHERE id = ? AND tenant_id = ?`
-      ).bind(...values, id, tenantId),
-      c.env.DB.prepare(`
-        UPDATE order_items
-        SET status = 'arrived_warehouse', updated_at = datetime('now'), version = version + 1
-        WHERE external_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
-          AND status NOT IN ('cancelled', 'refunded')
-      `).bind(id, tenantId),
-      ...recomputeStmts,
-    ]);
-  } else {
-    await c.env.DB.prepare(
-      `UPDATE external_shipments SET ${setClauses.join(', ')} WHERE id = ? AND tenant_id = ?`
-    ).bind(...values, id, tenantId).run();
-  }
+  await c.env.DB.prepare(
+    `UPDATE external_shipments SET ${setClauses.join(', ')} WHERE id = ? AND tenant_id = ?`
+  ).bind(...values, id, tenantId).run();
 
   return c.json({ message: 'Updated', id });
 });
+
+// POST /external-shipments/:id/receive — "the boxes are physically here".
+// Advances every still-'shipped' live item on the shipment to 'arrived_warehouse',
+// recomputes each affected order, then recomputes the shipment (which will
+// now settle to 'arrived_at_warehouse' since no live items remain in 'shipped').
+externalShipmentRoutes.post('/:id/receive', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const id = c.req.param('id')!;
+
+  const shipment = await c.env.DB.prepare(
+    `SELECT id FROM external_shipments WHERE id = ? AND tenant_id = ?`
+  ).bind(id, tenantId).first();
+  if (!shipment) return c.json({ error: 'Not Found' }, 404);
+
+  const affected = await c.env.DB.prepare(`
+    SELECT DISTINCT order_id FROM order_items
+    WHERE external_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
+      AND status = 'shipped'
+  `).bind(id, tenantId).all();
+  const orderIds = affected.results
+    .map((r) => (r as Record<string, unknown>).order_id as string | null)
+    .filter((v): v is string => !!v);
+
+  const recomputeStmts = orderIds.map((oid) => buildRecomputeOrderStatusStmt(c.env.DB, oid, tenantId));
+
+  await c.env.DB.batch([
+    c.env.DB.prepare(`
+      UPDATE order_items
+      SET status = 'arrived_warehouse', updated_at = datetime('now'), version = version + 1
+      WHERE external_shipment_id = ? AND tenant_id = ? AND is_deleted = 0
+        AND status = 'shipped'
+    `).bind(id, tenantId),
+    ...recomputeStmts,
+    buildRecomputeExternalShipmentStmt(c.env.DB, id, tenantId),
+  ]);
+
+  return c.json({ message: 'Received', id, orders_recomputed: orderIds.length });
+});
+
+// GET /external-shipments/:id/reconciliation
+// Full item-level breakdown for the receiving/reconciliation view.
+externalShipmentRoutes.get('/:id/reconciliation', async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const id = c.req.param('id');
+
+  const shipment = await c.env.DB.prepare(
+    `SELECT id FROM external_shipments WHERE id = ? AND tenant_id = ?`
+  ).bind(id, tenantId).first();
+  if (!shipment) return c.json({ error: 'Not Found' }, 404);
+
+  const rows = await c.env.DB.prepare(`
+    SELECT oi.id AS item_id, oi.product_name, oi.sku, oi.status, oi.order_id,
+           c.full_name AS customer_name
+    FROM order_items oi
+    JOIN orders o ON oi.order_id = o.id AND o.is_deleted = 0
+    LEFT JOIN customers c ON c.id = o.customer_id
+    WHERE oi.external_shipment_id = ? AND oi.tenant_id = ? AND oi.is_deleted = 0
+      AND oi.status NOT IN ('cancelled','refunded','in_stock','transferred_to_inventory')
+  `).bind(id, tenantId).all();
+
+  const arrivedStates = new Set(['arrived_warehouse','sorted','ready_dispatch','dispatched','delivered']);
+  const sortedStates  = new Set(['sorted','ready_dispatch','dispatched','delivered']);
+
+  let expected = 0, arrived = 0, sorted = 0;
+  const missing: Array<Record<string, unknown>> = [];
+  for (const raw of rows.results as Array<Record<string, unknown>>) {
+    expected++;
+    const s = raw.status as string;
+    if (arrivedStates.has(s)) arrived++;
+    if (sortedStates.has(s))  sorted++;
+    if (s === 'shipped') missing.push(raw);
+  }
+
+  return c.json({ expected, arrived, sorted, missing });
+});
+
+// POST /external-shipments/:id/items/:itemId/mark-lost
+// Courier confirmed the parcel arrived short — cancel the item, note it,
+// then recompute its order and the shipment.
+externalShipmentRoutes.post(
+  '/:id/items/:itemId/mark-lost',
+  requireRole('super_admin', 'store_manager'),
+  async (c) => {
+    const tenantId = c.get('tenant_id') as string;
+    const shipmentId = c.req.param('id')!;
+    const itemId = c.req.param('itemId')!;
+
+    const item = await c.env.DB.prepare(`
+      SELECT id, order_id FROM order_items
+      WHERE id = ? AND tenant_id = ? AND external_shipment_id = ?
+        AND is_deleted = 0 AND status = 'shipped'
+    `).bind(itemId, tenantId, shipmentId).first();
+    if (!item) {
+      return c.json({
+        error: 'Not Found',
+        message: 'القطعة غير موجودة على هذه الشحنة أو لم تعد بحالة "shipped"',
+      }, 404);
+    }
+
+    const orderId = (item as Record<string, unknown>).order_id as string | null;
+
+    const stmts: D1PreparedStatement[] = [
+      c.env.DB.prepare(`
+        UPDATE order_items
+        SET status = 'cancelled',
+            notes = TRIM(COALESCE(notes,'') || ' [مفقود في الشحنة]'),
+            updated_at = datetime('now'),
+            version = version + 1
+        WHERE id = ? AND tenant_id = ?
+      `).bind(itemId, tenantId),
+    ];
+    if (orderId) stmts.push(buildRecomputeOrderStatusStmt(c.env.DB, orderId, tenantId));
+    stmts.push(buildRecomputeExternalShipmentStmt(c.env.DB, shipmentId, tenantId));
+
+    await c.env.DB.batch(stmts);
+    return c.json({ message: 'Marked lost', item_id: itemId });
+  }
+);
 
 // POST /external-shipments/:id/sync — universal dual-engine tracking
 externalShipmentRoutes.post('/:id/sync', async (c) => {
@@ -368,7 +502,7 @@ externalShipmentRoutes.post('/:id/sync', async (c) => {
 // POST /external-shipments/:id/attach — attach all purchased items from given orders
 externalShipmentRoutes.post('/:id/attach', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
-  const id = c.req.param('id');
+  const id = c.req.param('id')!;
   const { order_ids } = await c.req.json<{ order_ids: string[] }>();
   if (!order_ids?.length) return c.json({ error: 'order_ids required' }, 400);
 
@@ -400,7 +534,11 @@ externalShipmentRoutes.post('/:id/attach', requireRole('super_admin', 'store_man
   `).bind(id, JSON.stringify(order_ids), tenantId);
 
   const recomputeStmts = distinctOrderIds.map((oid) => buildRecomputeOrderStatusStmt(c.env.DB, oid, tenantId));
-  const result = await c.env.DB.batch([updateStmt, ...recomputeStmts]);
+  const result = await c.env.DB.batch([
+    updateStmt,
+    ...recomputeStmts,
+    buildRecomputeExternalShipmentStmt(c.env.DB, id, tenantId),
+  ]);
 
   return c.json({
     message: `Orders attached to shipment`,

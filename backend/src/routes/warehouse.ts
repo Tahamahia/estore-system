@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import { requireRole } from '../middleware/tenant';
-import { buildRecomputeOrderStatusStmt } from '../lib/orderStatus';
+import { buildRecomputeOrderStatusStmt, buildRecomputeExternalShipmentStmt } from '../lib/orderStatus';
 
 export const warehouseRoutes = new Hono<AppEnv>();
 
@@ -60,6 +60,9 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
 
   // Always advance to sorted regardless of prior status — warehouse workers
   // must never be blocked by a purchasing-side sync mistake.
+  // When the item has an external shipment, recompute that shipment's derived
+  // status in the same batch — sorting an item may complete the shipment.
+  const shipmentId = item.external_shipment_id as string | null;
   await c.env.DB.batch([
     c.env.DB.prepare(
       `UPDATE order_items SET status = 'sorted', sorted_at = datetime('now'),
@@ -67,6 +70,7 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
        WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
     ).bind(item.id, tenantId),
     buildRecomputeOrderStatusStmt(c.env.DB, item.order_id as string, tenantId),
+    ...(shipmentId ? [buildRecomputeExternalShipmentStmt(c.env.DB, shipmentId, tenantId)] : []),
   ]);
 
   // Return bag-completion info so the UI can flash the right colour

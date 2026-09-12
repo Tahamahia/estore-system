@@ -34,3 +34,45 @@ export function buildRecomputeOrderStatusStmt(
     WHERE id = ? AND tenant_id = ?
   `).bind(orderId, tenantId);
 }
+
+/**
+ * Recomputes an external shipment's `manual_status` from its items:
+ *   - 'arrived_at_warehouse' when every live item (not cancelled/refunded/
+ *     in_stock/transferred_to_inventory) has moved past 'shipped' into
+ *     arrived_warehouse / sorted / ready_dispatch / dispatched / delivered.
+ *   - 'in_transit' otherwise (including empty shipments, per the CASE fallback).
+ *
+ * The column is kept as `manual_status` to avoid a table rebuild; it is now
+ * a derived value driven entirely by item state, not a hand-set field.
+ * Single UPDATE with a correlated subquery — no loop.
+ */
+export function buildRecomputeExternalShipmentStmt(
+  db: D1Database,
+  shipmentId: string,
+  tenantId: string,
+): D1PreparedStatement {
+  return db.prepare(`
+    UPDATE external_shipments
+    SET manual_status = CASE
+          WHEN NOT EXISTS (
+            SELECT 1 FROM order_items oi
+            WHERE oi.external_shipment_id = external_shipments.id
+              AND oi.tenant_id = external_shipments.tenant_id
+              AND oi.is_deleted = 0
+              AND oi.status NOT IN ('cancelled','refunded','in_stock','transferred_to_inventory')
+              AND oi.status NOT IN ('arrived_warehouse','sorted','ready_dispatch','dispatched','delivered')
+          )
+          AND EXISTS (
+            SELECT 1 FROM order_items oi
+            WHERE oi.external_shipment_id = external_shipments.id
+              AND oi.tenant_id = external_shipments.tenant_id
+              AND oi.is_deleted = 0
+              AND oi.status IN ('arrived_warehouse','sorted','ready_dispatch','dispatched','delivered')
+          )
+          THEN 'arrived_at_warehouse'
+          ELSE 'in_transit'
+        END,
+        updated_at = datetime('now')
+    WHERE id = ? AND tenant_id = ?
+  `).bind(shipmentId, tenantId);
+}
