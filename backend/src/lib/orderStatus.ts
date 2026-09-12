@@ -36,15 +36,19 @@ export function buildRecomputeOrderStatusStmt(
 }
 
 /**
- * Recomputes an external shipment's `manual_status` from its items:
- *   - 'arrived_at_warehouse' when every live item (not cancelled/refunded/
- *     in_stock/transferred_to_inventory) has moved past 'shipped' into
- *     arrived_warehouse / sorted / ready_dispatch / dispatched / delivered.
- *   - 'in_transit' otherwise (including empty shipments, per the CASE fallback).
+ * Recomputes an external shipment's `manual_status` from the receive event:
+ *   - 'arrived_at_warehouse' once received_at is set.
+ *   - 'in_transit' before receive.
  *
- * The column is kept as `manual_status` to avoid a table rebuild; it is now
- * a derived value driven entirely by item state, not a hand-set field.
- * Single UPDATE with a correlated subquery — no loop.
+ * Status is NOT inferred from item scans anymore. The prior "derive from
+ * items" version created a dead-end where /receive cascaded every shipped
+ * item to arrived_warehouse, making the missing count structurally always 0
+ * and the mark-lost path unreachable. The correct model: receive is a
+ * timestamp ("boxes are physically here"), items are presumed present
+ * (arrived_warehouse), the scanner proves presence (sorted), and missing =
+ * presumed-present items never proven by a scan.
+ *
+ * Signature preserved so existing call sites compile untouched.
  */
 export function buildRecomputeExternalShipmentStmt(
   db: D1Database,
@@ -54,23 +58,8 @@ export function buildRecomputeExternalShipmentStmt(
   return db.prepare(`
     UPDATE external_shipments
     SET manual_status = CASE
-          WHEN NOT EXISTS (
-            SELECT 1 FROM order_items oi
-            WHERE oi.external_shipment_id = external_shipments.id
-              AND oi.tenant_id = external_shipments.tenant_id
-              AND oi.is_deleted = 0
-              AND oi.status NOT IN ('cancelled','refunded','in_stock','transferred_to_inventory')
-              AND oi.status NOT IN ('arrived_warehouse','sorted','ready_dispatch','dispatched','delivered')
-          )
-          AND EXISTS (
-            SELECT 1 FROM order_items oi
-            WHERE oi.external_shipment_id = external_shipments.id
-              AND oi.tenant_id = external_shipments.tenant_id
-              AND oi.is_deleted = 0
-              AND oi.status IN ('arrived_warehouse','sorted','ready_dispatch','dispatched','delivered')
-          )
-          THEN 'arrived_at_warehouse'
-          ELSE 'in_transit'
+          WHEN received_at IS NULL THEN 'in_transit'
+          ELSE 'arrived_at_warehouse'
         END,
         updated_at = datetime('now')
     WHERE id = ? AND tenant_id = ?

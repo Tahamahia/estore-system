@@ -5,6 +5,25 @@ import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 
+// Tri-state visual for the shipment badge. "مكتملة" is purely presentational —
+// the backend still stores 'arrived_at_warehouse'; we upgrade the label + color
+// when every expected item has been proven present by a scan.
+class _ShipmentBadge {
+  final String label;
+  final Color color;
+  const _ShipmentBadge(this.label, this.color);
+}
+
+_ShipmentBadge _shipmentBadge({
+  required bool isReceived,
+  required int missingCount,
+  required int expected,
+}) {
+  if (!isReceived) return const _ShipmentBadge('في الطريق', AppTheme.accent);
+  if (missingCount == 0 && expected > 0) return const _ShipmentBadge('مكتملة', AppTheme.success);
+  return const _ShipmentBadge('مستلمة', AppTheme.warning);
+}
+
 class ExternalShipmentsScreen extends ConsumerStatefulWidget {
   const ExternalShipmentsScreen({super.key});
   @override
@@ -102,14 +121,6 @@ class _ExternalShipmentCard extends StatefulWidget {
 
 class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
   bool _syncing = false;
-
-  // Status is now DERIVED — 'arrived_at_warehouse' when every live item has
-  // moved past shipped, else 'in_transit'. Only two states matter for the UI.
-  Color _derivedStatusColor(String status) =>
-      status == 'arrived_at_warehouse' ? AppTheme.success : AppTheme.accent;
-
-  String _derivedStatusLabel(String status) =>
-      status == 'arrived_at_warehouse' ? 'وصلت' : 'في الطريق';
 
   Future<void> _sync(BuildContext context) async {
     final notifier = ProviderScope.containerOf(context).read(externalShipmentsProvider.notifier);
@@ -214,19 +225,18 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
     final tracking = s['tracking_number'] as String? ?? '—';
     final courier = s['courier_code'] as String? ?? '';
     final apiStatus = s['api_status'] as String? ?? 'unknown';
-    final derivedStatus = s['manual_status'] as String? ?? 'in_transit';
     final expected = (s['expected_count'] as num?)?.toInt() ?? 0;
-    final arrived = (s['arrived_count'] as num?)?.toInt() ?? 0;
-    final sortedCount = (s['sorted_count'] as num?)?.toInt() ?? 0;
+    final confirmed = (s['confirmed_count'] as num?)?.toInt()
+        ?? (s['sorted_count'] as num?)?.toInt() ?? 0;
     final missingCount = (s['missing_count'] as num?)?.toInt() ?? 0;
-    final statusColor = _derivedStatusColor(derivedStatus);
-    final isReceived = derivedStatus == 'arrived_at_warehouse';
+    final isReceived = s['received_at'] != null;
+    final badge = _shipmentBadge(isReceived: isReceived, missingCount: missingCount, expected: expected);
 
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.darkSurface,
         borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: statusColor.withValues(alpha: 0.3)),
+        border: Border.all(color: badge.color.withValues(alpha: 0.3)),
       ),
       child: Column(children: [
         // Header row
@@ -247,9 +257,9 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
               if (courier.isNotEmpty)
                 Text(courier, style: const TextStyle(color: Colors.white54, fontSize: 12)),
               const SizedBox(height: 6),
-              // Derived progress line
+              // Progress line: how many items have been proven present by a scan.
               Text(
-                'وصل $arrived/$expected · فُرز $sortedCount/$expected',
+                'فُرز $confirmed/$expected',
                 style: const TextStyle(color: Colors.white54, fontSize: 12),
               ),
             ])),
@@ -263,21 +273,18 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
               child: Text(apiStatus, style: const TextStyle(color: Colors.white54, fontSize: 11)),
             ),
             const SizedBox(width: 8),
-            // Derived status badge
+            // Derived status badge (tri-state: in_transit / arrived / complete)
             Column(crossAxisAlignment: CrossAxisAlignment.end, mainAxisSize: MainAxisSize.min, children: [
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: statusColor.withValues(alpha: 0.15),
+                  color: badge.color.withValues(alpha: 0.15),
                   borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: statusColor.withValues(alpha: 0.4)),
+                  border: Border.all(color: badge.color.withValues(alpha: 0.4)),
                 ),
-                child: Text(_derivedStatusLabel(derivedStatus),
-                    style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w600)),
+                child: Text(badge.label,
+                    style: TextStyle(color: badge.color, fontSize: 12, fontWeight: FontWeight.w600)),
               ),
-              const SizedBox(height: 3),
-              const Text('تُحسب تلقائياً من حالة القطع',
-                  style: TextStyle(color: Colors.white38, fontSize: 10)),
               if (isReceived && missingCount > 0) ...[
                 const SizedBox(height: 4),
                 Container(
@@ -287,7 +294,7 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
                     borderRadius: BorderRadius.circular(6),
                     border: Border.all(color: AppTheme.error.withValues(alpha: 0.4)),
                   ),
-                  child: Text('$missingCount مفقود',
+                  child: Text('$missingCount لم تُمسح',
                       style: const TextStyle(color: AppTheme.error, fontSize: 11, fontWeight: FontWeight.w700)),
                 ),
               ],
@@ -599,13 +606,12 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
 
   Widget _buildDetail() {
     final s = _shipment!;
-    final derivedStatus = s['manual_status'] as String? ?? 'in_transit';
     final expected = (s['expected_count'] as num?)?.toInt() ?? 0;
-    final arrived = (s['arrived_count'] as num?)?.toInt() ?? 0;
-    final sortedCount = (s['sorted_count'] as num?)?.toInt() ?? 0;
+    final confirmed = (s['confirmed_count'] as num?)?.toInt()
+        ?? (s['sorted_count'] as num?)?.toInt() ?? 0;
     final missingCount = (s['missing_count'] as num?)?.toInt() ?? 0;
-    final isReceived = derivedStatus == 'arrived_at_warehouse';
-    final statusColor = isReceived ? AppTheme.success : AppTheme.accent;
+    final isReceived = s['received_at'] != null;
+    final badge = _shipmentBadge(isReceived: isReceived, missingCount: missingCount, expected: expected);
     final items = (s['items'] as List<dynamic>? ?? []).cast<Map<String, dynamic>>();
 
     // Group items by order for the reconciliation view.
@@ -634,26 +640,23 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
         Text(s['courier_code'] as String, style: const TextStyle(color: Colors.white54, fontSize: 13)),
       ],
       const SizedBox(height: 12),
-      // Derived badge + subtitle
+      // Tri-state badge
       Row(children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
           decoration: BoxDecoration(
-            color: statusColor.withValues(alpha: 0.15),
+            color: badge.color.withValues(alpha: 0.15),
             borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: statusColor.withValues(alpha: 0.4)),
+            border: Border.all(color: badge.color.withValues(alpha: 0.4)),
           ),
-          child: Text(isReceived ? 'وصلت' : 'في الطريق',
-              style: TextStyle(color: statusColor, fontSize: 12, fontWeight: FontWeight.w600)),
+          child: Text(badge.label,
+              style: TextStyle(color: badge.color, fontSize: 12, fontWeight: FontWeight.w600)),
         ),
-        const SizedBox(width: 8),
-        const Expanded(child: Text('تُحسب تلقائياً من حالة القطع',
-            style: TextStyle(color: Colors.white38, fontSize: 11))),
       ]),
       const SizedBox(height: 4),
       Text(
-          'وصل $arrived/$expected · فُرز $sortedCount/$expected'
-          '${isReceived && missingCount > 0 ? '  ·  ناقص $missingCount' : ''}',
+          'فُرز $confirmed/$expected'
+          '${isReceived && missingCount > 0 ? '  ·  لم تُمسح $missingCount' : ''}',
           style: TextStyle(
               color: isReceived && missingCount > 0 ? AppTheme.error : Colors.white54,
               fontSize: 12,
@@ -696,7 +699,12 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
       const SizedBox(height: 12),
       const Divider(color: AppTheme.darkBorder),
       const SizedBox(height: 8),
-      const Text('القطع', style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+      Text(
+        isReceived
+          ? 'المطابقة — القطع غير الممسوحة تحتاج تأكيد أو تعليم كمفقود'
+          : 'القطع',
+        style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13),
+      ),
       const SizedBox(height: 6),
       Expanded(
         child: items.isEmpty
@@ -713,7 +721,11 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
                   for (final item in entry.value)
                     _ReconItemRow(
                       item: item,
-                      canMarkLost: isReceived && (item['status'] as String? ?? '') == 'shipped',
+                      // Presumed-present but never scanned: shipped OR
+                      // arrived_warehouse. Only after receive.
+                      canMarkLost: isReceived &&
+                          const {'shipped','arrived_warehouse'}
+                              .contains(item['status'] as String? ?? ''),
                       onMarkLost: () => _markLost(
                         item['id'] as String,
                         item['product_name'] as String? ?? '—',
@@ -788,8 +800,8 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
 }
 
 // Reconciliation row: name + customer + status chip, red-highlighted with
-// a "تعليم كمفقود" action when the shipment is received but the item is
-// still 'shipped'.
+// a "تعليم كمفقود" action when the shipment is received and the item is
+// still presumed-present but never scanned (shipped or arrived_warehouse).
 class _ReconItemRow extends StatelessWidget {
   final Map<String, dynamic> item;
   final bool canMarkLost;
@@ -799,7 +811,7 @@ class _ReconItemRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = item['status'] as String? ?? '';
-    final isMissing = canMarkLost; // received & still shipped
+    final isMissing = canMarkLost; // presumed present, never scanned
     final chipColor = _statusColor(status);
     return Container(
       margin: const EdgeInsets.only(bottom: 6),

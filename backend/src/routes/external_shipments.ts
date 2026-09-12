@@ -6,6 +6,14 @@ import { buildRecomputeOrderStatusStmt, buildRecomputeExternalShipmentStmt } fro
 // Reconciliation SQL fragment reused by GET / list, GET /:id detail, and the
 // dedicated /reconciliation endpoint. All three read from order_items joined
 // per external shipment. Kept in one place so the counts can never drift.
+//
+// - expected: live items on the shipment (excluding cancelled/refunded/
+//   in_stock/transferred_to_inventory).
+// - confirmed: items proven physically present by a scan (sorted or beyond).
+//   sorted_count is a legacy alias of confirmed_count for older UI callers.
+// - missing: items presumed present (shipped OR arrived_warehouse) but never
+//   scanned. Undefined before receive — forced to 0 while received_at is NULL,
+//   because nothing is expected to be at the warehouse yet.
 const RECON_COUNTS_SQL = `
   COALESCE((
     SELECT COUNT(*) FROM order_items oi
@@ -17,20 +25,20 @@ const RECON_COUNTS_SQL = `
     SELECT COUNT(*) FROM order_items oi
     WHERE oi.external_shipment_id = es.id AND oi.tenant_id = es.tenant_id
       AND oi.is_deleted = 0
-      AND oi.status IN ('arrived_warehouse','sorted','ready_dispatch','dispatched','delivered')
-  ), 0) AS arrived_count,
+      AND oi.status IN ('sorted','ready_dispatch','dispatched','delivered')
+  ), 0) AS confirmed_count,
   COALESCE((
     SELECT COUNT(*) FROM order_items oi
     WHERE oi.external_shipment_id = es.id AND oi.tenant_id = es.tenant_id
       AND oi.is_deleted = 0
       AND oi.status IN ('sorted','ready_dispatch','dispatched','delivered')
   ), 0) AS sorted_count,
-  COALESCE((
+  CASE WHEN es.received_at IS NULL THEN 0 ELSE COALESCE((
     SELECT COUNT(*) FROM order_items oi
     WHERE oi.external_shipment_id = es.id AND oi.tenant_id = es.tenant_id
       AND oi.is_deleted = 0
-      AND oi.status = 'shipped'
-  ), 0) AS missing_count
+      AND oi.status IN ('shipped','arrived_warehouse')
+  ), 0) END AS missing_count
 `;
 
 export const externalShipmentRoutes = new Hono<AppEnv>();
@@ -359,17 +367,20 @@ externalShipmentRoutes.patch('/:id', requireRole('super_admin', 'store_manager',
 });
 
 // POST /external-shipments/:id/receive — "the boxes are physically here".
-// Advances every still-'shipped' live item on the shipment to 'arrived_warehouse',
-// recomputes each affected order, then recomputes the shipment (which will
-// now settle to 'arrived_at_warehouse' since no live items remain in 'shipped').
+// Stamps received_at, then presumes every still-'shipped' live item present
+// by advancing it to 'arrived_warehouse'. Items stay in that presumed state
+// until a scan proves them (moves to 'sorted') or the admin marks them lost.
 externalShipmentRoutes.post('/:id/receive', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id')!;
 
   const shipment = await c.env.DB.prepare(
-    `SELECT id FROM external_shipments WHERE id = ? AND tenant_id = ?`
-  ).bind(id, tenantId).first();
+    `SELECT id, received_at FROM external_shipments WHERE id = ? AND tenant_id = ?`
+  ).bind(id, tenantId).first() as { id: string; received_at: string | null } | null;
   if (!shipment) return c.json({ error: 'Not Found' }, 404);
+  if (shipment.received_at) {
+    return c.json({ error: 'Conflict', message: 'الشحنة مستلمة مسبقاً' }, 409);
+  }
 
   const affected = await c.env.DB.prepare(`
     SELECT DISTINCT order_id FROM order_items
@@ -383,6 +394,11 @@ externalShipmentRoutes.post('/:id/receive', requireRole('super_admin', 'store_ma
   const recomputeStmts = orderIds.map((oid) => buildRecomputeOrderStatusStmt(c.env.DB, oid, tenantId));
 
   await c.env.DB.batch([
+    c.env.DB.prepare(`
+      UPDATE external_shipments
+      SET received_at = datetime('now'), updated_at = datetime('now')
+      WHERE id = ? AND tenant_id = ?
+    `).bind(id, tenantId),
     c.env.DB.prepare(`
       UPDATE order_items
       SET status = 'arrived_warehouse', updated_at = datetime('now'), version = version + 1
@@ -398,13 +414,15 @@ externalShipmentRoutes.post('/:id/receive', requireRole('super_admin', 'store_ma
 
 // GET /external-shipments/:id/reconciliation
 // Full item-level breakdown for the receiving/reconciliation view.
+// confirmed = proven present by a scan; missing = presumed present but never
+// scanned (only meaningful after receive).
 externalShipmentRoutes.get('/:id/reconciliation', async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
 
   const shipment = await c.env.DB.prepare(
-    `SELECT id FROM external_shipments WHERE id = ? AND tenant_id = ?`
-  ).bind(id, tenantId).first();
+    `SELECT id, received_at FROM external_shipments WHERE id = ? AND tenant_id = ?`
+  ).bind(id, tenantId).first() as { id: string; received_at: string | null } | null;
   if (!shipment) return c.json({ error: 'Not Found' }, 404);
 
   const rows = await c.env.DB.prepare(`
@@ -417,25 +435,33 @@ externalShipmentRoutes.get('/:id/reconciliation', async (c) => {
       AND oi.status NOT IN ('cancelled','refunded','in_stock','transferred_to_inventory')
   `).bind(id, tenantId).all();
 
-  const arrivedStates = new Set(['arrived_warehouse','sorted','ready_dispatch','dispatched','delivered']);
-  const sortedStates  = new Set(['sorted','ready_dispatch','dispatched','delivered']);
+  const confirmedStates    = new Set(['sorted','ready_dispatch','dispatched','delivered']);
+  const missingCandidates  = new Set(['shipped','arrived_warehouse']);
+  const isReceived = shipment.received_at !== null;
 
-  let expected = 0, arrived = 0, sorted = 0;
+  let expected = 0, confirmed = 0;
   const missing: Array<Record<string, unknown>> = [];
   for (const raw of rows.results as Array<Record<string, unknown>>) {
     expected++;
     const s = raw.status as string;
-    if (arrivedStates.has(s)) arrived++;
-    if (sortedStates.has(s))  sorted++;
-    if (s === 'shipped') missing.push(raw);
+    if (confirmedStates.has(s)) confirmed++;
+    if (isReceived && missingCandidates.has(s)) missing.push(raw);
   }
 
-  return c.json({ expected, arrived, sorted, missing });
+  return c.json({
+    expected,
+    confirmed,
+    // sorted is a legacy alias of confirmed for callers still reading it.
+    sorted: confirmed,
+    missing,
+    received_at: shipment.received_at,
+  });
 });
 
 // POST /external-shipments/:id/items/:itemId/mark-lost
-// Courier confirmed the parcel arrived short — cancel the item, note it,
-// then recompute its order and the shipment.
+// After receive, the admin marks a presumed-present item lost when a scan
+// never confirms it (courier came up short). Only meaningful post-receive:
+// before that, the item's presence is not yet expected.
 externalShipmentRoutes.post(
   '/:id/items/:itemId/mark-lost',
   requireRole('super_admin', 'store_manager'),
@@ -444,15 +470,26 @@ externalShipmentRoutes.post(
     const shipmentId = c.req.param('id')!;
     const itemId = c.req.param('itemId')!;
 
+    const shipment = await c.env.DB.prepare(
+      `SELECT id, received_at FROM external_shipments WHERE id = ? AND tenant_id = ?`
+    ).bind(shipmentId, tenantId).first() as { id: string; received_at: string | null } | null;
+    if (!shipment) return c.json({ error: 'Not Found', message: 'Shipment not found' }, 404);
+    if (!shipment.received_at) {
+      return c.json({
+        error: 'Bad Request',
+        message: 'لا يمكن تعليم مفقود قبل استلام الشحنة',
+      }, 400);
+    }
+
     const item = await c.env.DB.prepare(`
       SELECT id, order_id FROM order_items
       WHERE id = ? AND tenant_id = ? AND external_shipment_id = ?
-        AND is_deleted = 0 AND status = 'shipped'
+        AND is_deleted = 0 AND status IN ('shipped','arrived_warehouse')
     `).bind(itemId, tenantId, shipmentId).first();
     if (!item) {
       return c.json({
         error: 'Not Found',
-        message: 'القطعة غير موجودة على هذه الشحنة أو لم تعد بحالة "shipped"',
+        message: 'القطعة غير موجودة على هذه الشحنة أو تم تأكيدها بمسح ضوئي',
       }, 404);
     }
 
