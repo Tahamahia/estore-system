@@ -1,23 +1,38 @@
 -- ═══════════════════════════════════════════════════════════
--- eStore Fulfillment System — Database Schema
--- Cloudflare D1 (SQLite)
--- ═══════════════════════════════════════════════════════════
--- Rules enforced:
+-- eStore Fulfillment System — Canonical Schema (Cloudflare D1 / SQLite)
+--
+-- This file is the canonical schema for fresh installs. Migrations
+-- 001–022 are historical and must NOT be replayed on top of it.
+--
+-- Regenerated from the live remote database on 2026-09-12 after Phase 4
+-- consolidated duplicate columns and dropped dead ones. To keep this file
+-- honest, re-transcribe from remote whenever a new migration lands:
+--
+--   npx wrangler d1 execute estore-db --remote \
+--     --command "SELECT sql FROM sqlite_master \
+--                WHERE type IN ('table','index') AND sql IS NOT NULL \
+--                ORDER BY CASE type WHEN 'table' THEN 0 ELSE 1 END, name"
+--
+-- Rules the schema enforces:
 --   • UUID v4 primary keys (client-generated)
---   • tenant_id on EVERY table (multi-tenant RLS)
+--   • tenant_id on every business table (multi-tenant isolation)
 --   • Soft deletes (is_deleted, deleted_by, deleted_at)
---   • OCC via version column
---   • Composite keys where needed (recycled tracking)
+--   • OCC via version column where writes race
+--
+-- Deliberate omissions from the live snapshot (not part of a fresh install):
+--   • `_cf_KV` and `sqlite_sequence` — D1 / SQLite internal tables.
+--   • `orders_old` and its indexes — historical debris from migration 014's
+--     table rebuild; nothing reads or writes it.
 -- ═══════════════════════════════════════════════════════════
 
--- ─── Tenants (Stores) ──────────────────────────────────────
-CREATE TABLE IF NOT EXISTS tenants (
+-- ─── Tenants ───────────────────────────────────────────────
+CREATE TABLE tenants (
   id TEXT PRIMARY KEY,
   name TEXT NOT NULL,
   slug TEXT NOT NULL UNIQUE,
   logo_url TEXT,
   default_currency TEXT DEFAULT 'USD',
-  settings TEXT, -- JSON blob for tenant-specific config
+  settings TEXT,
   is_deleted INTEGER DEFAULT 0,
   deleted_by TEXT,
   deleted_at TEXT,
@@ -27,30 +42,29 @@ CREATE TABLE IF NOT EXISTS tenants (
 );
 
 -- ─── Users ─────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
   email TEXT NOT NULL UNIQUE,
   password_hash TEXT NOT NULL,
   full_name TEXT NOT NULL,
   role TEXT NOT NULL CHECK (role IN ('super_admin', 'store_manager', 'purchaser', 'sorter', 'driver')),
-  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'rejected')),
   phone TEXT,
-  is_active INTEGER DEFAULT 0,
+  is_active INTEGER DEFAULT 1,
   is_deleted INTEGER DEFAULT 0,
   deleted_by TEXT,
   deleted_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   version INTEGER NOT NULL DEFAULT 1,
+  status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('pending', 'active', 'rejected')),
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_users_tenant ON users(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
+CREATE INDEX idx_users_email  ON users(email);
+CREATE INDEX idx_users_tenant ON users(tenant_id);
 
 -- ─── Customers ─────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS customers (
+CREATE TABLE customers (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
   full_name TEXT NOT NULL,
@@ -58,6 +72,9 @@ CREATE TABLE IF NOT EXISTS customers (
   phone2 TEXT,
   address TEXT,
   city TEXT,
+  area TEXT,
+  street TEXT,
+  location_url TEXT,
   notes TEXT,
   is_deleted INTEGER DEFAULT 0,
   deleted_by TEXT,
@@ -67,14 +84,13 @@ CREATE TABLE IF NOT EXISTS customers (
   version INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
-
-CREATE INDEX IF NOT EXISTS idx_customers_tenant ON customers(tenant_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_customers_phone_tenant 
-  ON customers(phone, tenant_id) 
+CREATE INDEX idx_customers_tenant ON customers(tenant_id);
+CREATE UNIQUE INDEX idx_customers_phone_tenant
+  ON customers(phone, tenant_id)
   WHERE phone IS NOT NULL AND is_deleted = 0;
 
 -- ─── Customer Wallets ──────────────────────────────────────
-CREATE TABLE IF NOT EXISTS customer_wallets (
+CREATE TABLE customer_wallets (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
   customer_id TEXT NOT NULL,
@@ -85,21 +101,21 @@ CREATE TABLE IF NOT EXISTS customer_wallets (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
   version INTEGER NOT NULL DEFAULT 1,
-  FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  FOREIGN KEY (tenant_id)   REFERENCES tenants(id),
   FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
+CREATE INDEX idx_customer_wallets_customer_id ON customer_wallets(customer_id);
+CREATE UNIQUE INDEX idx_wallet_customer       ON customer_wallets(customer_id, tenant_id);
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_customer ON customer_wallets(customer_id, tenant_id);
-
--- ─── Wallet Transactions ──────────────────────────────────
-CREATE TABLE IF NOT EXISTS wallet_transactions (
+-- ─── Wallet Transactions ───────────────────────────────────
+CREATE TABLE wallet_transactions (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
   wallet_id TEXT NOT NULL,
   amount REAL NOT NULL,
   type TEXT NOT NULL CHECK (type IN ('credit', 'debit')),
   reason TEXT,
-  reference_id TEXT, -- order_id or item_id that triggered this
+  reference_id TEXT,
   is_deleted INTEGER DEFAULT 0,
   deleted_by TEXT,
   deleted_at TEXT,
@@ -111,11 +127,11 @@ CREATE TABLE IF NOT EXISTS wallet_transactions (
 );
 
 -- ─── Suppliers ─────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS suppliers (
+CREATE TABLE suppliers (
   id TEXT PRIMARY KEY,
   tenant_id TEXT NOT NULL,
   name TEXT NOT NULL,
-  platform TEXT, -- e.g. 'taobao', '1688', 'alibaba'
+  platform TEXT,
   contact_info TEXT,
   notes TEXT,
   is_deleted INTEGER DEFAULT 0,
@@ -126,219 +142,215 @@ CREATE TABLE IF NOT EXISTS suppliers (
   version INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
+CREATE INDEX idx_suppliers_tenant ON suppliers(tenant_id);
 
-CREATE INDEX IF NOT EXISTS idx_suppliers_tenant ON suppliers(tenant_id);
+-- ─── Settlements ───────────────────────────────────────────
+CREATE TABLE settlements (
+  id TEXT PRIMARY KEY,
+  tenant_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  exchange_rate REAL NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+-- ─── External Shipments (courier-tracked incoming parcels) ─
+CREATE TABLE external_shipments (
+  id              TEXT PRIMARY KEY,
+  tenant_id       TEXT NOT NULL,
+  tracking_number TEXT,
+  courier_code    TEXT,
+  api_status      TEXT DEFAULT 'unknown',
+  manual_status   TEXT NOT NULL DEFAULT 'in_transit'
+    CHECK (manual_status IN ('in_transit', 'at_local_forwarder', 'arrived_at_warehouse')),
+  notes           TEXT,
+  created_at      DATETIME DEFAULT (datetime('now')),
+  updated_at      DATETIME DEFAULT (datetime('now')),
+  received_at     TEXT
+);
+
+-- ─── Internal Shipments (last-mile delivery manifests) ────
+CREATE TABLE internal_shipments (
+  id                   TEXT PRIMARY KEY,
+  tenant_id            TEXT NOT NULL,
+  delivery_company     TEXT,
+  status               TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'at_delivery_warehouse', 'out_for_delivery', 'delivered', 'returned')),
+  notes                TEXT,
+  created_at           DATETIME DEFAULT (datetime('now')),
+  updated_at           DATETIME DEFAULT (datetime('now')),
+  driver_name          TEXT,
+  cash_handed_over     REAL,
+  cash_handed_over_at  TEXT
+);
 
 -- ─── Orders ────────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS orders (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  customer_id TEXT NOT NULL,
-  platform TEXT, -- 'manual', 'shopify', 'woocommerce', etc.
-  platform_order_id TEXT,
-  pegged_exchange_rate REAL, -- rate at order creation
-  actual_exchange_rate REAL, -- rate at actual purchase
-  currency TEXT DEFAULT 'USD',
-  status TEXT NOT NULL DEFAULT 'pending_payment'
+CREATE TABLE "orders" (
+  id                    TEXT PRIMARY KEY,
+  tenant_id             TEXT NOT NULL,
+  customer_id           TEXT NOT NULL,
+  platform              TEXT,
+  platform_order_id     TEXT,
+  currency              TEXT DEFAULT 'USD',
+  cart_link             TEXT,
+  order_type            TEXT NOT NULL DEFAULT 'individual_items'
+    CHECK (order_type IN ('full_cart', 'individual_items')),
+  total_sale_price_lyd  REAL,
+  total_cost_usd        REAL,
+  status                TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN (
-      'pending_payment', 'paid', 'purchasing', 'purchased',
-      'shipped', 'arrived_warehouse', 'sorting', 'sorted',
-      'ready_dispatch', 'dispatched', 'delivered',
-      'cancelled', 'auto_cancelled', 'refunded'
+      'pending','purchased','shipped','arrived_warehouse','sorted',
+      'ready_dispatch','dispatched','delivered','cancelled','refunded',
+      'transferred_to_inventory','in_stock'
     )),
-  total_foreign REAL DEFAULT 0,
-  total_local REAL DEFAULT 0,
-  delivery_fee REAL DEFAULT 0,
-  notes TEXT,
-  created_by TEXT,
-  is_deleted INTEGER DEFAULT 0,
-  deleted_by TEXT,
-  deleted_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  version INTEGER NOT NULL DEFAULT 1,
-  FOREIGN KEY (tenant_id) REFERENCES tenants(id),
+  shipping_cost_foreign REAL DEFAULT 0,
+  shipping_rate_per_kg  REAL DEFAULT 0,
+  settlement_id         TEXT,
+  notes                 TEXT,
+  created_by            TEXT,
+  is_deleted            INTEGER DEFAULT 0,
+  deleted_by            TEXT,
+  deleted_at            TEXT,
+  created_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at            TEXT NOT NULL DEFAULT (datetime('now')),
+  version               INTEGER NOT NULL DEFAULT 1,
+  parent_order_id       TEXT,
+  internal_shipment_id  TEXT,
+  deposit_amount        REAL NOT NULL DEFAULT 0,
+  deposit_note          TEXT,
+  cash_collected        REAL NOT NULL DEFAULT 0,
+  cash_collected_at     TEXT,
+  source_name           TEXT,
+  FOREIGN KEY (tenant_id)   REFERENCES tenants(id),
   FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
+CREATE INDEX idx_orders_parent ON orders(parent_order_id);
 
-CREATE INDEX IF NOT EXISTS idx_orders_tenant ON orders(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_orders_customer ON orders(customer_id, tenant_id);
-CREATE INDEX IF NOT EXISTS idx_orders_status ON orders(status, tenant_id);
-
--- ─── Order Items (Each piece gets a unique row) ───────────
-CREATE TABLE IF NOT EXISTS order_items (
-  id TEXT PRIMARY KEY, -- Unique Item UID
-  tenant_id TEXT NOT NULL,
-  order_id TEXT NOT NULL,
-  item_uid TEXT, -- Printable barcode/QR UID assigned during sorting
-  shipment_id TEXT,
-  product_name TEXT NOT NULL,
-  product_url TEXT,
-  product_image_url TEXT, -- R2 URL (never base64)
-  product_thumb_url TEXT, -- R2 thumbnail URL
-  quantity INTEGER NOT NULL DEFAULT 1,
-  unit_price_foreign REAL DEFAULT 0,
-  unit_price_local REAL DEFAULT 0,
-  purchase_price REAL, -- Actual purchase price (entered by purchaser)
-  color TEXT,
-  size TEXT,
-  sku TEXT,                        -- Physical barcode SKU (Shein/Trendyol serial number)
-  actual_weight REAL,
-  volumetric_weight REAL,
-  landed_cost REAL, -- Calculated pro-rata share of master shipment costs
-  net_profit REAL, -- Calculated: sell_price - purchase_price - landed_cost
-  supplier_id TEXT,
-  notes TEXT,
-  status TEXT NOT NULL DEFAULT 'pending'
+-- ─── Order Items ───────────────────────────────────────────
+CREATE TABLE "order_items" (
+  id                          TEXT PRIMARY KEY,
+  tenant_id                   TEXT NOT NULL,
+  order_id                    TEXT,
+  shipment_id                 TEXT,
+  product_name                TEXT NOT NULL,
+  product_url                 TEXT,
+  product_image_url           TEXT,
+  quantity                    INTEGER NOT NULL DEFAULT 1,
+  unit_price_foreign          REAL DEFAULT 0,
+  unit_price_local            REAL DEFAULT 0,
+  color                       TEXT,
+  size                        TEXT,
+  sku                         TEXT,
+  actual_weight               REAL,
+  volumetric_weight           REAL,
+  supplier_id                 TEXT,   -- dormant post-Phase-4 (FK-blocked DROP, always NULL, unreferenced by code)
+  notes                       TEXT,
+  status                      TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN (
-      'pending', 'purchased', 'shipped', 'arrived_warehouse',
-      'sorted', 'ready_dispatch', 'dispatched', 'delivered',
-      'cancelled', 'refunded', 'transferred_to_inventory'
+      'pending','purchased','shipped','arrived_warehouse','sorted',
+      'ready_dispatch','dispatched','delivered','cancelled','refunded',
+      'transferred_to_inventory','in_stock'
     )),
-  sorted_at TEXT,
-  dispatched_at TEXT,
-  delivered_at TEXT,
-  is_deleted INTEGER DEFAULT 0,
-  deleted_by TEXT,
-  deleted_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  version INTEGER NOT NULL DEFAULT 1,
-  FOREIGN KEY (tenant_id) REFERENCES tenants(id),
-  FOREIGN KEY (order_id) REFERENCES orders(id),
-  FOREIGN KEY (shipment_id) REFERENCES shipments(id),
+  sorted_at                   TEXT,
+  dispatched_at               TEXT,
+  delivered_at                TEXT,
+  is_deleted                  INTEGER DEFAULT 0,
+  deleted_by                  TEXT,
+  deleted_at                  TEXT,
+  created_at                  TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at                  TEXT NOT NULL DEFAULT (datetime('now')),
+  version                     INTEGER NOT NULL DEFAULT 1,
+  weight                      REAL DEFAULT 0,
+  brand                       TEXT,
+  source_name                 TEXT,
+  shipping_rate_per_kg        REAL DEFAULT 0,
+  external_shipment_id        TEXT REFERENCES external_shipments(id),
+  category                    TEXT,
+  attributes                  TEXT,
+  cost_usd                    REAL,
+  written_off_settlement_id   TEXT REFERENCES settlements(id),
+  FOREIGN KEY (tenant_id)   REFERENCES tenants(id),
+  FOREIGN KEY (order_id)    REFERENCES orders(id) ON DELETE CASCADE,
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
 );
+CREATE INDEX idx_items_tenant   ON order_items(tenant_id);
+CREATE INDEX idx_items_order    ON order_items(order_id, tenant_id);
+CREATE INDEX idx_items_shipment ON order_items(shipment_id);
+CREATE INDEX idx_items_sku      ON order_items(sku, tenant_id);
+CREATE INDEX idx_items_status   ON order_items(status, tenant_id);
+CREATE INDEX idx_items_writeoff ON order_items(written_off_settlement_id);
 
-CREATE INDEX IF NOT EXISTS idx_items_tenant ON order_items(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_items_order ON order_items(order_id, tenant_id);
-CREATE INDEX IF NOT EXISTS idx_items_shipment ON order_items(shipment_id);
-CREATE INDEX IF NOT EXISTS idx_items_uid ON order_items(item_uid);
-CREATE INDEX IF NOT EXISTS idx_items_sku ON order_items(sku, tenant_id);
-CREATE INDEX IF NOT EXISTS idx_items_status ON order_items(status, tenant_id);
-
--- ─── Master Shipments ──────────────────────────────────────
-CREATE TABLE IF NOT EXISTS master_shipments (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  name TEXT NOT NULL, -- e.g. "Air Freight June 2025"
-  customs_cost REAL DEFAULT 0,
-  freight_cost REAL DEFAULT 0,
-  other_costs REAL DEFAULT 0,
-  total_weight REAL DEFAULT 0,
-  notes TEXT,
-  status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'in_transit', 'arrived', 'processed')),
-  created_by TEXT,
+-- ─── Master Shipment Bundles (name/status only in current schema) ─
+CREATE TABLE shipments (
+  id         TEXT PRIMARY KEY,
+  tenant_id  TEXT NOT NULL,
+  name       TEXT NOT NULL,
+  status     TEXT NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending', 'in_transit', 'arrived', 'completed', 'cancelled')),
+  notes      TEXT,
   is_deleted INTEGER DEFAULT 0,
   deleted_by TEXT,
   deleted_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  version INTEGER NOT NULL DEFAULT 1,
-  FOREIGN KEY (tenant_id) REFERENCES tenants(id)
+  version    INTEGER NOT NULL DEFAULT 1
+);
+CREATE INDEX idx_shipments_tenant ON shipments(tenant_id);
+
+-- ─── Shipping Sources (global — no tenant_id; shared catalog) ─
+CREATE TABLE shipping_sources (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  name        TEXT NOT NULL,
+  rate_per_kg REAL NOT NULL DEFAULT 0
 );
 
--- ─── Shipments (Tracking-level) ───────────────────────────
--- Composite uniqueness: tracking_number + supplier_id + ship_date
--- (Chinese tracking numbers recycle)
-CREATE TABLE IF NOT EXISTS shipments (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  tracking_number TEXT NOT NULL,
-  supplier_id TEXT,
-  ship_date TEXT NOT NULL,
-  master_shipment_id TEXT,
-  status TEXT NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending', 'in_transit', 'arrived', 'processed')),
-  created_by TEXT,
-  is_deleted INTEGER DEFAULT 0,
-  deleted_by TEXT,
-  deleted_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  version INTEGER NOT NULL DEFAULT 1,
-  FOREIGN KEY (tenant_id) REFERENCES tenants(id),
-  FOREIGN KEY (supplier_id) REFERENCES suppliers(id),
-  FOREIGN KEY (master_shipment_id) REFERENCES master_shipments(id)
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS idx_shipment_composite 
-  ON shipments(tracking_number, supplier_id, ship_date, tenant_id);
-CREATE INDEX IF NOT EXISTS idx_shipments_master ON shipments(master_shipment_id);
-
--- ─── Unassigned Items (Lost & Found / Orphaned Packages) ──
-CREATE TABLE IF NOT EXISTS unassigned_items (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  barcode TEXT,
-  description TEXT,
-  photo_url TEXT,
-  assigned_to_item_id TEXT, -- Once identified, link here
-  status TEXT NOT NULL DEFAULT 'pending'
+-- ─── Unassigned Items (orphaned scans / lost-and-found) ────
+CREATE TABLE unassigned_items (
+  id                  TEXT PRIMARY KEY,
+  tenant_id           TEXT NOT NULL,
+  barcode             TEXT,
+  description         TEXT,
+  photo_url           TEXT,
+  assigned_to_item_id TEXT,
+  status              TEXT NOT NULL DEFAULT 'pending'
     CHECK (status IN ('pending', 'identified', 'assigned', 'disposed')),
-  logged_by TEXT,
-  is_deleted INTEGER DEFAULT 0,
-  deleted_by TEXT,
-  deleted_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  version INTEGER NOT NULL DEFAULT 1,
+  logged_by           TEXT,
+  is_deleted          INTEGER DEFAULT 0,
+  deleted_by          TEXT,
+  deleted_at          TEXT,
+  created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at          TEXT NOT NULL DEFAULT (datetime('now')),
+  version             INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
-);
-
--- ─── Local Inventory (Dead Stock) ─────────────────────────
-CREATE TABLE IF NOT EXISTS local_inventory (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  original_item_id TEXT,
-  product_name TEXT NOT NULL,
-  purchase_price REAL DEFAULT 0,
-  sell_price REAL,
-  status TEXT NOT NULL DEFAULT 'available'
-    CHECK (status IN ('available', 'sold', 'disposed')),
-  reason TEXT, -- 'cancelled', 'refused', 'damaged'
-  transferred_by TEXT,
-  sold_to TEXT,
-  is_deleted INTEGER DEFAULT 0,
-  deleted_by TEXT,
-  deleted_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  version INTEGER NOT NULL DEFAULT 1,
-  FOREIGN KEY (tenant_id) REFERENCES tenants(id),
-  FOREIGN KEY (original_item_id) REFERENCES order_items(id)
 );
 
 -- ─── Exchange Rates ────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS exchange_rates (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
+CREATE TABLE exchange_rates (
+  id            TEXT PRIMARY KEY,
+  tenant_id     TEXT NOT NULL,
   from_currency TEXT NOT NULL,
-  to_currency TEXT NOT NULL,
-  rate REAL NOT NULL,
-  set_by TEXT,
-  is_deleted INTEGER DEFAULT 0,
-  deleted_by TEXT,
-  deleted_at TEXT,
-  created_at TEXT NOT NULL DEFAULT (datetime('now')),
-  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-  version INTEGER NOT NULL DEFAULT 1,
+  to_currency   TEXT NOT NULL,
+  rate          REAL NOT NULL,
+  set_by        TEXT,
+  is_deleted    INTEGER DEFAULT 0,
+  deleted_by    TEXT,
+  deleted_at    TEXT,
+  created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+  version       INTEGER NOT NULL DEFAULT 1,
   FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 );
 
 -- ─── Audit Log ─────────────────────────────────────────────
-CREATE TABLE IF NOT EXISTS audit_log (
-  id TEXT PRIMARY KEY,
-  tenant_id TEXT NOT NULL,
-  user_id TEXT,
-  action TEXT NOT NULL,
+CREATE TABLE audit_log (
+  id          TEXT PRIMARY KEY,
+  tenant_id   TEXT NOT NULL,
+  user_id     TEXT,
+  action      TEXT NOT NULL,
   entity_type TEXT NOT NULL,
-  entity_id TEXT NOT NULL,
-  old_values TEXT, -- JSON
-  new_values TEXT, -- JSON
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  entity_id   TEXT NOT NULL,
+  old_values  TEXT,
+  new_values  TEXT,
+  created_at  TEXT NOT NULL DEFAULT (datetime('now'))
 );
-
-CREATE INDEX IF NOT EXISTS idx_audit_tenant ON audit_log(tenant_id);
-CREATE INDEX IF NOT EXISTS idx_audit_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX idx_audit_entity ON audit_log(entity_type, entity_id);
+CREATE INDEX idx_audit_tenant ON audit_log(tenant_id);
