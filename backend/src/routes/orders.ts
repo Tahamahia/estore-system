@@ -335,6 +335,220 @@ orderRoutes.patch('/items/bulk', requireRole('super_admin', 'store_manager', 'pu
 });
 
 /**
+ * GET /orders/purchase-queue — All non-cancelled items still 'pending', grouped for the buying UI.
+ * One row per item; the handler groups by order_id in code so the client gets a per-order list
+ * with the cart link and the customer once, and its items nested underneath.
+ */
+orderRoutes.get('/purchase-queue', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+
+  const rows = await c.env.DB.prepare(
+    `SELECT oi.id AS item_id, oi.product_name, oi.quantity, oi.sku, oi.unit_price_foreign,
+            oi.cost_usd, oi.weight, oi.source_name, oi.shipping_rate_per_kg,
+            oi.attributes, oi.category, oi.version,
+            o.id AS order_id, o.cart_link, o.order_type, o.source_name AS order_source_name,
+            o.created_at AS order_created_at,
+            c.full_name AS customer_name, c.phone AS customer_phone
+     FROM order_items oi
+     JOIN orders o ON o.id = oi.order_id AND o.is_deleted = 0
+     LEFT JOIN customers c ON c.id = o.customer_id
+     WHERE oi.tenant_id = ? AND oi.is_deleted = 0 AND oi.status = 'pending'
+     ORDER BY o.created_at ASC, oi.id ASC`
+  ).bind(tenantId).all();
+
+  type Row = Record<string, unknown>;
+  const byOrder = new Map<string, Row>();
+  let itemCount = 0;
+
+  for (const raw of rows.results as Row[]) {
+    itemCount++;
+    const oid = raw.order_id as string;
+    let group = byOrder.get(oid);
+    if (!group) {
+      group = {
+        order_id: oid,
+        cart_link: raw.cart_link,
+        order_type: raw.order_type,
+        source_name: raw.order_source_name,
+        customer_name: raw.customer_name,
+        customer_phone: raw.customer_phone,
+        order_created_at: raw.order_created_at,
+        items: [] as Row[],
+      };
+      byOrder.set(oid, group);
+    }
+    (group.items as Row[]).push({
+      id: raw.item_id,
+      product_name: raw.product_name,
+      quantity: raw.quantity,
+      sku: raw.sku,
+      unit_price_foreign: raw.unit_price_foreign,
+      cost_usd: raw.cost_usd,
+      weight: raw.weight,
+      source_name: raw.source_name,
+      shipping_rate_per_kg: raw.shipping_rate_per_kg,
+      attributes: raw.attributes,
+      category: raw.category,
+      version: raw.version,
+    });
+  }
+
+  const orders = Array.from(byOrder.values());
+  return c.json({
+    orders,
+    totals: { orders: orders.length, items: itemCount },
+  });
+});
+
+/**
+ * PATCH /orders/items/purchase — Bulk purchase-data save.
+ * Body: { source_name?, shipping_rate_per_kg?, items: [{ id, version, sku?, cost_usd?, weight?, source_name?, shipping_rate_per_kg? }], mark_purchased: boolean }
+ *
+ * All items must version-match. Any mismatch → 409 and NOTHING is applied
+ * (the pre-check finds all mismatches before any UPDATE runs). Chunked into
+ * db.batch calls of ≤99 stmts and followed by a per-order status recompute.
+ */
+orderRoutes.patch('/items/purchase', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const body = await c.req.json<{
+    source_name?: string;
+    shipping_rate_per_kg?: number;
+    items: Array<{
+      id: string;
+      version: number;
+      sku?: string;
+      cost_usd?: number;
+      weight?: number;
+      source_name?: string;
+      shipping_rate_per_kg?: number;
+    }>;
+    mark_purchased: boolean;
+  }>();
+
+  if (!Array.isArray(body.items) || body.items.length === 0) {
+    return c.json({ error: 'Bad Request', message: 'items array is required' }, 400);
+  }
+
+  const defaultSource = body.source_name?.trim() || null;
+  const defaultRate = body.shipping_rate_per_kg;
+
+  const D1_BATCH_LIMIT = 99;
+
+  // Validate every item's numbers and version presence first (cheap check).
+  for (const it of body.items) {
+    if (!it.id || it.version === undefined || it.version === null) {
+      return c.json({ error: 'Bad Request', message: 'each item needs id and version' }, 400);
+    }
+    if (it.cost_usd !== undefined && it.cost_usd !== null && Number(it.cost_usd) < 0) {
+      return c.json({ error: 'Bad Request', message: `cost_usd لا يمكن أن يكون سالباً (${it.id})` }, 400);
+    }
+    if (it.weight !== undefined && it.weight !== null && Number(it.weight) < 0) {
+      return c.json({ error: 'Bad Request', message: `weight لا يمكن أن يكون سالباً (${it.id})` }, 400);
+    }
+    if (it.shipping_rate_per_kg !== undefined && it.shipping_rate_per_kg !== null && Number(it.shipping_rate_per_kg) < 0) {
+      return c.json({ error: 'Bad Request', message: `shipping_rate_per_kg لا يمكن أن يكون سالباً (${it.id})` }, 400);
+    }
+  }
+  if (defaultRate !== undefined && defaultRate !== null && Number(defaultRate) < 0) {
+    return c.json({ error: 'Bad Request', message: 'shipping_rate_per_kg لا يمكن أن يكون سالباً' }, 400);
+  }
+
+  // Version pre-check: read every item, compare, reject the whole batch on any mismatch.
+  const ids = body.items.map((it) => it.id);
+  const existing: Record<string, { version: number; order_id: string | null }> = {};
+  for (const chunk of chunkArray(ids, D1_BATCH_LIMIT)) {
+    const placeholders = chunk.map(() => '?').join(', ');
+    const rows = await c.env.DB.prepare(
+      `SELECT id, version, order_id FROM order_items
+       WHERE id IN (${placeholders}) AND tenant_id = ? AND is_deleted = 0`
+    ).bind(...chunk, tenantId).all();
+    for (const row of rows.results as Array<Record<string, unknown>>) {
+      existing[row.id as string] = {
+        version: Number(row.version),
+        order_id: (row.order_id as string | null) ?? null,
+      };
+    }
+  }
+
+  const mismatches: string[] = [];
+  const missing: string[] = [];
+  for (const it of body.items) {
+    const ex = existing[it.id];
+    if (!ex) { missing.push(it.id); continue; }
+    if (ex.version !== Number(it.version)) mismatches.push(it.id);
+  }
+  if (missing.length > 0) {
+    return c.json({ error: 'Not Found', message: 'بعض القطع غير موجودة', missing }, 404);
+  }
+  if (mismatches.length > 0) {
+    return c.json({
+      error: 'Conflict',
+      message: 'تم تعديل بعض القطع من قبل مستخدم آخر — أعد التحميل وحاول من جديد',
+      mismatches,
+    }, 409);
+  }
+
+  const distinctOrderIds = new Set<string>();
+  for (const it of body.items) {
+    const oid = existing[it.id]?.order_id;
+    if (oid) distinctOrderIds.add(oid);
+  }
+
+  const updateStmts: D1PreparedStatement[] = [];
+  for (const it of body.items) {
+    const setClauses: string[] = [];
+    const values: unknown[] = [];
+
+    if (it.sku !== undefined)       { setClauses.push('sku = ?');       values.push(it.sku?.trim() || null); }
+    if (it.cost_usd !== undefined)  { setClauses.push('cost_usd = ?');  values.push(it.cost_usd === null ? null : Number(it.cost_usd)); }
+    if (it.weight !== undefined)    { setClauses.push('weight = ?');    values.push(it.weight === null ? null : Number(it.weight)); }
+
+    const src = it.source_name !== undefined ? (it.source_name?.trim() || null) : defaultSource;
+    if (src !== null || it.source_name !== undefined) {
+      setClauses.push('source_name = ?'); values.push(src);
+    }
+
+    const rate = it.shipping_rate_per_kg !== undefined
+      ? (it.shipping_rate_per_kg === null ? null : Number(it.shipping_rate_per_kg))
+      : (defaultRate !== undefined ? Number(defaultRate) : undefined);
+    if (rate !== undefined) {
+      setClauses.push('shipping_rate_per_kg = ?'); values.push(rate);
+    }
+
+    if (body.mark_purchased) {
+      setClauses.push(`status = 'purchased'`);
+    }
+
+    if (setClauses.length === 0) continue; // nothing changed for this row
+
+    setClauses.push('version = version + 1');
+    setClauses.push(`updated_at = datetime('now')`);
+
+    updateStmts.push(
+      c.env.DB.prepare(
+        `UPDATE order_items SET ${setClauses.join(', ')}
+         WHERE id = ? AND tenant_id = ? AND version = ? AND is_deleted = 0`
+      ).bind(...values, it.id, tenantId, Number(it.version))
+    );
+  }
+
+  const recomputeStmts = body.mark_purchased
+    ? Array.from(distinctOrderIds).map((oid) => buildRecomputeOrderStatusStmt(c.env.DB, oid, tenantId))
+    : [];
+
+  const allStmts = [...updateStmts, ...recomputeStmts];
+  for (const chunk of chunkArray(allStmts, D1_BATCH_LIMIT)) {
+    if (chunk.length === 0) continue;
+    await c.env.DB.batch(chunk);
+  }
+
+  return c.json({
+    updated: updateStmts.length,
+    orders_recomputed: recomputeStmts.length,
+  });
+});
+
+/**
  * PATCH /orders/items/dispatch-ready — Mark sorted items as ready_dispatch for a customer
  * FIX 14: New status transition endpoint
  */
@@ -860,7 +1074,7 @@ orderRoutes.patch('/:id', async (c) => {
   // Build dynamic SET clause
   const setClauses: string[] = [];
   const values: any[] = [];
-  const allowedFields = ['notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign', 'shipping_rate_per_kg', 'cart_link', 'order_type', 'total_sale_price_lyd', 'total_cost_usd', 'deposit_amount', 'deposit_note'];
+  const allowedFields = ['notes', 'actual_exchange_rate', 'pegged_exchange_rate', 'currency', 'total_local', 'shipping_cost_foreign', 'shipping_rate_per_kg', 'cart_link', 'order_type', 'total_sale_price_lyd', 'total_cost_usd', 'deposit_amount', 'deposit_note', 'source_name'];
 
   for (const field of allowedFields) {
     if (updates[field] !== undefined) {
