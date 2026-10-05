@@ -550,14 +550,31 @@ class SettlementsNotifier extends StateNotifier<AsyncValue<List<Map<String, dyna
     required double exchangeRate,
     required List<String> orderIds,
     bool writeOff = false,
+    List<String> forfeitedOrderIds = const [],
   }) async {
     await _dio.post('/settlements', data: {
       'name': name,
       'exchange_rate': exchangeRate,
       'order_ids': orderIds,
       'write_off': writeOff,
+      if (forfeitedOrderIds.isNotEmpty) 'forfeited_order_ids': forfeitedOrderIds,
     });
     await fetchSettlements();
+  }
+
+  /// Cancelled orders with a deposit. [pending] = fate undecided;
+  /// otherwise kept (forfeited) deposits not yet in a settlement.
+  Future<List<Map<String, dynamic>>> fetchCancelledDeposits({required bool pending}) async {
+    final res = await _dio.get('/orders', queryParameters: {
+      pending ? 'deposit_pending' : 'deposit_forfeited': 'true',
+      'limit': 100,
+    });
+    return List<Map<String, dynamic>>.from((res.data as Map<String, dynamic>)['data'] ?? const []);
+  }
+
+  /// Record a cancelled order's deposit as 'refunded' or 'forfeited'.
+  Future<void> setDepositStatus(String orderId, String depositStatus) async {
+    await _dio.patch('/orders/$orderId/deposit', data: {'deposit_status': depositStatus});
   }
 
   Future<Map<String, dynamic>> fetchSettlementDetail(String id) async {

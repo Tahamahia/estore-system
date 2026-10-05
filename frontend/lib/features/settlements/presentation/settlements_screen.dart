@@ -226,15 +226,14 @@ class _SettlementCardState extends ConsumerState<_SettlementCard> {
     final name = s['name'] as String? ?? '—';
     final exchangeRate = (s['exchange_rate'] as num?)?.toDouble() ?? 0;
     final createdAt = s['created_at'] as String? ?? '';
-    final totalLyd = (s['total_lyd_collected'] as num?)?.toDouble() ?? 0;
-    final totalUsdCost = (s['total_usd_cost'] as num?)?.toDouble() ?? 0;
-    final writeOffUsd = (s['total_write_off_usd'] as num?)?.toDouble() ?? 0;
-    final writeOffCount = (s['write_off_item_count'] as num?)?.toInt() ?? 0;
+    final fin = _SettlementFigures.from(s);
+    final totalLyd = fin.actualLyd;
+    final totalUsdCost = fin.costUsd;
     final orderCount = (s['order_count'] as num?)?.toInt() ?? 0;
     final cashShortfall = (s['cash_shortfall'] as num?)?.toDouble() ?? 0;
 
-    final boughtUsd = exchangeRate > 0 ? totalLyd / exchangeRate : 0.0;
-    final netProfit = boughtUsd - totalUsdCost - writeOffUsd;
+    final boughtUsd = fin.boughtUsd;
+    final netProfit = fin.netProfitUsd;
     final isProfit = netProfit >= 0;
 
     return GestureDetector(
@@ -309,7 +308,7 @@ class _SettlementCardState extends ConsumerState<_SettlementCard> {
           // Financial grid
           Row(children: [
             _FinStat(
-              label: 'إجمالي المحصل',
+              label: 'الإيراد الفعلي',
               value: '${totalLyd.toStringAsFixed(0)} د.ل',
               icon: Icons.payments_outlined,
               color: AppTheme.secondary,
@@ -329,29 +328,7 @@ class _SettlementCardState extends ConsumerState<_SettlementCard> {
               color: AppTheme.primary,
             ),
           ]),
-          if (writeOffCount > 0) ...[
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppTheme.error.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: AppTheme.error.withValues(alpha: 0.2)),
-              ),
-              child: Row(children: [
-                const Icon(Icons.inventory_2_outlined, color: AppTheme.error, size: 16),
-                const SizedBox(width: 8),
-                Expanded(child: Text(
-                  'خسائر بضاعة فورية لم تُبع ($writeOffCount منتج)',
-                  style: const TextStyle(color: AppTheme.error, fontSize: 12),
-                )),
-                Text(
-                  '-\$${writeOffUsd.toStringAsFixed(2)}',
-                  style: const TextStyle(color: AppTheme.error, fontSize: 13, fontWeight: FontWeight.w700),
-                ),
-              ]),
-            ),
-          ],
+          ..._SettlementBreakdownRows.build(fin),
           const SizedBox(height: 14),
 
           // Net profit — prominent
@@ -468,21 +445,50 @@ class _SettlementDetailDialogState extends ConsumerState<_SettlementDetailDialog
                   }
                   final detail = snap.data!;
                   final orders = List<Map<String, dynamic>>.from(detail['orders'] as List? ?? []);
+                  final fin = _SettlementFigures.from(detail);
+                  final summary = <Widget>[
+                    _SummaryRow(label: 'الإيراد الفعلي', value: '${fin.actualLyd.toStringAsFixed(0)} د.ل'),
+                    _SummaryRow(label: 'إجمالي التكلفة', value: '\$${fin.costUsd.toStringAsFixed(2)}'),
+                    ..._SettlementBreakdownRows.build(fin),
+                    const SizedBox(height: 8),
+                    _SummaryRow(
+                      label: 'المكسب الصافي',
+                      value: '${fin.netProfitUsd >= 0 ? '+' : ''}\$${fin.netProfitUsd.toStringAsFixed(2)}',
+                      color: fin.netProfitUsd >= 0 ? AppTheme.success : AppTheme.error,
+                      bold: true,
+                    ),
+                    const SizedBox(height: 12),
+                    const Divider(height: 1, color: AppTheme.darkBorder),
+                  ];
 
                   if (orders.isEmpty) {
-                    return const Center(child: Text('لا توجد طلبيات في هذه التسوية', style: TextStyle(color: Colors.white54)));
+                    return ListView(children: [
+                      ...summary,
+                      const Padding(
+                        padding: EdgeInsets.all(24),
+                        child: Center(child: Text('لا توجد طلبيات في هذه التسوية', style: TextStyle(color: Colors.white54))),
+                      ),
+                    ]);
                   }
 
                   return ListView.separated(
-                    itemCount: orders.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1, color: AppTheme.darkBorder),
-                    itemBuilder: (_, i) {
-                      final o = orders[i];
+                    itemCount: orders.length + 1,
+                    separatorBuilder: (_, i) => i == 0
+                        ? const SizedBox.shrink()
+                        : const Divider(height: 1, color: AppTheme.darkBorder),
+                    itemBuilder: (_, index) {
+                      if (index == 0) {
+                        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: summary);
+                      }
+                      final o = orders[index - 1];
                       final rawId = o['id'] as String? ?? '';
                       final shortId = '#${rawId.length >= 8 ? rawId.substring(0, 8).toUpperCase() : rawId.toUpperCase()}';
                       final customerName = o['customer_name'] as String? ?? '—';
                       final itemCount = (o['item_count'] as num?)?.toInt() ?? 0;
-                      final totalLyd = (o['total_lyd'] as num?)?.toDouble() ?? 0;
+                      final isForfeit = (o['is_forfeit'] as num?)?.toInt() == 1;
+                      final totalLyd = (o['actual_lyd'] as num?)?.toDouble()
+                          ?? (o['total_lyd'] as num?)?.toDouble() ?? 0;
+                      final discount = (o['door_discount_lyd'] as num?)?.toDouble() ?? 0;
                       final orderShortfall = (o['cash_shortfall'] as num?)?.toDouble() ?? 0;
                       final short = orderShortfall > 0.5;
                       return Padding(
@@ -505,14 +511,23 @@ class _SettlementDetailDialogState extends ConsumerState<_SettlementDetailDialog
                             Text(shortId, style: const TextStyle(color: AppTheme.secondary, fontSize: 11, fontWeight: FontWeight.w700, letterSpacing: 0.5)),
                             const SizedBox(height: 2),
                             Text(customerName, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w600), overflow: TextOverflow.ellipsis),
-                            if (short) ...[
+                            if (isForfeit) ...[
+                              const SizedBox(height: 2),
+                              const Text('عربون طلبية ملغاة — محتفظ به',
+                                  style: TextStyle(color: AppTheme.warning, fontSize: 11, fontWeight: FontWeight.w700)),
+                            ] else if (discount > 0.5) ...[
+                              const SizedBox(height: 2),
+                              Text('خصم عند الباب ${discount.toStringAsFixed(0)} د.ل',
+                                  style: const TextStyle(color: AppTheme.warning, fontSize: 11, fontWeight: FontWeight.w700)),
+                            ] else if (short) ...[
                               const SizedBox(height: 2),
                               Text('نقص ${orderShortfall.toStringAsFixed(0)} د.ل',
                                   style: const TextStyle(color: AppTheme.error, fontSize: 11, fontWeight: FontWeight.w700)),
                             ],
                           ])),
                           Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-                            Text('$itemCount منتج', style: const TextStyle(color: Colors.white54, fontSize: 12)),
+                            if (!isForfeit)
+                              Text('$itemCount منتج', style: const TextStyle(color: Colors.white54, fontSize: 12)),
                             const SizedBox(height: 2),
                             Text('${totalLyd.toStringAsFixed(0)} د.ل', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 13)),
                           ]),
@@ -667,6 +682,11 @@ class _NewSettlementFlowState extends ConsumerState<_NewSettlementFlow> {
   bool _loadingOrders = true;
   List<Map<String, dynamic>> _eligibleOrders = [];
   final Set<String> _selectedIds = {};
+  // Cancelled orders with a deposit: undecided, and kept (forfeited) ones.
+  List<Map<String, dynamic>> _pendingDeposits = [];
+  List<Map<String, dynamic>> _keptDeposits = [];
+  final Set<String> _selectedForfeitIds = {};
+  final Set<String> _decidingIds = {};
   late Future<int> _inStockCountFuture;
 
   static const _monthsAr = [
@@ -704,20 +724,30 @@ class _NewSettlementFlowState extends ConsumerState<_NewSettlementFlow> {
     setState(() { _loadingOrders = true; _error = null; });
     try {
       final dio = ref.read(dioProvider);
-      final res = await dio.get('/orders', queryParameters: {
-        'status': 'delivered',
-        'unsettled': 'true',
-        'limit': 200,
-      });
-      final list = List<Map<String, dynamic>>.from(
-        (res.data as Map<String, dynamic>)['data'] ?? const [],
-      );
+      final notifier = ref.read(settlementsProvider.notifier);
+      final results = await Future.wait([
+        dio.get('/orders', queryParameters: {
+          'status': 'delivered',
+          'unsettled': 'true',
+          'limit': 200,
+        }).then((res) => List<Map<String, dynamic>>.from(
+              (res.data as Map<String, dynamic>)['data'] ?? const [],
+            )),
+        notifier.fetchCancelledDeposits(pending: true),
+        notifier.fetchCancelledDeposits(pending: false),
+      ]);
+      final list = results[0];
       if (!mounted) return;
       setState(() {
         _eligibleOrders = list;
         _selectedIds
           ..clear()
           ..addAll(list.map((o) => o['id'] as String));
+        _pendingDeposits = results[1];
+        _keptDeposits = results[2];
+        _selectedForfeitIds
+          ..clear()
+          ..addAll(_keptDeposits.map((o) => o['id'] as String));
         _loadingOrders = false;
       });
     } catch (e) {
@@ -725,18 +755,45 @@ class _NewSettlementFlowState extends ConsumerState<_NewSettlementFlow> {
     }
   }
 
-  double _saleTotal(Map<String, dynamic> o) {
-    final items = (o['items_sale_total_lyd'] as num?)?.toDouble() ?? 0;
-    if (items > 0) return items;
-    return (o['total_sale_price_lyd'] as num?)?.toDouble() ?? 0;
+  double _deposit(Map<String, dynamic> o) => (o['deposit_amount'] as num?)?.toDouble() ?? 0;
+
+  /// استرجاع → 'refunded' (drops out of the list);
+  /// الاحتفاظ → 'forfeited' (moves to the checkable kept list, pre-checked).
+  Future<void> _decideDeposit(Map<String, dynamic> order, String fate) async {
+    final id = order['id'] as String;
+    setState(() { _decidingIds.add(id); _error = null; });
+    try {
+      await ref.read(settlementsProvider.notifier).setDepositStatus(id, fate);
+      if (!mounted) return;
+      setState(() {
+        _pendingDeposits.removeWhere((o) => o['id'] == id);
+        if (fate == 'forfeited') {
+          _keptDeposits = [..._keptDeposits, order];
+          _selectedForfeitIds.add(id);
+        }
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = '$e');
+    } finally {
+      if (mounted) setState(() => _decidingIds.remove(id));
+    }
   }
+
+  // Order-total-first, same rule as the backend's settlement figures.
+  double _saleTotal(Map<String, dynamic> o) =>
+      (o['total_sale_price_lyd'] as num?)?.toDouble()
+      ?? (o['items_sale_total_lyd'] as num?)?.toDouble()
+      ?? 0;
 
   Future<void> _submit() async {
     final name = _nameCtrl.text.trim();
     final rate = double.tryParse(_rateCtrl.text.trim());
     if (name.isEmpty) { setState(() => _error = 'اسم الدفعة مطلوب'); return; }
     if (rate == null || rate <= 0) { setState(() => _error = 'سعر الصرف يجب أن يكون رقماً موجباً'); return; }
-    if (_selectedIds.isEmpty) { setState(() => _error = 'اختر طلبيات على الأقل'); return; }
+    if (_selectedIds.isEmpty && _selectedForfeitIds.isEmpty) {
+      setState(() => _error = 'اختر طلبيات على الأقل');
+      return;
+    }
     setState(() { _submitting = true; _error = null; });
     try {
       await ref.read(settlementsProvider.notifier).createSettlement(
@@ -744,6 +801,7 @@ class _NewSettlementFlowState extends ConsumerState<_NewSettlementFlow> {
         exchangeRate: rate,
         orderIds: _selectedIds.toList(),
         writeOff: _writeOff,
+        forfeitedOrderIds: _selectedForfeitIds.toList(),
       );
       widget.onCreated();
       if (mounted) Navigator.of(context).pop();
@@ -785,10 +843,98 @@ class _NewSettlementFlowState extends ConsumerState<_NewSettlementFlow> {
     );
   }
 
+  static String _shortId(String id) =>
+      (id.length > 8 ? id.substring(0, 8) : id).toUpperCase();
+
+  Widget _buildOrderTile(Map<String, dynamic> o) {
+    final id = o['id'] as String;
+    final createdAt = (o['created_at'] as String? ?? '').length >= 10
+        ? (o['created_at'] as String).substring(0, 10)
+        : '';
+    return CheckboxListTile(
+      value: _selectedIds.contains(id),
+      onChanged: (v) => setState(() => v == true ? _selectedIds.add(id) : _selectedIds.remove(id)),
+      activeColor: AppTheme.primary,
+      dense: true,
+      controlAffinity: ListTileControlAffinity.leading,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+      title: Text(o['customer_name'] as String? ?? '—',
+          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+      subtitle: Text(
+        [_shortId(id), createdAt].where((s) => s.isNotEmpty).join(' · '),
+        style: const TextStyle(color: Colors.white38, fontSize: 11),
+      ),
+      secondary: Text('${_saleTotal(o).toStringAsFixed(0)} د.ل',
+          style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+    );
+  }
+
+  Widget _buildPendingDepositTile(Map<String, dynamic> o) {
+    final id = o['id'] as String;
+    final busy = _decidingIds.contains(id);
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      child: Row(children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(o['customer_name'] as String? ?? '—',
+              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+          Text('${_shortId(id)} · عربون ${_deposit(o).toStringAsFixed(0)} د.ل',
+              style: const TextStyle(color: Colors.white38, fontSize: 11)),
+        ])),
+        if (busy)
+          const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+        else ...[
+          OutlinedButton(
+            onPressed: () => _decideDeposit(o, 'refunded'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: Colors.white70,
+              side: const BorderSide(color: AppTheme.darkBorder),
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              minimumSize: const Size(0, 32),
+            ),
+            child: const Text('استرجاع', style: TextStyle(fontSize: 12)),
+          ),
+          const SizedBox(width: 6),
+          ElevatedButton(
+            onPressed: () => _decideDeposit(o, 'forfeited'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppTheme.warning,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              minimumSize: const Size(0, 32),
+            ),
+            child: const Text('الاحتفاظ', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ]),
+    );
+  }
+
+  Widget _buildKeptDepositTile(Map<String, dynamic> o) {
+    final id = o['id'] as String;
+    return CheckboxListTile(
+      value: _selectedForfeitIds.contains(id),
+      onChanged: (v) => setState(() => v == true ? _selectedForfeitIds.add(id) : _selectedForfeitIds.remove(id)),
+      activeColor: AppTheme.warning,
+      dense: true,
+      controlAffinity: ListTileControlAffinity.leading,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+      title: Text(o['customer_name'] as String? ?? '—',
+          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
+      subtitle: Text('${_shortId(id)} · عربون محتفظ به',
+          style: const TextStyle(color: AppTheme.warning, fontSize: 11)),
+      secondary: Text('${_deposit(o).toStringAsFixed(0)} د.ل',
+          style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
+    );
+  }
+
   Widget _buildBody() {
     final totalSelected = _eligibleOrders
-        .where((o) => _selectedIds.contains(o['id']))
-        .fold<double>(0, (sum, o) => sum + _saleTotal(o));
+            .where((o) => _selectedIds.contains(o['id']))
+            .fold<double>(0, (sum, o) => sum + _saleTotal(o)) +
+        _keptDeposits
+            .where((o) => _selectedForfeitIds.contains(o['id']))
+            .fold<double>(0, (sum, o) => sum + _deposit(o));
+    final hasSelection = _selectedIds.isNotEmpty || _selectedForfeitIds.isNotEmpty;
     final allSelected = _eligibleOrders.isNotEmpty && _selectedIds.length == _eligibleOrders.length;
 
     return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
@@ -870,56 +1016,47 @@ class _NewSettlementFlowState extends ConsumerState<_NewSettlementFlow> {
       Expanded(
         child: _loadingOrders
             ? const Center(child: CircularProgressIndicator())
-            : _eligibleOrders.isEmpty
-                ? const Center(
-                    child: Text('لا توجد طلبيات مسلَّمة بانتظار التسوية',
-                        style: TextStyle(color: Colors.white38, fontSize: 13)),
+            : ListView(children: [
+                if (_eligibleOrders.isEmpty)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 24),
+                    child: Center(
+                      child: Text('لا توجد طلبيات مسلَّمة بانتظار التسوية',
+                          style: TextStyle(color: Colors.white38, fontSize: 13)),
+                    ),
                   )
-                : Container(
+                else
+                  Container(
                     decoration: BoxDecoration(
                       color: AppTheme.darkCard.withValues(alpha: 0.5),
                       borderRadius: BorderRadius.circular(10),
                       border: Border.all(color: AppTheme.darkBorder),
                     ),
-                    child: ListView.builder(
-                      itemCount: _eligibleOrders.length,
-                      itemBuilder: (_, i) {
-                        final o = _eligibleOrders[i];
-                        final id = o['id'] as String;
-                        final checked = _selectedIds.contains(id);
-                        final customer = o['customer_name'] as String? ?? '—';
-                        final shortId = id.length > 8
-                            ? id.substring(0, 8).toUpperCase()
-                            : id.toUpperCase();
-                        final total = _saleTotal(o);
-                        final createdAt = (o['created_at'] as String? ?? '').length >= 10
-                            ? (o['created_at'] as String).substring(0, 10)
-                            : '';
-                        return CheckboxListTile(
-                          value: checked,
-                          onChanged: (v) => setState(() {
-                            if (v == true) {
-                              _selectedIds.add(id);
-                            } else {
-                              _selectedIds.remove(id);
-                            }
-                          }),
-                          activeColor: AppTheme.primary,
-                          dense: true,
-                          controlAffinity: ListTileControlAffinity.leading,
-                          contentPadding: const EdgeInsets.symmetric(horizontal: 4),
-                          title: Text(customer,
-                              style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w500)),
-                          subtitle: Text(
-                            [shortId, createdAt].where((s) => s.isNotEmpty).join(' · '),
-                            style: const TextStyle(color: Colors.white38, fontSize: 11),
-                          ),
-                          secondary: Text('${total.toStringAsFixed(0)} د.ل',
-                              style: const TextStyle(color: Colors.white70, fontWeight: FontWeight.w600)),
-                        );
-                      },
-                    ),
+                    child: Column(children: [
+                      for (final o in _eligibleOrders) _buildOrderTile(o),
+                    ]),
                   ),
+                if (_pendingDeposits.isNotEmpty || _keptDeposits.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  const Text('عرابين ملغاة',
+                      style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600, fontSize: 13)),
+                  const SizedBox(height: 2),
+                  const Text('طلبيات ملغاة عليها عربون — استرجعه للزبون أو احتفظ به كإيراد في هذه التسوية',
+                      style: TextStyle(color: Colors.white38, fontSize: 11)),
+                  const SizedBox(height: 6),
+                  Container(
+                    decoration: BoxDecoration(
+                      color: AppTheme.darkCard.withValues(alpha: 0.5),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppTheme.warning.withValues(alpha: 0.3)),
+                    ),
+                    child: Column(children: [
+                      for (final o in _pendingDeposits) _buildPendingDepositTile(o),
+                      for (final o in _keptDeposits) _buildKeptDepositTile(o),
+                    ]),
+                  ),
+                ],
+              ]),
       ),
       const SizedBox(height: 10),
       // Live footer: N طلبية · إجمالي X د.ل
@@ -931,8 +1068,12 @@ class _NewSettlementFlowState extends ConsumerState<_NewSettlementFlow> {
           border: Border.all(color: AppTheme.primary.withValues(alpha: 0.3)),
         ),
         child: Row(children: [
-          Text('${_selectedIds.length} طلبية',
-              style: const TextStyle(color: AppTheme.primary, fontSize: 13, fontWeight: FontWeight.w700)),
+          Text(
+            _selectedForfeitIds.isEmpty
+                ? '${_selectedIds.length} طلبية'
+                : '${_selectedIds.length} طلبية + ${_selectedForfeitIds.length} عربون',
+            style: const TextStyle(color: AppTheme.primary, fontSize: 13, fontWeight: FontWeight.w700),
+          ),
           const Spacer(),
           Text('إجمالي ${totalSelected.toStringAsFixed(0)} د.ل',
               style: const TextStyle(color: AppTheme.primary, fontSize: 13, fontWeight: FontWeight.w700)),
@@ -953,7 +1094,7 @@ class _NewSettlementFlowState extends ConsumerState<_NewSettlementFlow> {
       SizedBox(
         height: 48,
         child: ElevatedButton.icon(
-          onPressed: (_submitting || _selectedIds.isEmpty) ? null : _submit,
+          onPressed: (_submitting || !hasSelection) ? null : _submit,
           icon: _submitting
               ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
               : const Icon(Icons.check, size: 20),
@@ -962,6 +1103,129 @@ class _NewSettlementFlowState extends ConsumerState<_NewSettlementFlow> {
         ),
       ),
     ]);
+  }
+}
+
+// ─── Settlement figures (from the list row or the detail payload) ───
+class _SettlementFigures {
+  final double rate;
+  final double actualLyd;      // money actually received
+  final double doorDiscountLyd;
+  final double forfeitedLyd;   // kept deposits of cancelled orders (inside actualLyd)
+  final double costUsd;
+  final double lostUsd;
+  final double unsoldUsd;
+
+  const _SettlementFigures({
+    required this.rate,
+    required this.actualLyd,
+    required this.doorDiscountLyd,
+    required this.forfeitedLyd,
+    required this.costUsd,
+    required this.lostUsd,
+    required this.unsoldUsd,
+  });
+
+  factory _SettlementFigures.from(Map<String, dynamic> s) {
+    double n(String k) => (s[k] as num?)?.toDouble() ?? 0;
+    return _SettlementFigures(
+      rate: n('exchange_rate'),
+      actualLyd: n('total_lyd_collected'),
+      doorDiscountLyd: n('door_discount_lyd'),
+      forfeitedLyd: n('forfeited_deposits_lyd'),
+      costUsd: n('total_usd_cost'),
+      lostUsd: n('write_off_lost_usd'),
+      unsoldUsd: n('write_off_unsold_usd'),
+    );
+  }
+
+  double get boughtUsd => rate > 0 ? actualLyd / rate : 0;
+  /// Net profit from actual revenue: received / rate − cost − write-offs.
+  double get netProfitUsd => boughtUsd - costUsd - lostUsd - unsoldUsd;
+}
+
+/// Door discounts, kept deposits, lost pieces and unsold instant stock —
+/// shown only when non-zero.
+class _SettlementBreakdownRows {
+  static List<Widget> build(_SettlementFigures f) => [
+    if (f.doorDiscountLyd > 0.5)
+      _BreakdownRow(
+        icon: Icons.sell_outlined,
+        color: AppTheme.warning,
+        label: 'خصومات عند الباب',
+        value: '-${f.doorDiscountLyd.toStringAsFixed(0)} د.ل',
+      ),
+    if (f.forfeitedLyd > 0.5)
+      _BreakdownRow(
+        icon: Icons.savings_outlined,
+        color: AppTheme.success,
+        label: 'عرابين ملغاة محتفظ بها (ضمن الإيراد)',
+        value: '+${f.forfeitedLyd.toStringAsFixed(0)} د.ل',
+      ),
+    if (f.lostUsd > 0.005)
+      _BreakdownRow(
+        icon: Icons.report_gmailerrorred_rounded,
+        color: AppTheme.error,
+        label: 'قطع مفقودة',
+        value: '-\$${f.lostUsd.toStringAsFixed(2)}',
+      ),
+    if (f.unsoldUsd > 0.005)
+      _BreakdownRow(
+        icon: Icons.inventory_2_outlined,
+        color: AppTheme.error,
+        label: 'بضاعة فورية غير مباعة',
+        value: '-\$${f.unsoldUsd.toStringAsFixed(2)}',
+      ),
+  ];
+}
+
+class _BreakdownRow extends StatelessWidget {
+  final IconData icon;
+  final Color color;
+  final String label;
+  final String value;
+  const _BreakdownRow({required this.icon, required this.color, required this.label, required this.value});
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withValues(alpha: 0.2)),
+      ),
+      child: Row(children: [
+        Icon(icon, color: color, size: 16),
+        const SizedBox(width: 8),
+        Expanded(child: Text(label, style: TextStyle(color: color, fontSize: 12))),
+        Text(value, style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w700)),
+      ]),
+    );
+  }
+}
+
+class _SummaryRow extends StatelessWidget {
+  final String label;
+  final String value;
+  final Color color;
+  final bool bold;
+  const _SummaryRow({required this.label, required this.value, this.color = Colors.white, this.bold = false});
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 3),
+      child: Row(children: [
+        Expanded(child: Text(label, style: const TextStyle(color: Colors.white54, fontSize: 13))),
+        Text(value, style: TextStyle(
+          color: color,
+          fontSize: bold ? 16 : 13,
+          fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+        )),
+      ]),
+    );
   }
 }
 

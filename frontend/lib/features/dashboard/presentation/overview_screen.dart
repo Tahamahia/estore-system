@@ -94,6 +94,14 @@ class OverviewScreen extends ConsumerWidget {
             orElse: () => const SizedBox.shrink(),
           ),
 
+          // Driver debts — short cash handovers are owed by the driver.
+          dashState.maybeWhen(
+            data: (data) => _DriverDebtsCard(
+              debts: List<Map<String, dynamic>>.from(data['driver_debts'] as List? ?? const []),
+            ),
+            orElse: () => const SizedBox.shrink(),
+          ),
+
           // Status Breakdown
           _StatusBreakdown(),
         ],
@@ -181,6 +189,57 @@ class OverviewScreen extends ConsumerWidget {
         _StatCard(title: 'قيد المعالجة', value: '--', icon: Icons.inventory_2, color: AppTheme.warning, change: '--', isNeutral: true),
         _StatCard(title: 'الزبائن', value: '--', icon: Icons.people, color: AppTheme.secondary, change: '--', isNeutral: true),
       ],
+    );
+  }
+}
+
+class _DriverDebtsCard extends StatelessWidget {
+  final List<Map<String, dynamic>> debts;
+  const _DriverDebtsCard({required this.debts});
+
+  @override
+  Widget build(BuildContext context) {
+    if (debts.isEmpty) return const SizedBox.shrink();
+    final total = debts.fold<double>(0, (sum, d) => sum + ((d['amount'] as num?)?.toDouble() ?? 0));
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24),
+      child: Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTheme.darkSurface,
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: AppTheme.error.withValues(alpha: 0.35)),
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            const Icon(Icons.account_balance_outlined, color: AppTheme.error, size: 20),
+            const SizedBox(width: 8),
+            const Expanded(child: Text('ذمم المناديب',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600, color: Colors.white))),
+            Text('${total.toStringAsFixed(0)} د.ل',
+                style: const TextStyle(color: AppTheme.error, fontSize: 16, fontWeight: FontWeight.w800)),
+          ]),
+          const SizedBox(height: 4),
+          const Text('نقص في تسليم الكاش — دين على المندوب، لا يُخصم من الإيراد',
+              style: TextStyle(color: Colors.white38, fontSize: 12)),
+          const SizedBox(height: 10),
+          for (final d in debts)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 4),
+              child: Row(children: [
+                const Icon(Icons.person_outline, color: Colors.white54, size: 16),
+                const SizedBox(width: 8),
+                Expanded(child: Text(d['driver_name'] as String? ?? '—',
+                    style: const TextStyle(color: Colors.white, fontSize: 14))),
+                Text('${(d['manifest_count'] as num?)?.toInt() ?? 0} مانيفست',
+                    style: const TextStyle(color: Colors.white38, fontSize: 12)),
+                const SizedBox(width: 12),
+                Text('${((d['amount'] as num?)?.toDouble() ?? 0).toStringAsFixed(0)} د.ل',
+                    style: const TextStyle(color: AppTheme.error, fontSize: 14, fontWeight: FontWeight.w700)),
+              ]),
+            ),
+        ]),
+      ),
     );
   }
 }
