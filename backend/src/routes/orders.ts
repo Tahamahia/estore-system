@@ -16,7 +16,7 @@ export const orderRoutes = new Hono<AppEnv>();
  * Supports pagination via ?page=1&limit=50
  * Joins customers so customer_name and customer_phone are always present.
  */
-orderRoutes.get('/', async (c) => {
+orderRoutes.get('/', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const page = parseInt(c.req.query('page') || '1');
   const limit = Math.min(parseInt(c.req.query('limit') || '50'), 100);
@@ -115,7 +115,7 @@ orderRoutes.get('/', async (c) => {
  * POST /orders — Create a new order
  * Requires Idempotency-Key header (enforced by middleware)
  */
-orderRoutes.post('/', async (c) => {
+orderRoutes.post('/', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const userId = c.get('user_id') as string;
   const body = await c.req.json();
@@ -547,7 +547,7 @@ orderRoutes.patch('/items/purchase', requireRole('super_admin', 'store_manager',
  * PATCH /orders/items/dispatch-ready — Mark sorted items as ready_dispatch for a customer
  * FIX 14: New status transition endpoint
  */
-orderRoutes.patch('/items/dispatch-ready', requireRole('super_admin', 'store_manager', 'driver'), async (c) => {
+orderRoutes.patch('/items/dispatch-ready', requireRole('super_admin', 'store_manager'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const body = await c.req.json();
   const { customer_id } = body;
@@ -597,7 +597,7 @@ orderRoutes.patch('/items/dispatch-ready', requireRole('super_admin', 'store_man
  * PATCH /orders/items/dispatch — Mark ready_dispatch items as dispatched for a customer
  * FIX 14: New status transition endpoint
  */
-orderRoutes.patch('/items/dispatch', requireRole('super_admin', 'store_manager', 'driver'), async (c) => {
+orderRoutes.patch('/items/dispatch', requireRole('super_admin', 'store_manager'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const body = await c.req.json();
   const { customer_id } = body;
@@ -656,7 +656,7 @@ orderRoutes.patch('/items/dispatch', requireRole('super_admin', 'store_manager',
  *   item in ('purchased','shipped','arrived_warehouse'). Kept for the
  *   rare case a label is torn on something not yet received.
  */
-orderRoutes.get('/items/unsorted', async (c) => {
+orderRoutes.get('/items/unsorted', requireRole('super_admin', 'store_manager', 'purchaser', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const scope = c.req.query('scope');
 
@@ -702,7 +702,7 @@ orderRoutes.get('/items/unsorted', async (c) => {
  * GET /orders/items/dispatch-status — Customer dispatch readiness grouped view
  * Returns customers with their item counts and traffic-light status.
  */
-orderRoutes.get('/items/dispatch-status', async (c) => {
+orderRoutes.get('/items/dispatch-status', requireRole('super_admin', 'store_manager', 'purchaser', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
 
   const results = await c.env.DB.prepare(
@@ -780,7 +780,7 @@ orderRoutes.patch('/items/:item_id/weight', requireRole('super_admin', 'store_ma
 /**
  * POST /orders/:id/items — Add a single item to an existing order
  */
-orderRoutes.post('/:id/items', async (c) => {
+orderRoutes.post('/:id/items', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const orderId = c.req.param('id');
   const body = await c.req.json();
@@ -831,9 +831,9 @@ orderRoutes.post('/:id/items', async (c) => {
  * PATCH /orders/:id/items/:itemId — Update a single order item (all fields + status)
  * Uses OCC via the version column to prevent lost-update races.
  */
-orderRoutes.patch('/:id/items/:itemId', async (c) => {
+orderRoutes.patch('/:id/items/:itemId', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
-  const orderId = c.req.param('id');
+  const orderId = c.req.param('id')!;
   const itemId = c.req.param('itemId');
   const body = await c.req.json();
   const { version, ...updates } = body;
@@ -1050,9 +1050,51 @@ orderRoutes.post('/:id/split', requireRole('super_admin', 'store_manager'), asyn
 });
 
 /**
+ * GET /orders/:id/label — Price-free payload for the bag label / waybill.
+ * Readable by the sorter, so the SELECT list is explicit: no cost, no
+ * per-item price, no product URL. The only money figure is the amount the
+ * driver must collect at the door: max(0, sale − deposit), where sale uses
+ * the order-total-first rule (total_sale_price_lyd, else the live items sum).
+ */
+orderRoutes.get('/:id/label', requireRole('super_admin', 'store_manager', 'sorter'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const orderId = c.req.param('id');
+
+  const row = await c.env.DB.prepare(
+    `SELECT o.id, o.created_at,
+            c.full_name, c.phone, c.phone2, c.city, c.area, c.street, c.location_url,
+            (SELECT COALESCE(SUM(COALESCE(oi.quantity,1)), 0)
+             FROM order_items oi
+             WHERE oi.order_id = o.id AND oi.tenant_id = o.tenant_id
+               AND oi.is_deleted = 0 AND oi.status != 'cancelled') AS item_count,
+            MAX(0,
+              COALESCE(o.total_sale_price_lyd,
+                (SELECT SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1))
+                 FROM order_items oi
+                 WHERE oi.order_id = o.id AND oi.tenant_id = o.tenant_id
+                   AND oi.is_deleted = 0 AND oi.status != 'cancelled'),
+                0)
+              - COALESCE(o.deposit_amount, 0)
+            ) AS amount_to_collect,
+            ins.delivery_company, ins.driver_name
+     FROM orders o
+     LEFT JOIN customers c ON c.id = o.customer_id
+     LEFT JOIN internal_shipments ins
+            ON ins.id = o.internal_shipment_id AND ins.tenant_id = o.tenant_id
+     WHERE o.id = ? AND o.tenant_id = ? AND o.is_deleted = 0`
+  ).bind(orderId, tenantId).first();
+
+  if (!row) {
+    return c.json({ error: 'Not Found', message: 'Order not found' }, 404);
+  }
+
+  return c.json(row);
+});
+
+/**
  * GET /orders/:id — Get single order with items and customer info
  */
-orderRoutes.get('/:id', async (c) => {
+orderRoutes.get('/:id', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const orderId = c.req.param('id');
 
@@ -1084,7 +1126,7 @@ orderRoutes.get('/:id', async (c) => {
 /**
  * PATCH /orders/:id — Update order (with Optimistic Concurrency Control)
  */
-orderRoutes.patch('/:id', async (c) => {
+orderRoutes.patch('/:id', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const orderId = c.req.param('id');
   const body = await c.req.json();

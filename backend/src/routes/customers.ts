@@ -17,7 +17,7 @@ function normalizePhone(phone: string | null | undefined): string | null {
  * GET /customers — List/search customers
  * Supports ?search= for name/phone fuzzy matching and ?phone= for exact phone lookup
  */
-customerRoutes.get('/', async (c) => {
+customerRoutes.get('/', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const page = parseInt(c.req.query('page') || '1');
   const limit = Math.min(parseInt(c.req.query('limit') || '50'), 100);
@@ -52,7 +52,7 @@ customerRoutes.get('/', async (c) => {
   return c.json({ data: results.results, total: (countResult as any)?.total || 0, page, limit });
 });
 
-customerRoutes.get('/:id', async (c) => {
+customerRoutes.get('/:id', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const customer = await c.env.DB.prepare(
     `SELECT * FROM customers WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
@@ -70,7 +70,7 @@ customerRoutes.get('/:id', async (c) => {
  * If phone is new → creates customer (201)
  * This is the "Phone-First Identity" pattern.
  */
-customerRoutes.post('/', async (c) => {
+customerRoutes.post('/', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const body = await c.req.json();
   if (!body.id || !body.full_name) return c.json({ error: 'id and full_name required' }, 400);
@@ -113,7 +113,7 @@ customerRoutes.post('/', async (c) => {
 /**
  * PATCH /customers/:id — Update customer fields (OCC with version column)
  */
-customerRoutes.patch('/:id', async (c) => {
+customerRoutes.patch('/:id', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const customerId = c.req.param('id');
   const body = await c.req.json();

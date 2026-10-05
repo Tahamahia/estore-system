@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { AppEnv } from '../types';
+import { requireRole } from '../middleware/tenant';
 
 export const syncRoutes = new Hono<AppEnv>();
 
@@ -14,7 +15,7 @@ export const syncRoutes = new Hono<AppEnv>();
  *
  * Response is < 500 bytes — minimal bandwidth.
  */
-syncRoutes.get('/', async (c) => {
+syncRoutes.get('/', requireRole('super_admin', 'store_manager', 'purchaser', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id');
   const since = c.req.query('since');
 

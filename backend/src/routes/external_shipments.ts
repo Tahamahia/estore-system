@@ -245,7 +245,7 @@ async function syncUniversalTracking(trackingNumber: string): Promise<TrackingRe
 }
 
 // GET /external-shipments — paginated list with item counts
-externalShipmentRoutes.get('/', async (c) => {
+externalShipmentRoutes.get('/', requireRole('super_admin', 'store_manager', 'purchaser', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const page   = parseInt(c.req.query('page')  || '1');
   const limit  = Math.min(parseInt(c.req.query('limit') || '50'), 100);
@@ -269,7 +269,7 @@ externalShipmentRoutes.get('/', async (c) => {
 
 // GET /external-shipments/available-orders — orders that have ≥1 purchased item
 // not yet linked to any external shipment
-externalShipmentRoutes.get('/available-orders', async (c) => {
+externalShipmentRoutes.get('/available-orders', requireRole('super_admin', 'store_manager', 'purchaser', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
 
   const results = await c.env.DB.prepare(`
@@ -307,7 +307,7 @@ externalShipmentRoutes.post('/', requireRole('super_admin', 'store_manager', 'pu
 });
 
 // GET /external-shipments/:id — detail with linked items
-externalShipmentRoutes.get('/:id', async (c) => {
+externalShipmentRoutes.get('/:id', requireRole('super_admin', 'store_manager', 'purchaser', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
 
@@ -416,7 +416,7 @@ externalShipmentRoutes.post('/:id/receive', requireRole('super_admin', 'store_ma
 // Full item-level breakdown for the receiving/reconciliation view.
 // confirmed = proven present by a scan; missing = presumed present but never
 // scanned (only meaningful after receive).
-externalShipmentRoutes.get('/:id/reconciliation', async (c) => {
+externalShipmentRoutes.get('/:id/reconciliation', requireRole('super_admin', 'store_manager', 'purchaser', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
 
@@ -514,7 +514,7 @@ externalShipmentRoutes.post(
 );
 
 // POST /external-shipments/:id/sync — universal dual-engine tracking
-externalShipmentRoutes.post('/:id/sync', async (c) => {
+externalShipmentRoutes.post('/:id/sync', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
 

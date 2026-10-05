@@ -6,7 +6,7 @@ import { buildRecomputeOrderStatusStmt } from '../lib/orderStatus';
 export const inventoryRoutes = new Hono<AppEnv>();
 
 // GET /inventory/in-stock — orphaned items available for reassignment, with search + pagination
-inventoryRoutes.get('/in-stock', async (c) => {
+inventoryRoutes.get('/in-stock', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const page = Math.max(1, parseInt(c.req.query('page') || '1'));
   const limit = Math.min(parseInt(c.req.query('limit') || '20'), 100);

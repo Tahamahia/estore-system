@@ -123,7 +123,7 @@ warehouseRoutes.post('/orphan', requireRole('super_admin', 'store_manager', 'sor
   return c.json({ message: 'Orphaned package logged', id }, 201);
 });
 
-warehouseRoutes.get('/scan-history', async (c) => {
+warehouseRoutes.get('/scan-history', requireRole('super_admin', 'store_manager', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
 
   const results = await c.env.DB.prepare(`

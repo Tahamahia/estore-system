@@ -8,7 +8,7 @@ export const settingsRoutes = new Hono<AppEnv>();
 // shipping_sources is intentionally a global/shared table with no tenant_id column.
 // All tenants share the same source catalog (Shein, AliExpress, etc.).
 
-settingsRoutes.get('/sources', async (c) => {
+settingsRoutes.get('/sources', requireRole('super_admin', 'store_manager', 'purchaser'), async (c) => {
   const result = await c.env.DB.prepare(
     `SELECT id, name, rate_per_kg FROM shipping_sources ORDER BY name ASC`
   ).all();

@@ -19,7 +19,7 @@ function chunkArray<T>(arr: T[], size: number): T[][] {
  * Body: { name, exchange_rate, order_ids, write_off?: boolean }
  * Validates eligibility, creates settlement, links orders, optionally writes off in-stock items.
  */
-settlementRoutes.post('/', async (c) => {
+settlementRoutes.post('/', requireRole('super_admin', 'store_manager'), async (c) => {
   const tenantId = c.get('tenant_id');
   const body = await c.req.json<{
     name: string;
@@ -119,7 +119,7 @@ settlementRoutes.post('/', async (c) => {
  * GET /settlements
  * Returns all settlements with aggregated financials and write-off totals.
  */
-settlementRoutes.get('/', async (c) => {
+settlementRoutes.get('/', requireRole('super_admin', 'store_manager'), async (c) => {
   const tenantId = c.get('tenant_id');
 
   const settlements = await c.env.DB.prepare(
@@ -210,7 +210,7 @@ settlementRoutes.get('/', async (c) => {
 });
 
 // GET /settlements/:id — detail with linked orders
-settlementRoutes.get('/:id', async (c) => {
+settlementRoutes.get('/:id', requireRole('super_admin', 'store_manager'), async (c) => {
   const tenantId = c.get('tenant_id');
   const id = c.req.param('id');
 

@@ -34,7 +34,7 @@ async function assertDriverOwnsShipment(
 }
 
 // GET /internal-shipments — paginated list with order counts
-internalShipmentRoutes.get('/', async (c) => {
+internalShipmentRoutes.get('/', requireRole('super_admin', 'store_manager', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const page   = parseInt(c.req.query('page')  || '1');
   const limit  = Math.min(parseInt(c.req.query('limit') || '50'), 100);
@@ -182,7 +182,7 @@ internalShipmentRoutes.get(
 
 // GET /internal-shipments/available-orders — orders ready to be added to a manifest
 // Eligible: status = 'sorted' or 'ready_dispatch', not yet assigned to an internal shipment
-internalShipmentRoutes.get('/available-orders', async (c) => {
+internalShipmentRoutes.get('/available-orders', requireRole('super_admin', 'store_manager', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
 
   const results = await c.env.DB.prepare(`
@@ -235,7 +235,7 @@ internalShipmentRoutes.post('/', requireRole('super_admin', 'store_manager'), as
 });
 
 // GET /internal-shipments/:id — detail with linked orders
-internalShipmentRoutes.get('/:id', async (c) => {
+internalShipmentRoutes.get('/:id', requireRole('super_admin', 'store_manager', 'sorter'), async (c) => {
   const tenantId = c.get('tenant_id') as string;
   const id = c.req.param('id');
 
