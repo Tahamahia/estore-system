@@ -7,6 +7,7 @@ import type { AppEnv } from '../src/types';
 import { settlementRoutes } from '../src/routes/settlements';
 import { orderRoutes } from '../src/routes/orders';
 import { analyticsRoutes } from '../src/routes/analytics';
+import { internalShipmentRoutes } from '../src/routes/internal_shipments';
 
 /**
  * Settlement accounting — runs the real route handlers against an in-memory
@@ -101,6 +102,7 @@ beforeEach(() => {
   app.route('/settlements', settlementRoutes);
   app.route('/orders', orderRoutes);
   app.route('/analytics', analyticsRoutes);
+  app.route('/internal-shipments', internalShipmentRoutes);
 
   // Hand-checked scenario (rate 5).
   // o1: full_cart, sale 200 / cost 26 $, deposit 50, collected 150 (tracked).
@@ -233,6 +235,44 @@ describe('settlement accounting', () => {
     db.prepare(`UPDATE orders SET internal_shipment_id = 'm1' WHERE id IN ('o1', 'o2')`).run();
     const dash = await (await call('GET', '/analytics/dashboard')).json() as { driver_debts: Row[] };
     expect(dash.driver_debts).toEqual([{ driver_name: 'Ali', amount: 10, manifest_count: 1 }]);
+  });
+
+  it('strips every money field from internal-shipment responses for the sorter', async () => {
+    db.prepare(`INSERT INTO internal_shipments (id, tenant_id, delivery_company, driver_name, status, cash_handed_over, cash_handed_over_at)
+                VALUES ('m1', ?, 'Fast', 'Ali', 'delivered', 280, '2026-10-02')`).run(T);
+    db.prepare(`UPDATE orders SET internal_shipment_id = 'm1' WHERE id IN ('o1', 'o2')`).run();
+    // An order ready to attach, for /available-orders.
+    insertOrder({ id: 'ready', status: 'sorted', sale: 120, deposit: 20 });
+
+    const MONEY_KEYS = [
+      'cash_expected', 'cash_handed_over', 'cash_handed_over_at', 'cash_collected', 'cash_collected_at',
+      'deposit_amount', 'total_sale_price_lyd', 'items_sale_total_lyd', 'total_cost_usd',
+    ];
+    const keysDeep = (v: unknown): string[] =>
+      Array.isArray(v) ? v.flatMap(keysDeep)
+        : v && typeof v === 'object' ? Object.entries(v).flatMap(([k, x]) => [k, ...keysDeep(x)])
+        : [];
+    const paths = ['/internal-shipments', '/internal-shipments/m1', '/internal-shipments/available-orders'];
+
+    for (const path of paths) {
+      const res = await call('GET', path, undefined, 'sorter');
+      expect(res.status).toBe(200);
+      const keys = keysDeep(await res.json());
+      for (const k of MONEY_KEYS) expect(keys, `${path} leaks ${k}`).not.toContain(k);
+      expect(keys.filter((k) => /cash|price|cost|amount|sale|deposit|_lyd$|_usd$/i.test(k)), path).toEqual([]);
+    }
+
+    // Sorter still gets what it needs: manifest + attached orders, no money.
+    const sorterDetail = await (await call('GET', '/internal-shipments/m1', undefined, 'sorter')).json() as Row & { orders: Row[] };
+    expect(sorterDetail).toMatchObject({ id: 'm1', delivery_company: 'Fast', driver_name: 'Ali' });
+    expect(sorterDetail.orders.map((o) => o.id).sort()).toEqual(['o1', 'o2']);
+
+    // store_manager still receives the cash figures.
+    const managerDetail = await (await call('GET', '/internal-shipments/m1', undefined, 'store_manager')).json() as Row & { orders: Row[] };
+    expect(managerDetail).toMatchObject({ cash_expected: 290, cash_handed_over: 280, cash_handed_over_at: '2026-10-02' });
+    expect(managerDetail.orders.find((o) => o.id === 'o1')).toMatchObject({ cash_collected: 150, deposit_amount: 50, total_sale_price_lyd: 200 });
+    const managerList = await (await call('GET', '/internal-shipments', undefined, 'store_manager')).json() as { data: Row[] };
+    expect(managerList.data[0]).toMatchObject({ cash_expected: 290, cash_handed_over: 280 });
   });
 
   it('serves a price-free label to the sorter only', async () => {

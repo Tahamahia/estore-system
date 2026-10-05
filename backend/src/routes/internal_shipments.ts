@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { AppEnv } from '../types';
 import type { Context } from 'hono';
 import { requireRole } from '../middleware/tenant';
+import { forRole } from '../lib/redact';
 import {
   buildRecomputeOrderStatusStmt,
   buildRecomputeInternalShipmentStmt,
@@ -53,7 +54,8 @@ internalShipmentRoutes.get('/', requireRole('super_admin', 'store_manager', 'sor
     LIMIT ? OFFSET ?
   `).bind(tenantId, limit, offset).all();
 
-  return c.json({ data: results.results, page, limit });
+  // Sorter reads manifests to find a bag's trip — never the cash.
+  return c.json(forRole(c.get('user_role'), { data: results.results, page, limit }));
 });
 
 // GET /internal-shipments/mine — driver's feed of open manifests.
@@ -204,7 +206,7 @@ internalShipmentRoutes.get('/available-orders', requireRole('super_admin', 'stor
     ORDER BY c.city ASC, c.full_name ASC
   `).bind(tenantId).all();
 
-  return c.json({ data: results.results });
+  return c.json(forRole(c.get('user_role'), { data: results.results }));
 });
 
 // POST /internal-shipments — create manifest; optionally attach initial orders
@@ -269,7 +271,7 @@ internalShipmentRoutes.get('/:id', requireRole('super_admin', 'store_manager', '
     0
   );
 
-  return c.json({ ...shipment, cash_expected: cashExpected, orders: orders.results });
+  return c.json(forRole(c.get('user_role'), { ...shipment, cash_expected: cashExpected, orders: orders.results }));
 });
 
 // PATCH /internal-shipments/:id — admin edits.
