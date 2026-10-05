@@ -183,6 +183,18 @@ describe('settlement accounting', () => {
     expect((await call('PATCH', '/orders/oc/deposit', { deposit_status: 'refunded' })).status).toBe(409);
   });
 
+  it('PATCH renames a settlement and changes its exchange rate', async () => {
+    const s = await (await call('POST', '/settlements', { name: 'Sep', exchange_rate: 5, order_ids: ['o1'] })).json() as Row;
+
+    const rename = await call('PATCH', `/settlements/${s.id}`, { name: 'September' });
+    expect(rename.status).toBe(200);
+    const rate = await call('PATCH', `/settlements/${s.id}`, { exchange_rate: 6.5 });
+    expect(rate.status).toBe(200);
+
+    const row = db.prepare(`SELECT name, exchange_rate FROM settlements WHERE id = ?`).get(s.id);
+    expect(row).toMatchObject({ name: 'September', exchange_rate: 6.5 });
+  });
+
   it('rejects ineligible order ids, including unknown ones', async () => {
     const res = await call('POST', '/settlements', { name: 'x', exchange_rate: 5, order_ids: ['o1', 'nope'] });
     expect(res.status).toBe(400);

@@ -337,7 +337,8 @@ settlementRoutes.patch('/:id', requireRole('super_admin', 'store_manager'), asyn
   ).bind(id, tenantId).first();
   if (!existing) return c.json({ error: 'Not Found' }, 404);
 
-  const setClauses: string[] = [`updated_at = datetime('now')`];
+  // settlements has no updated_at column — only the edited fields are set.
+  const setClauses: string[] = [];
   const values: unknown[] = [];
 
   if (body.name !== undefined) {
