@@ -24,6 +24,17 @@ orderRoutes.get('/', requireRole('super_admin', 'store_manager', 'purchaser'), a
   const status = c.req.query('status');
   const search = c.req.query('search')?.trim();
   const unsettled = c.req.query('unsettled') === 'true';
+  // Cancelled orders whose deposit fate is undecided / kept-but-unsettled —
+  // the settlement flow's "عرابين ملغاة" section.
+  const depositPending = c.req.query('deposit_pending') === 'true';
+  const depositForfeited = c.req.query('deposit_forfeited') === 'true';
+  let depositFilter = '';
+  if (depositPending) {
+    depositFilter = ` AND o.status = 'cancelled' AND COALESCE(o.deposit_amount, 0) > 0 AND o.deposit_status IS NULL`;
+  } else if (depositForfeited) {
+    depositFilter = ` AND o.status = 'cancelled' AND COALESCE(o.deposit_amount, 0) > 0
+                      AND o.deposit_status = 'forfeited' AND o.settlement_id IS NULL`;
+  }
 
   let query = `SELECT o.*, c.full_name as customer_name, c.phone as customer_phone,
                (SELECT COALESCE(SUM(COALESCE(oi.unit_price_local,0) * COALESCE(oi.quantity,1)), 0)
@@ -42,6 +53,7 @@ orderRoutes.get('/', requireRole('super_admin', 'store_manager', 'purchaser'), a
   if (unsettled && status === 'delivered') {
     query += ` AND o.settlement_id IS NULL`;
   }
+  query += depositFilter;
 
   // Full-text search across customer name, order ID, platform order ID,
   // and item product_name / sku via an EXISTS subquery.
@@ -80,6 +92,7 @@ orderRoutes.get('/', requireRole('super_admin', 'store_manager', 'purchaser'), a
   if (unsettled && status === 'delivered') {
     countQuery += ` AND o.settlement_id IS NULL`;
   }
+  countQuery += depositFilter;
 
   if (search) {
     const like = `%${search}%`;
@@ -1047,6 +1060,45 @@ orderRoutes.post('/:id/split', requireRole('super_admin', 'store_manager'), asyn
   }
 
   return c.json({ new_order_id: newOrderId, message: 'تم إنشاء الطلبية الجديدة' }, 201);
+});
+
+/**
+ * PATCH /orders/:id/deposit — Record what happened to a cancelled order's
+ * deposit: 'refunded' to the customer, or 'forfeited' (kept as revenue,
+ * picked up by a settlement through forfeited_order_ids). Locked once the
+ * order is linked to a settlement.
+ */
+orderRoutes.patch('/:id/deposit', requireRole('super_admin', 'store_manager'), async (c) => {
+  const tenantId = c.get('tenant_id') as string;
+  const orderId = c.req.param('id');
+  const body = await c.req.json<{ deposit_status?: string }>().catch(() => ({} as { deposit_status?: string }));
+  const depositStatus = body.deposit_status;
+
+  if (depositStatus !== 'refunded' && depositStatus !== 'forfeited') {
+    return c.json({ error: 'Bad Request', message: "deposit_status must be 'refunded' or 'forfeited'" }, 400);
+  }
+
+  const order = await c.env.DB.prepare(
+    `SELECT id, status, deposit_amount, settlement_id FROM orders
+     WHERE id = ? AND tenant_id = ? AND is_deleted = 0`
+  ).bind(orderId, tenantId).first<{ id: string; status: string; deposit_amount: number | null; settlement_id: string | null }>();
+
+  if (!order) {
+    return c.json({ error: 'Not Found', message: 'Order not found' }, 404);
+  }
+  if (order.status !== 'cancelled' || !(Number(order.deposit_amount ?? 0) > 0)) {
+    return c.json({ error: 'Bad Request', message: 'متاح فقط لطلبية ملغاة عليها عربون' }, 400);
+  }
+  if (order.settlement_id) {
+    return c.json({ error: 'Conflict', message: 'العربون مسجّل في تسوية — احذف التسوية أولاً' }, 409);
+  }
+
+  await c.env.DB.prepare(
+    `UPDATE orders SET deposit_status = ?, version = version + 1, updated_at = datetime('now')
+     WHERE id = ? AND tenant_id = ?`
+  ).bind(depositStatus, orderId, tenantId).run();
+
+  return c.json({ message: 'Deposit updated', id: orderId, deposit_status: depositStatus });
 });
 
 /**

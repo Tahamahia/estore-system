@@ -499,6 +499,7 @@ externalShipmentRoutes.post(
       c.env.DB.prepare(`
         UPDATE order_items
         SET status = 'cancelled',
+            lost_at = datetime('now'),
             notes = TRIM(COALESCE(notes,'') || ' [مفقود في الشحنة]'),
             updated_at = datetime('now'),
             version = version + 1

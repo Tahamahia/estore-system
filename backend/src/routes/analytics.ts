@@ -25,6 +25,7 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
     revenueLastWeekResult,
     pendingPurchaseCountResult,
     cashWithDriversResult,
+    driverDebtsResult,
   ] = await Promise.all([
     // Total orders
     c.env.DB.prepare(
@@ -119,6 +120,29 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
        WHERE o.tenant_id = ? AND o.is_deleted = 0
          AND ins.cash_handed_over IS NULL`
     ).bind(tenantId).first(),
+
+    // Driver debts — a short handover is owed by the driver, not lost
+    // revenue. Per driver: SUM(expected − handed_over) over manifests where
+    // the handover came up short. expected = SUM(cash_collected) of the
+    // manifest's attached orders (same figure the manifest list shows).
+    c.env.DB.prepare(
+      `SELECT driver_name,
+              SUM(cash_expected - cash_handed_over) AS amount,
+              COUNT(*) AS manifest_count
+       FROM (
+         SELECT ins.id,
+                COALESCE(NULLIF(TRIM(ins.driver_name), ''), 'غير محدد') AS driver_name,
+                ins.cash_handed_over,
+                (SELECT COALESCE(SUM(o.cash_collected), 0) FROM orders o
+                 WHERE o.internal_shipment_id = ins.id AND o.tenant_id = ins.tenant_id
+                   AND o.is_deleted = 0) AS cash_expected
+         FROM internal_shipments ins
+         WHERE ins.tenant_id = ? AND ins.cash_handed_over IS NOT NULL
+       )
+       WHERE cash_handed_over < cash_expected
+       GROUP BY driver_name
+       ORDER BY amount DESC`
+    ).bind(tenantId).all(),
   ]);
 
   // Build status_counts dynamically — no hardcoded stale keys
@@ -143,5 +167,6 @@ analyticsRoutes.get('/dashboard', requireRole('super_admin', 'store_manager'), a
     orders_last_week: (ordersLastWeekResult as any)?.total || 0,
     revenue_this_week: (revenueThisWeekResult as any)?.total || 0,
     revenue_last_week: (revenueLastWeekResult as any)?.total || 0,
+    driver_debts: driverDebtsResult.results || [],
   });
 });

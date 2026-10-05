@@ -220,6 +220,7 @@ CREATE TABLE "orders" (
   cash_collected        REAL NOT NULL DEFAULT 0,
   cash_collected_at     TEXT,
   source_name           TEXT,
+  deposit_status        TEXT CHECK (deposit_status IN ('held','refunded','forfeited')),
   FOREIGN KEY (tenant_id)   REFERENCES tenants(id),
   FOREIGN KEY (customer_id) REFERENCES customers(id)
 );
@@ -268,6 +269,7 @@ CREATE TABLE "order_items" (
   attributes                  TEXT,
   cost_usd                    REAL,
   written_off_settlement_id   TEXT REFERENCES settlements(id),
+  lost_at                     TEXT,
   FOREIGN KEY (tenant_id)   REFERENCES tenants(id),
   FOREIGN KEY (order_id)    REFERENCES orders(id) ON DELETE CASCADE,
   FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
