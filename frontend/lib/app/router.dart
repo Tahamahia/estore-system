@@ -29,16 +29,15 @@ final routerProvider = Provider<GoRouter>((ref) {
       final isPublicPage = location == '/login' || location == '/signup';
 
       if (!isLoggedIn && !isPublicPage) return '/login';
-      if (isLoggedIn && isPublicPage) {
-        final role = ref.read(currentUserProvider)?['role'] as String?;
-        switch (role) {
-          case 'sorter':
-            return '/warehouse';
-          case 'driver':
-            return '/driver';
-          default:
-            return '/';
-        }
+      if (!isLoggedIn) return null;
+
+      // Role gate: kRoleRoutes (dashboard_shell.dart) is the single source of
+      // truth. Public pages and anything outside the role's map land on the
+      // role's home screen.
+      final role = ref.read(currentUserProvider)?['role'] as String?;
+      if (isPublicPage || !roleCanAccess(role, location)) {
+        final landing = landingRouteFor(role);
+        return landing == location ? null : landing;
       }
 
       return null;

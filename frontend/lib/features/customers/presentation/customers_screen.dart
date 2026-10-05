@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/roles.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:uuid/uuid.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -236,7 +237,7 @@ class _CustomersScreenState extends ConsumerState<CustomersScreen> with SingleTi
                         decoration: BoxDecoration(color: AppTheme.secondary.withValues(alpha: 0.15), borderRadius: BorderRadius.circular(8)),
                         child: Text(c['city'], style: const TextStyle(color: AppTheme.secondary, fontSize: 12)),
                       ),
-                      IconButton(
+                      if (isAdminRole(ref.watch(currentRoleProvider))) IconButton(
                         icon: const Icon(Icons.delete_outline, color: AppTheme.error, size: 20),
                         tooltip: 'حذف الزبون',
                         onPressed: () => _confirmDelete(context, c),

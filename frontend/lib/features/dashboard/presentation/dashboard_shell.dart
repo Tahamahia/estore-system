@@ -5,11 +5,13 @@ import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/auth_service.dart';
 import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/roles.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 
-// Named-record nav items — shared by sidebar rail (desktop).
-// Dart 3.0 records; each element has .path, .icon, .label
-const _kNavItems = [
+typedef NavItem = ({String path, IconData icon, String label});
+
+// Every shell destination, in desktop-rail order.
+const kNavItems = <NavItem>[
   (path: '/',                   icon: Icons.dashboard_outlined,              label: 'الرئيسية'),
   (path: '/orders',             icon: Icons.receipt_long_outlined,           label: 'الطلبيات'),
   (path: '/purchasing',         icon: Icons.shopping_cart_checkout,          label: 'الشراء'),
@@ -22,14 +24,48 @@ const _kNavItems = [
   (path: '/settings',           icon: Icons.settings_outlined,               label: 'الضبط'),
 ];
 
-// Bottom nav — 4 primary tabs + "المزيد" handled separately.
-const _kBottomNavItems = [
-  (path: '/orders',             icon: Icons.receipt_long_outlined,    label: 'الطلبيات'),
-  (path: '/warehouse',          icon: Icons.qr_code_scanner_outlined,  label: 'المخزن'),
-  (path: '/internal-shipments', icon: Icons.local_shipping_outlined,   label: 'الشحنات'),
-  (path: '/customers',          icon: Icons.people_outlined,           label: 'الزبائن'),
+// Shorter labels for the mobile bottom bar.
+const _kBottomLabels = {'/internal-shipments': 'الشحنات', '/external-shipments': 'الخارجية'};
+
+const _kAdminRoutes = [
+  '/orders', '/warehouse', '/internal-shipments', '/customers',
+  '/', '/purchasing', '/external-shipments', '/in-stock', '/settlements', '/settings',
+  '/driver', // admins may preview the driver feed; not a nav destination
 ];
 
+/// THE role → routes map. Drives the desktop rail, the mobile bottom nav,
+/// the "المزيد" sheet, and the router redirect. List order = mobile priority:
+/// the first four become bottom-nav tabs, the rest go to "المزيد".
+/// store_manager's settings screen hides user management on its own.
+const Map<String, List<String>> kRoleRoutes = {
+  'super_admin':   _kAdminRoutes,
+  'store_manager': _kAdminRoutes,
+  'purchaser':     ['/orders', '/purchasing', '/external-shipments', '/customers', '/in-stock'],
+  'sorter':        ['/warehouse', '/internal-shipments', '/external-shipments'],
+  'driver':        ['/driver'],
+};
+
+List<String> allowedRoutesFor(String? role) => kRoleRoutes[role] ?? const ['/'];
+
+String landingRouteFor(String? role) => switch (role) {
+  'purchaser' => '/orders',
+  'sorter'    => '/warehouse',
+  'driver'    => '/driver',
+  _           => '/',
+};
+
+bool _routeMatches(String route, String location) =>
+    route == '/' ? location == '/' : (location == route || location.startsWith('$route/'));
+
+/// Whether [role] may open [location] (a path, e.g. '/orders/abc').
+bool roleCanAccess(String? role, String location) =>
+    allowedRoutesFor(role).any((r) => _routeMatches(r, location));
+
+/// Nav destinations for [role], in the role map's priority order.
+List<NavItem> _navItemsFor(String? role) => [
+  for (final path in allowedRoutesFor(role))
+    ...kNavItems.where((n) => n.path == path),
+];
 
 class DashboardShell extends ConsumerStatefulWidget {
   final Widget child;
@@ -42,17 +78,20 @@ class DashboardShell extends ConsumerStatefulWidget {
 class _DashboardShellState extends ConsumerState<DashboardShell> {
   bool _isExpanded = true;
 
-  int _selectedIndex(BuildContext context) {
-    final location = GoRouterState.of(context).uri.toString();
-    for (int i = 0; i < _kNavItems.length; i++) {
-      final p = _kNavItems[i].path;
-      if (p == '/') {
-        if (location == '/') return i;
-      } else if (location.startsWith(p)) {
-        return i;
-      }
+  int? _selectedIndex(BuildContext context, List<NavItem> items) {
+    final location = GoRouterState.of(context).uri.path;
+    for (int i = 0; i < items.length; i++) {
+      if (_routeMatches(items[i].path, location)) return i;
     }
-    return 0;
+    return null;
+  }
+
+  String _titleFor(BuildContext context) {
+    final location = GoRouterState.of(context).uri.path;
+    for (final item in kNavItems) {
+      if (_routeMatches(item.path, location)) return item.label;
+    }
+    return 'مخمل';
   }
 
   Future<void> _handleLogout() async {
@@ -112,15 +151,7 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     );
   }
 
-  int _bottomNavIndex(BuildContext context) {
-    final location = GoRouterState.of(context).uri.toString();
-    for (int i = 0; i < _kBottomNavItems.length; i++) {
-      if (location.startsWith(_kBottomNavItems[i].path)) return i;
-    }
-    return 4; // "المزيد" as neutral fallback for all other routes
-  }
-
-  void _showMoreSheet(BuildContext context) {
+  void _showMoreSheet(BuildContext context, List<NavItem> moreItems) {
     showModalBottomSheet(
       context: context,
       backgroundColor: AppTheme.darkSurface,
@@ -134,14 +165,7 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
             const SizedBox(height: 8),
             Center(child: Container(width: 40, height: 4, decoration: BoxDecoration(color: Colors.white24, borderRadius: BorderRadius.circular(2)))),
             const SizedBox(height: 8),
-            for (final item in [
-              (path: '/',                   icon: Icons.dashboard_outlined,              label: 'الرئيسية'),
-              (path: '/purchasing',         icon: Icons.shopping_cart_checkout,          label: 'الشراء'),
-              (path: '/external-shipments', icon: Icons.flight_land_outlined,            label: 'الشحنات الخارجية'),
-              (path: '/in-stock',           icon: Icons.inventory_2_outlined,            label: 'البضاعة الفورية'),
-              (path: '/settlements',        icon: Icons.account_balance_wallet_outlined, label: 'التسويات'),
-              (path: '/settings',           icon: Icons.settings_outlined,               label: 'الضبط'),
-            ])
+            for (final item in moreItems)
               ListTile(
                 leading: Icon(item.icon, color: Colors.white70),
                 title: Text(item.label, style: const TextStyle(color: Colors.white70)),
@@ -225,7 +249,6 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
 
   @override
   Widget build(BuildContext context) {
-    final selected = _selectedIndex(context);
     final mobile = isMobile(context);
     final isWide = !mobile && MediaQuery.of(context).size.width > 800;
 
@@ -233,6 +256,10 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
     final userName = (user?['full_name'] as String?) ?? (user?['email'] as String?) ?? 'User';
     final userInitial = userName.isNotEmpty ? userName[0].toUpperCase() : 'U';
     final role = user?['role'] as String?;
+    final navItems = _navItemsFor(role);
+    final title = _titleFor(context);
+    // Dashboard counters come from /analytics (admin only).
+    final showNotifications = isAdminRole(role);
 
     // ── Driver-only chrome: no side rail, no bottom nav. Just an AppBar
     // with the logo, the driver's name, and a logout icon. The driver
@@ -302,48 +329,61 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
             ),
             const SizedBox(width: 8),
             Text(
-              selected < _kNavItems.length ? _kNavItems[selected].label : 'مخمل',
+              title,
               style: const TextStyle(color: Colors.white, fontSize: 17, fontWeight: FontWeight.w600),
             ),
           ]),
           actions: [
-            IconButton(
-              icon: const Icon(Icons.notifications_outlined, color: Colors.white54),
-              onPressed: () => _showNotifications(context),
-            ),
+            if (showNotifications)
+              IconButton(
+                icon: const Icon(Icons.notifications_outlined, color: Colors.white54),
+                onPressed: () => _showNotifications(context),
+              ),
             Padding(
               padding: const EdgeInsets.only(right: 8),
               child: _buildUserMenu(context, userName, userInitial, user),
             ),
           ],
         ),
-        bottomNavigationBar: NavigationBar(
-          backgroundColor: AppTheme.darkSurface,
-          indicatorColor: AppTheme.primary.withValues(alpha: 0.2),
-          selectedIndex: _bottomNavIndex(context),
-          onDestinationSelected: (i) {
-            if (i < 4) {
-              context.go(_kBottomNavItems[i].path);
-            } else {
-              _showMoreSheet(context);
-            }
-          },
-          destinations: [
-            ..._kBottomNavItems.map((item) => NavigationDestination(
-              icon: Icon(item.icon),
-              label: item.label,
-            )),
-            const NavigationDestination(
-              icon: Icon(Icons.more_horiz),
-              label: 'المزيد',
-            ),
-          ],
-        ),
+        bottomNavigationBar: Builder(builder: (context) {
+          final tabs = navItems.take(4).toList();
+          final more = navItems.skip(4).toList();
+          if (tabs.length + (more.isEmpty ? 0 : 1) < 2) return const SizedBox.shrink();
+          // Off-tab routes (e.g. an order detail) highlight "المزيد" when it
+          // exists, else the first tab.
+          final index = _selectedIndex(context, tabs) ?? (more.isEmpty ? 0 : tabs.length);
+          return NavigationBar(
+            backgroundColor: AppTheme.darkSurface,
+            indicatorColor: AppTheme.primary.withValues(alpha: 0.2),
+            selectedIndex: index,
+            onDestinationSelected: (i) {
+              if (i < tabs.length) {
+                context.go(tabs[i].path);
+              } else {
+                _showMoreSheet(context, more);
+              }
+            },
+            destinations: [
+              for (final item in tabs)
+                NavigationDestination(
+                  icon: Icon(item.icon),
+                  label: _kBottomLabels[item.path] ?? item.label,
+                ),
+              if (more.isNotEmpty)
+                const NavigationDestination(
+                  icon: Icon(Icons.more_horiz),
+                  label: 'المزيد',
+                ),
+            ],
+          );
+        }),
         body: widget.child,
       );
     }
 
-    // ── Desktop layout: keep NavigationRail sidebar unchanged ──
+    // ── Desktop layout: side rail in canonical order ──
+    final railItems = kNavItems.where((n) => navItems.contains(n)).toList();
+    final selected = _selectedIndex(context, railItems);
     return Scaffold(
       body: Row(
         children: [
@@ -392,9 +432,9 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
                 // Nav Items
                 Expanded(
                   child: ListView.builder(
-                    itemCount: _kNavItems.length,
+                    itemCount: railItems.length,
                     itemBuilder: (context, index) {
-                      final item = _kNavItems[index];
+                      final item = railItems[index];
                       final isSelected = index == selected;
                       return Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
@@ -467,15 +507,17 @@ class _DashboardShellState extends ConsumerState<DashboardShell> {
                   child: Row(
                     children: [
                       Text(
-                        _kNavItems[selected].label,
+                        title,
                         style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w600, color: Colors.white),
                       ),
                       const Spacer(),
-                      IconButton(
-                        icon: const Icon(Icons.notifications_outlined, color: Colors.white54),
-                        onPressed: () => _showNotifications(context),
-                      ),
-                      const SizedBox(width: 8),
+                      if (showNotifications) ...[
+                        IconButton(
+                          icon: const Icon(Icons.notifications_outlined, color: Colors.white54),
+                          onPressed: () => _showNotifications(context),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
                       _buildUserMenu(context, userName, userInitial, user),
                     ],
                   ),

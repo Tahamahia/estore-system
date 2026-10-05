@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/roles.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 
 // Tri-state visual for the shipment badge. "مكتملة" is purely presentational —
@@ -49,17 +50,19 @@ class _ExternalShipmentsScreenState extends ConsumerState<ExternalShipmentsScree
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(externalShipmentsProvider);
+    final canEdit = canEditExternalShipments(ref.watch(currentRoleProvider));
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           const Text('الشحنات الخارجية', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white)),
           const Spacer(),
-          ElevatedButton.icon(
-            onPressed: _showCreate,
-            icon: const Icon(Icons.add, size: 20),
-            label: const Text('شحنة جديدة'),
-          ),
+          if (canEdit)
+            ElevatedButton.icon(
+              onPressed: _showCreate,
+              icon: const Icon(Icons.add, size: 20),
+              label: const Text('شحنة جديدة'),
+            ),
         ]),
         const SizedBox(height: 8),
         const Text('تتبع الطرود القادمة من الموردين الخارجيين', style: TextStyle(color: Colors.white38, fontSize: 13)),
@@ -83,12 +86,14 @@ class _ExternalShipmentsScreenState extends ConsumerState<ExternalShipmentsScree
                   const Icon(Icons.flight_land_rounded, color: Colors.white12, size: 72),
                   const SizedBox(height: 16),
                   const Text('لا توجد شحنات خارجية', style: TextStyle(color: Colors.white38, fontSize: 16)),
-                  const SizedBox(height: 20),
-                  ElevatedButton.icon(
-                    onPressed: _showCreate,
-                    icon: const Icon(Icons.add, size: 20),
-                    label: const Text('إضافة أول شحنة'),
-                  ),
+                  if (canEdit) ...[
+                    const SizedBox(height: 20),
+                    ElevatedButton.icon(
+                      onPressed: _showCreate,
+                      icon: const Icon(Icons.add, size: 20),
+                      label: const Text('إضافة أول شحنة'),
+                    ),
+                  ],
                 ]));
               }
               return RefreshIndicator(
@@ -222,6 +227,8 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
   @override
   Widget build(BuildContext context) {
     final s = widget.shipment;
+    final role = ProviderScope.containerOf(context).read(currentRoleProvider);
+    final canEdit = canEditExternalShipments(role);
     final tracking = s['tracking_number'] as String? ?? '—';
     final courier = s['courier_code'] as String? ?? '';
     final apiStatus = s['api_status'] as String? ?? 'unknown';
@@ -314,22 +321,25 @@ class _ExternalShipmentCardState extends State<_ExternalShipmentCard> {
             Text('$expected منتج', style: const TextStyle(color: Colors.white54, fontSize: 13)),
             const Spacer(),
             // Delete button
-            IconButton(
-              onPressed: () => _delete(context),
-              icon: const Icon(Icons.delete_outline, size: 18),
-              color: AppTheme.error,
-              tooltip: 'حذف الشحنة',
-            ),
-            const SizedBox(width: 4),
+            if (isAdminRole(role)) ...[
+              IconButton(
+                onPressed: () => _delete(context),
+                icon: const Icon(Icons.delete_outline, size: 18),
+                color: AppTheme.error,
+                tooltip: 'حذف الشحنة',
+              ),
+              const SizedBox(width: 4),
+            ],
             // Edit tracking number button
-            IconButton(
-              onPressed: () => _editTracking(context),
-              icon: const Icon(Icons.edit_outlined, size: 18),
-              color: Colors.white54,
-              tooltip: 'تعديل رقم التتبع',
-            ),
+            if (canEdit)
+              IconButton(
+                onPressed: () => _editTracking(context),
+                icon: const Icon(Icons.edit_outlined, size: 18),
+                color: Colors.white54,
+                tooltip: 'تعديل رقم التتبع',
+              ),
             // Sync / Track button
-            TextButton.icon(
+            if (canEdit) TextButton.icon(
               onPressed: _syncing ? null : () => _sync(context),
               icon: _syncing
                 ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
@@ -606,6 +616,8 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
 
   Widget _buildDetail() {
     final s = _shipment!;
+    final role = ref.watch(currentRoleProvider);
+    final canEdit = canEditExternalShipments(role);
     final expected = (s['expected_count'] as num?)?.toInt() ?? 0;
     final confirmed = (s['confirmed_count'] as num?)?.toInt()
         ?? (s['sorted_count'] as num?)?.toInt() ?? 0;
@@ -663,7 +675,7 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
               fontWeight: isReceived && missingCount > 0 ? FontWeight.w700 : FontWeight.w400)),
       const SizedBox(height: 16),
       // Receive action — visible only while in-transit and there is anything to receive.
-      if (!isReceived && expected > 0)
+      if (canEdit && !isReceived && expected > 0)
         SizedBox(height: 44, child: ElevatedButton.icon(
           onPressed: _receiving ? null : _receive,
           icon: _receiving
@@ -672,10 +684,10 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
           label: const Text('استلام الشحنة'),
           style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
         )),
-      if (!isReceived && expected > 0) const SizedBox(height: 12),
+      if (canEdit && !isReceived && expected > 0) const SizedBox(height: 12),
 
       // Attach section (inline)
-      InkWell(
+      if (canEdit) InkWell(
         onTap: _toggleAttach,
         borderRadius: BorderRadius.circular(10),
         child: Container(
@@ -694,7 +706,7 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
           ]),
         ),
       ),
-      if (_attachOpen) _buildAttachInline(),
+      if (canEdit && _attachOpen) _buildAttachInline(),
 
       const SizedBox(height: 12),
       const Divider(color: AppTheme.darkBorder),
@@ -723,6 +735,7 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
                       item: item,
                       // Presumed-present but never scanned: shipped OR
                       // arrived_warehouse. Only after receive.
+                      allowMarkLost: isAdminRole(role),
                       canMarkLost: isReceived &&
                           const {'shipped','arrived_warehouse'}
                               .contains(item['status'] as String? ?? ''),
@@ -805,8 +818,10 @@ class _ShipmentDetailDialogState extends ConsumerState<_ShipmentDetailDialog> {
 class _ReconItemRow extends StatelessWidget {
   final Map<String, dynamic> item;
   final bool canMarkLost;
+  /// Mark-lost is admin-only; others still see the missing highlight.
+  final bool allowMarkLost;
   final VoidCallback onMarkLost;
-  const _ReconItemRow({required this.item, required this.canMarkLost, required this.onMarkLost});
+  const _ReconItemRow({required this.item, required this.canMarkLost, required this.allowMarkLost, required this.onMarkLost});
 
   @override
   Widget build(BuildContext context) {
@@ -842,7 +857,7 @@ class _ReconItemRow extends StatelessWidget {
           ),
           child: Text(status, style: TextStyle(color: chipColor, fontSize: 11)),
         ),
-        if (canMarkLost) ...[
+        if (canMarkLost && allowMarkLost) ...[
           const SizedBox(width: 6),
           TextButton(
             onPressed: onMarkLost,

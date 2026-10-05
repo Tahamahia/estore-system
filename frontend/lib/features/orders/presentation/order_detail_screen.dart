@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/roles.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:estore_app/core/utils/invoice_generator.dart';
 import 'package:printing/printing.dart';
@@ -940,7 +941,11 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                 }),
 
                 // Financial summary
-                _FinancialSummaryCard(order: order, items: items),
+                _FinancialSummaryCard(
+                  order: order,
+                  items: items,
+                  showDriverCash: canSeeSettlementMoney(ref.watch(currentRoleProvider)),
+                ),
                 const SizedBox(height: 16),
 
                 // Build selection state derived from current items
@@ -1021,6 +1026,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                               padding: const EdgeInsets.symmetric(horizontal: 14),
                             ),
                           )),
+                          if (isAdminRole(ref.watch(currentRoleProvider))) ...[
                           const SizedBox(width: 6),
                           Builder(builder: (_) {
                             final canSplit = _selectedItemIds.intersection(selectableIds).length < selectableIds.length;
@@ -1043,6 +1049,7 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                               )),
                             );
                           }),
+                          ],
                         ]),
                       ),
                     ],
@@ -1106,7 +1113,8 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
             border: Border(top: BorderSide(color: AppTheme.darkBorder)),
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
-            if (!const ['delivered', 'cancelled', 'refunded', 'transferred_to_inventory', 'in_stock'].contains(status)) ...[
+            if (isAdminRole(ref.watch(currentRoleProvider)) &&
+                !const ['delivered', 'cancelled', 'refunded', 'transferred_to_inventory', 'in_stock'].contains(status)) ...[
               SizedBox(
                 height: 46,
                 child: OutlinedButton.icon(
@@ -1967,7 +1975,9 @@ class _EditOrderDialogState extends State<_EditOrderDialog> {
 class _FinancialSummaryCard extends StatelessWidget {
   final Map<String, dynamic> order;
   final List<dynamic> items;
-  const _FinancialSummaryCard({required this.order, required this.items});
+  /// Cash collected by the driver / shortfall — settlement-side, admin only.
+  final bool showDriverCash;
+  const _FinancialSummaryCard({required this.order, required this.items, this.showDriverCash = false});
 
   @override
   Widget build(BuildContext context) {
@@ -2053,7 +2063,7 @@ class _FinancialSummaryCard extends StatelessWidget {
       ));
     }
 
-    if (deposit > 0 || collected > 0) {
+    if (deposit > 0 || (showDriverCash && collected > 0)) {
       rows.add(const SizedBox(height: 6));
       rows.add(_FinancialRow(
         label: 'المتبقي عند التسليم',
@@ -2061,7 +2071,7 @@ class _FinancialSummaryCard extends StatelessWidget {
       ));
     }
 
-    if (collected > 0) {
+    if (showDriverCash && collected > 0) {
       final shortfall = saleLyd - deposit - collected;
       rows.add(const SizedBox(height: 6));
       rows.add(Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [

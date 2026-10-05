@@ -7,6 +7,7 @@ import 'package:go_router/go_router.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/roles.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:uuid/uuid.dart';
 
@@ -100,6 +101,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
   Widget build(BuildContext context) {
     final mobile = isMobile(context);
     final ordersState = ref.watch(ordersProvider);
+    final canSettle = canSeeSettlementMoney(ref.watch(currentRoleProvider));
 
     return Stack(
       children: [
@@ -126,6 +128,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 label: Text('Update ${_selectedIds.length} Items'),
                 style: ElevatedButton.styleFrom(backgroundColor: AppTheme.secondary),
               ),
+              if (canSettle) ...[
               const SizedBox(width: 8),
               ElevatedButton.icon(
                 onPressed: () => _showCreateSettlementDialog(),
@@ -133,6 +136,7 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 label: Text('تسوية (${_selectedIds.length})'),
                 style: ElevatedButton.styleFrom(backgroundColor: AppTheme.success),
               ),
+              ],
             ],
             if (!mobile) ...[
               const SizedBox(width: 12),
@@ -157,11 +161,12 @@ class _OrdersScreenState extends ConsumerState<OrdersScreen> {
                 selected: _activeFilter == f,
                 onTap: () => _applyFilter(f),
               ),
-            _FilterChip(
-              label: 'جاهزة للتسوية',
-              selected: _activeFilter == 'settleable',
-              onTap: () => _applyFilter('settleable'),
-            ),
+            if (canSettle)
+              _FilterChip(
+                label: 'جاهزة للتسوية',
+                selected: _activeFilter == 'settleable',
+                onTap: () => _applyFilter('settleable'),
+              ),
           ]),
           const SizedBox(height: 20),
 
@@ -420,7 +425,8 @@ class _OrderTile extends StatelessWidget {
           ],
         )),
         Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-          if (order['settlement_id'] != null)
+          if (order['settlement_id'] != null &&
+              canSeeSettlementMoney(ProviderScope.containerOf(context).read(currentRoleProvider)))
             Container(
               margin: const EdgeInsets.only(bottom: 4),
               padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),

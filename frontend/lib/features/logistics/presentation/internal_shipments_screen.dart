@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/roles.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 
 class InternalShipmentsScreen extends ConsumerStatefulWidget {
@@ -30,17 +31,19 @@ class _InternalShipmentsScreenState extends ConsumerState<InternalShipmentsScree
   @override
   Widget build(BuildContext context) {
     final state = ref.watch(internalShipmentsProvider);
+    final canManage = canManageInternalShipments(ref.watch(currentRoleProvider));
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           const Text('الشحنات الداخلية', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white)),
           const Spacer(),
-          ElevatedButton.icon(
-            onPressed: _showCreate,
-            icon: const Icon(Icons.add, size: 20),
-            label: const Text('مانيفست جديد'),
-          ),
+          if (canManage)
+            ElevatedButton.icon(
+              onPressed: _showCreate,
+              icon: const Icon(Icons.add, size: 20),
+              label: const Text('مانيفست جديد'),
+            ),
         ]),
         const SizedBox(height: 8),
         const Text('إدارة مانيفستات التوصيل للعملاء', style: TextStyle(color: Colors.white38, fontSize: 13)),
@@ -67,12 +70,14 @@ class _InternalShipmentsScreenState extends ConsumerState<InternalShipmentsScree
                   const Icon(Icons.local_shipping_rounded, color: Colors.white12, size: 72),
                   const SizedBox(height: 16),
                   const Text('لا توجد شحنات داخلية', style: TextStyle(color: Colors.white38, fontSize: 16)),
-                  const SizedBox(height: 20),
-                  ElevatedButton.icon(
-                    onPressed: _showCreate,
-                    icon: const Icon(Icons.add, size: 20),
-                    label: const Text('إنشاء أول مانيفست'),
-                  ),
+                  if (canManage) ...[
+                    const SizedBox(height: 20),
+                    ElevatedButton.icon(
+                      onPressed: _showCreate,
+                      icon: const Icon(Icons.add, size: 20),
+                      label: const Text('إنشاء أول مانيفست'),
+                    ),
+                  ],
                 ]));
               }
               return RefreshIndicator(
@@ -182,6 +187,7 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
   @override
   Widget build(BuildContext context) {
     final m = widget.manifest;
+    final canManage = canManageInternalShipments(ref.watch(currentRoleProvider));
     final status = m['status'] as String? ?? 'pending';
     final company = m['delivery_company'] as String? ?? 'شركة غير محددة';
     final driverName = (m['driver_name'] as String?)?.trim();
@@ -232,7 +238,7 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
 
         // One explicit admin transition: pending → out_for_delivery.
         // Everything after that (delivered, cash) is derived from per-door events.
-        if (status == 'pending' || status == 'at_delivery_warehouse')
+        if (canManage && (status == 'pending' || status == 'at_delivery_warehouse'))
           Container(
             padding: const EdgeInsets.fromLTRB(16, 6, 16, 12),
             decoration: BoxDecoration(border: Border(top: BorderSide(color: AppTheme.darkBorder))),
@@ -251,7 +257,7 @@ class _ManifestCardState extends ConsumerState<_ManifestCard> {
           ),
 
         // Cash row (only when the manifest has settled to delivered)
-        if (status == 'delivered')
+        if (canManage && status == 'delivered')
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             decoration: BoxDecoration(border: Border(top: BorderSide(color: AppTheme.darkBorder))),
@@ -752,6 +758,7 @@ class _ManifestDetailPageState extends ConsumerState<_ManifestDetailPage> {
 
   Widget _buildBody() {
     final m = _manifest!;
+    final canManage = canManageInternalShipments(ref.watch(currentRoleProvider));
     final status = m['status'] as String? ?? 'pending';
     final statusColor = _statusColor(status);
     final orders = (m['orders'] as List<dynamic>?) ?? [];
@@ -794,7 +801,7 @@ class _ManifestDetailPageState extends ConsumerState<_ManifestDetailPage> {
           Text('المندوب: $driverName', style: const TextStyle(color: Colors.white70, fontSize: 12)),
         ]),
       ],
-      if (status == 'delivered')
+      if (canManage && status == 'delivered')
         Padding(
           padding: const EdgeInsets.only(top: 12),
           child: Row(children: [
@@ -829,7 +836,7 @@ class _ManifestDetailPageState extends ConsumerState<_ManifestDetailPage> {
         ),
       const SizedBox(height: 14),
       // Inline attach (Phase-3 pattern)
-      InkWell(
+      if (canManage) InkWell(
         onTap: _toggleAttach,
         borderRadius: BorderRadius.circular(10),
         child: Container(
@@ -848,7 +855,7 @@ class _ManifestDetailPageState extends ConsumerState<_ManifestDetailPage> {
           ]),
         ),
       ),
-      if (_attachOpen) _buildAttachInline(),
+      if (canManage && _attachOpen) _buildAttachInline(),
       const SizedBox(height: 12),
       const Divider(color: AppTheme.darkBorder),
       const SizedBox(height: 8),
@@ -864,6 +871,7 @@ class _ManifestDetailPageState extends ConsumerState<_ManifestDetailPage> {
               itemBuilder: (_, i) => _OrderRow(
                 order: orders[i] as Map<String, dynamic>,
                 manifestStatus: status,
+                canManage: canManage,
                 onDelivered: () => _markOrderDelivered(orders[i] as Map<String, dynamic>),
                 onReturn: () => _returnOrder((orders[i] as Map<String, dynamic>)['id'] as String),
                 onEditCash: () => _editOrderCash(orders[i] as Map<String, dynamic>),
@@ -939,12 +947,15 @@ class _ManifestDetailPageState extends ConsumerState<_ManifestDetailPage> {
 class _OrderRow extends StatelessWidget {
   final Map<String, dynamic> order;
   final String manifestStatus;
+  /// False for the sorter: read-only, no cash, no door actions.
+  final bool canManage;
   final VoidCallback onDelivered;
   final VoidCallback onReturn;
   final VoidCallback onEditCash;
   const _OrderRow({
     required this.order,
     required this.manifestStatus,
+    required this.canManage,
     required this.onDelivered,
     required this.onReturn,
     required this.onEditCash,
@@ -962,7 +973,7 @@ class _OrderRow extends StatelessWidget {
     final cashCollected = (order['cash_collected'] as num?)?.toDouble() ?? 0;
     final isDelivered = status == 'delivered';
     final isCancelled = status == 'cancelled';
-    final canAct = manifestStatus == 'out_for_delivery' && !isDelivered && !isCancelled;
+    final canAct = canManage && manifestStatus == 'out_for_delivery' && !isDelivered && !isCancelled;
 
     Color chipBg;
     Color chipFg;
@@ -998,7 +1009,7 @@ class _OrderRow extends StatelessWidget {
             child: Text(chipLabel, style: TextStyle(color: chipFg, fontSize: 11, fontWeight: FontWeight.w600)),
           ),
         ]),
-        if (isDelivered) ...[
+        if (canManage && isDelivered) ...[
           const SizedBox(height: 6),
           Row(children: [
             const Icon(Icons.payments_outlined, size: 13, color: AppTheme.success),

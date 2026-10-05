@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/roles.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 
 class InStockScreen extends ConsumerStatefulWidget {
@@ -50,12 +51,16 @@ class _InStockScreenState extends ConsumerState<InStockScreen> {
   Widget build(BuildContext context) {
     final state = ref.watch(inStockProvider);
     final notifier = ref.read(inStockProvider.notifier);
+    final isAdmin = isAdminRole(ref.watch(currentRoleProvider));
     return Padding(
       padding: const EdgeInsets.all(24),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         const Text('البضاعة الفورية', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: Colors.white)),
         const SizedBox(height: 4),
-        const Text('منتجات جاهزة للبيع لزبائن جدد — تكاليفها صفر، ربحها كامل', style: TextStyle(color: Colors.white38, fontSize: 13)),
+        Text(
+          isAdmin ? 'منتجات جاهزة للبيع لزبائن جدد — تكاليفها صفر، ربحها كامل' : 'منتجات جاهزة للبيع لزبائن جدد',
+          style: const TextStyle(color: Colors.white38, fontSize: 13),
+        ),
         const SizedBox(height: 16),
         // Search bar
         TextField(
@@ -194,6 +199,9 @@ class _InStockItemCard extends StatelessWidget {
     final sunkCost = (perUnit + weight * rate) * qty;
     final isWrittenOff = item['written_off_settlement_id'] != null;
     final imageUrl = item['product_image_url'] as String?;
+    // Write-off / loss figures and the sell action are admin-only (the
+    // purchaser has read access to the in-stock list).
+    final isAdmin = isAdminRole(ProviderScope.containerOf(context).read(currentRoleProvider));
 
     return Container(
       decoration: BoxDecoration(
@@ -227,7 +235,9 @@ class _InStockItemCard extends StatelessWidget {
                 style: const TextStyle(color: Colors.white38, fontSize: 12)),
             ],
             const SizedBox(height: 8),
-            if (isWrittenOff)
+            if (!isAdmin)
+              const SizedBox.shrink()
+            else if (isWrittenOff)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
@@ -245,7 +255,7 @@ class _InStockItemCard extends StatelessWidget {
               ]),
           ])),
           // Action
-          TextButton.icon(
+          if (isAdmin) TextButton.icon(
             onPressed: () => _showReassignDialog(context),
             icon: const Icon(Icons.sell_outlined, size: 16),
             label: const Text('بيع لزبون جديد', style: TextStyle(fontSize: 12)),

@@ -72,6 +72,8 @@ class SyncNotifier extends StateNotifier<SyncState> {
     // Skip if not authenticated
     final token = _ref.read(authTokenProvider);
     if (token == null) return;
+    // /sync is not part of the driver's API surface (403).
+    if (_ref.read(currentUserProvider)?['role'] == 'driver') return;
 
     try {
       final params = <String, dynamic>{};
