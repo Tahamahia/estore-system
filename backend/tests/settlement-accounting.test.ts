@@ -195,6 +195,33 @@ describe('settlement accounting', () => {
     expect(row).toMatchObject({ name: 'September', exchange_rate: 6.5 });
   });
 
+  it('does not double-count a lost piece inside a delivered full_cart manual cost', async () => {
+    db.prepare(`UPDATE order_items SET lost_at = NULL WHERE id = 'i3lost'`).run();
+    insertOrder({ id: 'fc', order_type: 'full_cart', sale: 300, cost: 50, collected: 300, collected_at: '2026-10-01' });
+    insertItem({ id: 'fc1', order_id: 'fc', cost: 25 });
+    insertItem({ id: 'fc2', order_id: 'fc', cost: 25, status: 'cancelled', lost_at: '2026-09-20' });
+
+    const s = await (await call('POST', '/settlements', { name: 'FC', exchange_rate: 5, order_ids: ['fc'] })).json() as Row;
+    expect(s.total_usd_cost).toBe(50);
+    expect(s.write_off_lost_usd).toBe(0);
+    // The lost piece is still stamped, so it is never picked up again.
+    expect(db.prepare(`SELECT written_off_settlement_id AS w FROM order_items WHERE id = 'fc2'`).get().w).toBe(s.id);
+  });
+
+  it('writes off a fully-lost cancelled full_cart manual cost exactly once', async () => {
+    db.prepare(`UPDATE order_items SET lost_at = NULL WHERE id = 'i3lost'`).run();
+    insertOrder({ id: 'fcx', order_type: 'full_cart', status: 'cancelled', sale: 300, cost: 50 });
+    insertItem({ id: 'fcx1', order_id: 'fcx', cost: 20, status: 'cancelled', lost_at: '2026-09-20' });
+    insertItem({ id: 'fcx2', order_id: 'fcx', cost: 20, status: 'cancelled', lost_at: '2026-09-20' });
+
+    const s = await (await call('POST', '/settlements', { name: 'Lost cart', exchange_rate: 5, order_ids: ['o2'] })).json() as Row;
+    expect(s.write_off_lost_usd).toBe(50);
+    expect(s.total_usd_cost).toBe(23);
+
+    const list = (await (await call('GET', '/settlements')).json() as { data: Row[] }).data;
+    expect(list[0].write_off_lost_usd).toBe(50);
+  });
+
   it('rejects ineligible order ids, including unknown ones', async () => {
     const res = await call('POST', '/settlements', { name: 'x', exchange_rate: 5, order_ids: ['o1', 'nope'] });
     expect(res.status).toBe(400);

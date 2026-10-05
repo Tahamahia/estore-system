@@ -67,6 +67,27 @@ const SETTLED_ORDERS_CTE = `
     FROM settled_orders so
   )`;
 
+/**
+ * Write-off cost of a LOST item row (oi joined to its order as o). A manual
+ * orders.total_cost_usd is the whole cost of everything in the order, lost
+ * pieces included:
+ *   - order not cancelled → 0 (the cost is settled with the order itself);
+ *   - order cancelled (the cart was lost, it will never be settled) → the
+ *     manual total prorated evenly over the order's lost items, so it is
+ *     written off exactly once in total;
+ *   - no manual total → the item's own landed cost.
+ */
+const LOST_ITEM_COST_USD_SQL = `
+  CASE
+    WHEN o.total_cost_usd IS NOT NULL AND o.status != 'cancelled' THEN 0
+    WHEN o.total_cost_usd IS NOT NULL THEN
+      o.total_cost_usd * 1.0 / (
+        SELECT COUNT(*) FROM order_items x
+        WHERE x.order_id = o.id AND x.tenant_id = o.tenant_id
+          AND x.lost_at IS NOT NULL AND x.is_deleted = 0)
+    ELSE ${ITEM_COST_USD_SQL}
+  END`;
+
 type Financials = {
   total_lyd_collected: number;
   total_sale_lyd: number;
@@ -120,9 +141,10 @@ async function loadFinancials(
       `SELECT
          oi.written_off_settlement_id AS settlement_id,
          COUNT(*) AS write_off_item_count,
-         COALESCE(SUM(CASE WHEN oi.lost_at IS NOT NULL THEN ${ITEM_COST_USD_SQL} ELSE 0 END), 0) AS write_off_lost_usd,
+         COALESCE(SUM(CASE WHEN oi.lost_at IS NOT NULL THEN ${LOST_ITEM_COST_USD_SQL} ELSE 0 END), 0) AS write_off_lost_usd,
          COALESCE(SUM(CASE WHEN oi.lost_at IS NULL     THEN ${ITEM_COST_USD_SQL} ELSE 0 END), 0) AS write_off_unsold_usd
        FROM order_items oi
+       LEFT JOIN orders o ON o.id = oi.order_id AND o.tenant_id = oi.tenant_id
        WHERE oi.tenant_id = ? AND oi.written_off_settlement_id IS NOT NULL AND oi.is_deleted = 0
          ${settlementId ? 'AND oi.written_off_settlement_id = ?' : ''}
        GROUP BY oi.written_off_settlement_id`
