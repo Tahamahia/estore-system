@@ -6,7 +6,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
+import 'package:estore_app/core/roles.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
+import 'package:estore_app/core/utils/label_generator.dart';
 import 'package:uuid/uuid.dart';
 
 class ScanningScreen extends ConsumerStatefulWidget {
@@ -30,6 +32,10 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
   String _flashCustomer = '';
   String _flashProduct = '';
   Map<String, dynamic>? _flashOrderProgress;
+  // Order whose bag the last scan completed — printable from the flash and
+  // from the "آخر كيس مكتمل" chip after the flash fades.
+  String? _lastCompletedOrderId;
+  bool _printingLabel = false;
   late AnimationController _flashAnimCtrl;
   late Animation<double> _flashAnim;
 
@@ -116,6 +122,9 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
       _flashCustomer = customer ?? '';
       _flashProduct = product ?? '';
       _flashOrderProgress = orderProgress;
+      if (bagComplete && orderProgress?['order_id'] is String) {
+        _lastCompletedOrderId = orderProgress!['order_id'] as String;
+      }
     });
     _flashAnimCtrl.reset();
     _flashAnimCtrl.forward();
@@ -273,6 +282,48 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
     ));
   }
 
+  Future<void> _printBagLabel(String orderId) async {
+    final mobile = isMobile(context);
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _printingLabel = true);
+    try {
+      await LabelGenerator.printLabels(ref.read(dioProvider), [orderId], mobile: mobile);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('فشل طباعة الواصل: $e'), backgroundColor: AppTheme.error));
+    } finally {
+      if (mounted) {
+        setState(() => _printingLabel = false);
+        _focusNode.requestFocus(); // keep the hardware scanner flowing
+      }
+    }
+  }
+
+  Widget _buildLastBagChip() {
+    final id = _lastCompletedOrderId!;
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(children: [
+        const Icon(Icons.inventory_rounded, color: Colors.amber, size: 18),
+        const SizedBox(width: 8),
+        Expanded(child: Text('آخر كيس مكتمل: #${LabelGenerator.shortId(id)}',
+            style: const TextStyle(color: Colors.white70, fontSize: 13))),
+        OutlinedButton.icon(
+          onPressed: _printingLabel ? null : () => _printBagLabel(id),
+          icon: _printingLabel
+              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Icon(Icons.qr_code_2_rounded, size: 16),
+          label: const Text('طباعة الواصل', style: TextStyle(fontSize: 12)),
+          style: OutlinedButton.styleFrom(foregroundColor: Colors.amber, side: const BorderSide(color: Colors.amber)),
+        ),
+        IconButton(
+          tooltip: 'حجم ورق الواصل',
+          icon: const Icon(Icons.tune_rounded, color: Colors.white38, size: 18),
+          onPressed: () => showLabelSizePicker(context),
+        ),
+      ]),
+    );
+  }
+
   int get _todaySortedCount => _scanHistory.where((s) => s.status == _ScanStatus.found).length;
 
   @override
@@ -287,6 +338,8 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
             padding: const EdgeInsets.all(24),
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               _buildScannerBanner(),
+              if (_lastCompletedOrderId != null && canPrintLabels(ref.watch(currentRoleProvider)))
+                _buildLastBagChip(),
               const SizedBox(height: 24),
               Expanded(
                 child: LayoutBuilder(builder: (context, constraints) {
@@ -315,8 +368,13 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
                 final progress = _flashOrderProgress;
                 final bagComplete = _flashColor == Colors.amber;
                 final isSuccess = _flashColor != AppTheme.error;
+                final printId = bagComplete && canPrintLabels(ref.read(currentRoleProvider))
+                    ? (progress?['order_id'] as String?)
+                    : null;
                 return Positioned.fill(
                   child: IgnorePointer(
+                    // Interactive only when it carries the print button.
+                    ignoring: printId == null,
                     child: Opacity(
                       opacity: opacity,
                       child: Container(
@@ -333,13 +391,30 @@ class _ScanningScreenState extends ConsumerState<ScanningScreen> with TickerProv
                               const SizedBox(height: 16),
                             ],
                             if (isSuccess && progress != null) ...[
-                              if (bagComplete)
+                              if (bagComplete) ...[
                                 Text(
                                   '✅ الكيس اكتمل — جاهز للتوصيل',
                                   style: TextStyle(color: Colors.white, fontSize: math.min(28, screenWidth * 0.065), fontWeight: FontWeight.w900),
                                   textAlign: TextAlign.center,
-                                )
-                              else
+                                ),
+                                if (printId != null) ...[
+                                  const SizedBox(height: 18),
+                                  ElevatedButton.icon(
+                                    onPressed: () {
+                                      _flashAnimCtrl.stop();
+                                      setState(() => _showFlash = false);
+                                      _printBagLabel(printId);
+                                    },
+                                    icon: const Icon(Icons.qr_code_2_rounded, size: 26),
+                                    label: const Text('طباعة الواصل', style: TextStyle(fontSize: 20, fontWeight: FontWeight.w800)),
+                                    style: ElevatedButton.styleFrom(
+                                      backgroundColor: Colors.white,
+                                      foregroundColor: Colors.black87,
+                                      padding: const EdgeInsets.symmetric(horizontal: 28, vertical: 16),
+                                    ),
+                                  ),
+                                ],
+                              ] else
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
                                   decoration: BoxDecoration(

@@ -4,7 +4,9 @@ import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/roles.dart';
+import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
+import 'package:estore_app/core/utils/label_generator.dart';
 
 class InternalShipmentsScreen extends ConsumerStatefulWidget {
   const InternalShipmentsScreen({super.key});
@@ -728,6 +730,59 @@ class _ManifestDetailPageState extends ConsumerState<_ManifestDetailPage> {
     }
   }
 
+  // ── Printing: bag labels + A4 handover sheet ──
+  bool _printing = false;
+
+  List<String> _printableOrderIds() => ((_manifest?['orders'] as List<dynamic>?) ?? [])
+      .map((o) => o as Map<String, dynamic>)
+      .where((o) => o['status'] != 'cancelled')
+      .map((o) => o['id'] as String)
+      .toList();
+
+  Future<void> _print({required bool sheet}) async {
+    final ids = _printableOrderIds();
+    if (ids.isEmpty || _manifest == null) return;
+    final mobile = isMobile(context);
+    final messenger = ScaffoldMessenger.of(context);
+    setState(() => _printing = true);
+    try {
+      final dio = ref.read(dioProvider);
+      if (sheet) {
+        await LabelGenerator.printManifestSheet(dio, _manifest!, ids, mobile: mobile);
+      } else {
+        await LabelGenerator.printLabels(dio, ids, mobile: mobile);
+      }
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('فشل الطباعة: $e'), backgroundColor: AppTheme.error));
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
+  }
+
+  Widget _buildPrintBar() {
+    final enabled = !_printing && _printableOrderIds().isNotEmpty;
+    return Row(children: [
+      Expanded(child: OutlinedButton.icon(
+        onPressed: enabled ? () => _print(sheet: false) : null,
+        icon: _printing
+          ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2))
+          : const Icon(Icons.qr_code_2_rounded, size: 16),
+        label: const Text('طباعة كل الواصلات', style: TextStyle(fontSize: 12)),
+      )),
+      const SizedBox(width: 6),
+      Expanded(child: OutlinedButton.icon(
+        onPressed: enabled ? () => _print(sheet: true) : null,
+        icon: const Icon(Icons.assignment_outlined, size: 16),
+        label: const Text('طباعة كشف التسليم', style: TextStyle(fontSize: 12)),
+      )),
+      IconButton(
+        tooltip: 'حجم ورق الواصل',
+        icon: const Icon(Icons.tune_rounded, color: Colors.white54, size: 20),
+        onPressed: () => showLabelSizePicker(context),
+      ),
+    ]);
+  }
+
   @override
   Widget build(BuildContext context) {
     final body = _loading
@@ -834,6 +889,10 @@ class _ManifestDetailPageState extends ConsumerState<_ManifestDetailPage> {
               }),
           ]),
         ),
+      if (canPrintLabels(ref.watch(currentRoleProvider))) ...[
+        const SizedBox(height: 12),
+        _buildPrintBar(),
+      ],
       const SizedBox(height: 14),
       // Inline attach (Phase-3 pattern)
       if (canManage) InkWell(

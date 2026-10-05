@@ -104,7 +104,7 @@ warehouseRoutes.post('/scan', requireRole('super_admin', 'store_manager', 'sorte
     found: true,
     ambiguous: false,
     item: { id: item.id, product_name: item.product_name, customer_name: item.customer_name, status: 'sorted' },
-    order_progress: { sorted, total, complete: total > 0 && sorted === total },
+    order_progress: { order_id: item.order_id, sorted, total, complete: total > 0 && sorted === total },
     ...(shipmentProgress ? { shipment_progress: shipmentProgress } : {}),
   });
 });

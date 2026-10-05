@@ -8,10 +8,12 @@ import 'package:go_router/go_router.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:uuid/uuid.dart';
 import 'package:estore_app/app/theme.dart';
+import 'package:estore_app/core/api_client.dart';
 import 'package:estore_app/core/providers.dart';
 import 'package:estore_app/core/roles.dart';
 import 'package:estore_app/core/utils/dialog_utils.dart';
 import 'package:estore_app/core/utils/invoice_generator.dart';
+import 'package:estore_app/core/utils/label_generator.dart';
 import 'package:printing/printing.dart';
 
 double _parseDouble(String text) =>
@@ -160,6 +162,16 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
     final url = Uri.parse('https://wa.me/$cleanPhone?text=${Uri.encodeComponent(buffer.toString())}');
     if (await canLaunchUrl(url)) {
       await launchUrl(url, mode: LaunchMode.externalApplication);
+    }
+  }
+
+  Future<void> _printLabel() async {
+    final mobile = isMobile(context);
+    final messenger = ScaffoldMessenger.of(context);
+    try {
+      await LabelGenerator.printLabels(ref.read(dioProvider), [widget.orderId], mobile: mobile);
+    } catch (e) {
+      messenger.showSnackBar(SnackBar(content: Text('فشل طباعة الواصل: $e'), backgroundColor: AppTheme.error));
     }
   }
 
@@ -672,6 +684,12 @@ class _OrderDetailScreenState extends ConsumerState<OrderDetailScreen> {
                       style: const TextStyle(fontSize: 22, fontWeight: FontWeight.w700, color: Colors.white),
                     ),
                   ),
+                  if (canPrintLabels(ref.watch(currentRoleProvider)))
+                    IconButton(
+                      icon: const Icon(Icons.qr_code_2_rounded, color: Colors.white70, size: 22),
+                      tooltip: 'طباعة الواصل',
+                      onPressed: _order != null ? _printLabel : null,
+                    ),
                   IconButton(
                     icon: const Icon(Icons.print_outlined, color: Colors.white70, size: 22),
                     tooltip: 'طباعة الفاتورة',
